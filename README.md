@@ -4,17 +4,15 @@
 
 It grew out of day-to-day model-development and consulting work where large SAS processes were difficult to inspect, rerun, parallelise, move between environments and review consistently. The current implementation brings those workflows together in one portable `pysas.py` utility.
 
-## Current status
+## What it does
 
-PySAS is now an implemented working toolkit rather than a design-only repository.
-
-| Component | Status in 0.3.2 | What it does |
+| Component | Status in 0.3.2 | Purpose |
 | --- | --- | --- |
 | SAS bundle utility | Implemented | Pack, verify and safely unpack SAS source trees with SHA-256 integrity metadata and backups |
 | EGP tools | Implemented | Inspect EGP archives, extract embedded SAS programs and conservatively repack them into an EGP template |
 | Standalone runner | Implemented | Run a SAS file through SAS Enterprise Guide automation with shared init code, logs and results |
 | Watch-folder runner | Implemented | Watch an inbox, execute stable `.sas` files concurrently and keep timestamped run folders |
-| Table extraction | Implemented | Automatically export output datasets to one Excel workbook for `.tables.sas` jobs or `--tables` runs |
+| Table extraction | Implemented | Export output datasets to one Excel workbook for `.tables.sas` jobs or `--tables` runs |
 | Excel dependency scheduler | Implemented | Run EGP programs according to dependencies, skip/error rules and a parallelism limit |
 | Schedule continuation | Implemented | Resume a prior schedule while automatically skipping tasks that already completed successfully |
 
@@ -34,13 +32,11 @@ Install the Python dependency with:
 py -m pip install openpyxl
 ```
 
-`rich` is optional.
-
-The SAS server connection, credentials, libraries and permissions remain environment-specific and are not included in this repository.
+`rich` is optional. SAS server connections, credentials, libraries and permissions remain environment-specific and are not included in this repository.
 
 ## Installation
 
-The toolkit is intentionally portable: place `pysas.py` beside the EGP project, scheduler workbook and any shared top-level SAS initialisation files you want it to use.
+Place `pysas.py` beside the EGP project, scheduler workbook and any shared top-level SAS initialisation files you want it to use.
 
 ```text
 workspace/
@@ -61,21 +57,10 @@ Check the installed version with:
 py pysas.py --version
 ```
 
-## Command overview
-
-Running the script with no arguments prints the local workspace summary and common commands.
+Running the script with no arguments prints the local workspace summary and common commands:
 
 ```powershell
 py pysas.py
-```
-
-Main command groups:
-
-```powershell
-py pysas.py bundle ...
-py pysas.py egp ...
-py pysas.py runner ...
-py pysas.py schedule ...
 ```
 
 ## 1. SAS code bundles
@@ -83,42 +68,28 @@ py pysas.py schedule ...
 The bundle engine creates a portable text representation of SAS source files with per-file SHA-256 hashes and a manifest checksum.
 
 ```powershell
-# Pack top-level SAS files
 py pysas.py bundle pack
-
-# Include SAS files recursively
 py pysas.py bundle pack --recursive
-
-# Validate a bundle and compare it with local source
 py pysas.py bundle verify
-
-# Restore changed or missing files
 py pysas.py bundle unpack
 ```
 
-Before replacing existing source files, unpacking creates timestamped backups under `_codebase_backups/` unless `--no-backup` is explicitly supplied. Paths inside bundles are validated to prevent absolute-path or `..` traversal outside the working directory.
+Before replacing existing source files, unpacking creates timestamped backups under `_codebase_backups/` unless `--no-backup` is explicitly supplied. Bundle paths are validated to prevent absolute-path or `..` traversal outside the working directory.
 
 ## 2. EGP inspection and round-tripping
 
-Enterprise Guide projects are ZIP-based artifacts. PySAS provides conservative helpers for inspecting and editing the embedded SAS source without rebuilding unrelated project content from scratch.
+Enterprise Guide projects are ZIP-based artifacts. PySAS provides conservative helpers for inspecting and editing embedded SAS source without rebuilding unrelated project content from scratch.
 
 ```powershell
-# Inspect the EGP beside pysas.py
 py pysas.py egp inspect
-
-# Inspect an explicit project
 py pysas.py egp inspect project.egp
-
-# Extract embedded SAS programs
 py pysas.py egp extract project.egp
-
-# Repack edited extracted programs into an EGP template
 py pysas.py egp pack project --template project.egp --output project_updated.egp
 ```
 
-Extraction writes a `.pysas_egp_manifest.json` mapping the extracted source files back to their original archive members. Repacking replaces only those mapped SAS members in the template and preserves the rest of the archive.
+Extraction writes a `.pysas_egp_manifest.json` mapping extracted source files back to their original archive members. Repacking replaces only those mapped SAS members in the template and preserves the rest of the archive.
 
-Because EGP internals are SAS Enterprise Guide version-sensitive, use copies of important projects and validate the rebuilt artifact in your target environment.
+Because EGP internals are SAS Enterprise Guide version-sensitive, use copies of important projects and validate rebuilt artifacts in the target environment.
 
 ## 3. Standalone SAS runner
 
@@ -128,7 +99,7 @@ Run a standalone `.sas` file through Enterprise Guide automation:
 py pysas.py runner run diagnostic.sas
 ```
 
-Useful options:
+Useful options include:
 
 ```powershell
 py pysas.py runner run diagnostic.sas --template project.egp
@@ -147,7 +118,7 @@ A source file named like:
 portfolio_checks.tables.sas
 ```
 
-automatically enables table export. Output datasets reported by Enterprise Guide are exported and combined into one Excel workbook inside that run's `results` folder. The same behaviour can be requested explicitly with `--tables`.
+automatically enables table export. Output datasets reported by Enterprise Guide are combined into one Excel workbook inside that run's `results` folder. The same behaviour can be requested explicitly with `--tables`.
 
 ## 4. Watch-folder runner
 
@@ -166,36 +137,32 @@ runner/
 `-- runs/
 ```
 
-Drop `.sas` files into `runner\inbox`. PySAS waits until the file appears stable, claims it atomically, and executes jobs with a configurable worker pool.
+Drop `.sas` files into `runner\inbox`. PySAS waits until the file appears stable, claims it atomically and executes jobs with a configurable worker pool.
 
 ```powershell
 py pysas.py runner watch --workers 3
 py pysas.py runner watch --poll 2
 ```
 
-The terminal dashboard shows currently running jobs and elapsed time, the most recent runs ready for review, and queued inbox files. Running jobs are allowed to finish when the watcher is stopped with `Ctrl+C`.
+The terminal dashboard shows currently running jobs and elapsed time, the most recent runs ready for review and queued inbox files. Running jobs are allowed to finish when the watcher is stopped with `Ctrl+C`.
 
 ## 5. Excel dependency scheduler
 
-The scheduler reads an Excel workbook, using a worksheet named `Schedule` when present (otherwise the first worksheet).
+The scheduler reads an Excel workbook, using a worksheet named `Schedule` when present and otherwise the first worksheet.
 
-Required columns are:
+A fully sanitized example is included in [`examples/schedule_example.csv`](examples/schedule_example.csv), with field definitions and dependency guidance in [`docs/scheduler-schema.md`](docs/scheduler-schema.md). Open the CSV in Excel and save it as `Schedule.xlsx` to use it as a starting template.
 
-| Column | Purpose |
-| --- | --- |
-| `task_id` | Unique task identifier |
-| `program` | EGP program/code item to run |
-| `depends_on` | Comma-separated prerequisite task IDs |
-| `skip` | Mark the task as successfully skipped |
-| `row_start` | Optional first SAS source line to run |
-| `row_end` | Optional last SAS source line to run |
-| `section` | Free-form grouping metadata |
-| `stop_process_on_error` | Prevent additional normal tasks from being launched after failure |
-| `stop_program_on_error` | Reserved control field carried with task metadata |
-| `max_parallel` | Parallelism setting used to derive the worker limit |
-| `always_run` | Allow the task to run after a dependency failure, useful for cleanup/finalisation |
+The scheduler supports:
 
-Run the schedule with:
+- explicit task dependencies;
+- parallel execution of eligible tasks;
+- skip flags;
+- inclusive source row ranges;
+- process-level stop-on-error behaviour;
+- always-run cleanup/finalisation tasks;
+- schedule continuation from a previous run.
+
+Run a schedule with:
 
 ```powershell
 py pysas.py schedule
@@ -207,46 +174,46 @@ Or identify inputs explicitly:
 py pysas.py schedule --workbook Schedule.xlsx --project project.egp --workers 4
 ```
 
-The scheduler validates duplicate IDs, unknown dependencies and invalid row ranges before execution. Eligible tasks run concurrently once their dependencies have completed. Each task receives an isolated copy of the EGP project and its own output directory.
+The scheduler validates duplicate IDs, unknown dependencies and invalid row ranges before execution. Each task receives an isolated copy of the EGP project and its own output directory.
 
-Every schedule run produces a timestamped `runs/...__schedule` folder and summaries in:
+Every schedule run produces a timestamped `runs/...__schedule` folder with summaries in:
 
 - `run_summary.csv`
 - `run_summary.txt`
 - `run_summary.xlsx`
 
-### Continuing a previous run
-
-A previous scheduler run can be continued with:
+Continue a previous run with:
 
 ```powershell
 py pysas.py schedule continue runs\20260908_120000__schedule
 ```
 
-PySAS reads the prior summary, temporarily marks previously successful tasks as skipped, and launches a new isolated schedule run for the remaining work.
+PySAS reads the prior summary, temporarily marks previously successful tasks as skipped and launches a new isolated schedule run for the remaining work.
 
 ## Enterprise Guide automation
 
 PySAS drives SAS Enterprise Guide through the Windows COM automation object model. The current implementation tries the Enterprise Guide 8.1 automation object and falls back to 7.1. It prefers the 32-bit `cscript.exe` under `SysWOW64` when available, otherwise the system `cscript.exe`.
 
-This means PySAS is not a replacement for a SAS installation or SAS server. It is an automation layer around an already working Enterprise Guide environment.
+PySAS is therefore not a replacement for a SAS installation or SAS server. It is an automation layer around an already working Enterprise Guide environment.
 
 ## Design principles
 
 The implementation deliberately favours safety and reviewability:
 
-- source material is preserved by default;
-- EGP repacking starts from a template rather than generating arbitrary project internals;
-- bundle paths are validated before writing files;
-- bundle restoration creates backups before replacement;
-- file replacement uses temporary files and atomic `os.replace` operations;
-- runner and scheduler executions are isolated in timestamped run folders;
-- logs, submitted code, console output and machine-readable summaries are retained;
-- watcher jobs are claimed before execution to reduce duplicate processing.
+- preserve source material by default;
+- repack EGPs from a template rather than generating arbitrary project internals;
+- validate paths before writing files;
+- create backups before bundle restoration;
+- use temporary files and atomic replacement where possible;
+- isolate runner and scheduler executions in timestamped folders;
+- retain logs, submitted code, console output and machine-readable summaries;
+- claim watcher jobs before execution to reduce duplicate processing.
+
+The repository also includes a `.gitignore` tuned to keep runtime artifacts, local EGP files, SAS datasets, temporary workbooks and common secrets out of source control.
 
 ## Limitations
 
-PySAS is currently a practical Windows/SAS Enterprise Guide automation toolkit rather than a cross-platform SAS API.
+PySAS is a practical Windows/SAS Enterprise Guide automation toolkit rather than a cross-platform SAS API.
 
 Important limitations include:
 
@@ -261,16 +228,14 @@ Important limitations include:
 
 Current published implementation: **0.3.2**.
 
-The version is also embedded directly in the script:
-
 ```powershell
 py pysas.py version
 ```
 
 ## Repository hygiene
 
-Do not commit proprietary SAS programs, client data, credentials, server names, internal library paths or production EGP projects. Use sanitised examples when demonstrating workflows.
+Do not commit proprietary SAS programs, client data, credentials, server names, internal library paths or production EGP projects. Use sanitized examples when demonstrating workflows.
 
 ## License
 
-No license has been selected yet. Until a license file is added, the repository is publicly viewable but no reuse rights are granted.
+PySAS Toolkit is released under the [MIT License](LICENSE).
