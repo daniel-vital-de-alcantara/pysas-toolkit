@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local SAS / Enterprise Guide artifacts
+*.egp
+*.log
+*.lst
+*.sas7bdat
+*.sas7bndx
+*.sas7bcat
+*.xpt
+*.spk
+
+# PySAS runtime outputs
+runs/
+runner/inbox/
+runner/claimed/
+runner/runs/
+_codebase_backups/
+codebase.sasbundle.txt
+*.tmp
+*.bak
+
+# Local scheduler / workbook files
+Schedule.xlsx
+~$*.xlsx
+
+# Local environment / secrets
+.env
+.env.*
+*.local
