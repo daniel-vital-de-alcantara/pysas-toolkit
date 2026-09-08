@@ -1,0 +1,8 @@
+task_id,program,depends_on,skip,row_start,row_end,section,stop_process_on_error,stop_program_on_error,max_parallel,always_run
+01_setup,01_setup.sas,,FALSE,,,setup,TRUE,FALSE,3,FALSE
+02_extract_customers,02_extract_customers.sas,01_setup,FALSE,,,extract,TRUE,FALSE,3,FALSE
+03_extract_accounts,03_extract_accounts.sas,01_setup,FALSE,,,extract,TRUE,FALSE,3,FALSE
+04_build_features,04_build_features.sas,"02_extract_customers,03_extract_accounts",FALSE,,,transform,TRUE,FALSE,3,FALSE
+05_quality_checks,05_quality_checks.sas,04_build_features,FALSE,,,validate,TRUE,FALSE,2,FALSE
+06_publish_summary,06_publish_summary.sas,05_quality_checks,FALSE,,,output,TRUE,FALSE,1,FALSE
+99_cleanup,99_cleanup.sas,"05_quality_checks,06_publish_summary",FALSE,,,cleanup,FALSE,FALSE,1,TRUE
