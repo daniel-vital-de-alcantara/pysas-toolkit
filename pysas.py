@@ -29,7 +29,7 @@ from typing import Any, Iterable
 from xml.etree import ElementTree as ET
 
 
-VERSION = "0.3.3"
+VERSION = "0.3.4"
 ROOT_DIR = Path(__file__).resolve().parent
 CODEBASE_FILE = "codebase.sasbundle.txt"
 BACKUP_FOLDER = "_codebase_backups"
@@ -105,12 +105,16 @@ def find_one(pattern: str, description: str, folder: Path = ROOT_DIR) -> Path:
     return items[0]
 
 
-def init_files(explicit: Path | None = None) -> list[Path]:
+def init_files(explicit: Path | None = None, folder: Path | None = None, extra_folder: Path | None = None) -> list[Path]:
     if explicit:
         if not explicit.is_file():
             raise FileNotFoundError(explicit)
         return [explicit]
-    return sorted((p for p in ROOT_DIR.glob("_*.sas") if p.is_file()), key=lambda p: p.name.casefold())
+    folders = [folder or ROOT_DIR]
+    if extra_folder is not None:
+        folders.append(extra_folder)
+    paths = {p.resolve() for directory in folders for p in directory.glob("_*.sas") if p.is_file()}
+    return sorted(paths, key=lambda p: (p.name.casefold(), str(p).casefold()))
 
 
 def print_home() -> None:
@@ -565,11 +569,12 @@ def notify(title: str, message: str, error: bool = False, flash: bool = False) -
         pass
 
 
-def compose_sas(source: Path, result_dir: Path, explicit_lib: Path | None = None) -> str:
+def compose_sas(source: Path, result_dir: Path, explicit_lib: Path | None = None,
+                init_dir: Path | None = None, extra_init_dir: Path | None = None) -> str:
     parts = ["options iomlogautoflush;\n",
              f"%let PYSAS_RESULT_DIR=\"{result_dir.as_posix()}\";\n",
              "/* PYSAS_LIB_START */\n"]
-    for path in init_files(explicit_lib):
+    for path in init_files(explicit_lib, init_dir, extra_init_dir):
         parts += [f"/* PYSAS_INIT_FILE_START: {path.name} */\n", normalized(read_text(path)),
                   f"/* PYSAS_INIT_FILE_END: {path.name} */\n"]
     parts += ["/* PYSAS_LIB_END */\n", f"/* PYSAS_JOB_START: {source.name} */\n",
@@ -644,7 +649,8 @@ def execute_eg(mode: str, project: Path, sas_path: Path, program: str, row_start
 
 
 def run_job(source: Path, project: Path, tables: bool, explicit_lib: Path | None,
-            notify_user: bool, runs_dir: Path | None = None, display_name: str | None = None) -> dict[str, Any]:
+            notify_user: bool, runs_dir: Path | None = None, display_name: str | None = None,
+            init_dir: Path | None = None, extra_init_dir: Path | None = None) -> dict[str, Any]:
     logical_stem = re.sub(r"(?i)\.tables$", "", source.stem)
     base = safe_name(logical_stem)
     root = runs_dir or (ROOT_DIR / "runner" / "runs")
@@ -654,7 +660,7 @@ def run_job(source: Path, project: Path, tables: bool, explicit_lib: Path | None
     while run_dir.exists(): run_dir = root / f"{now_stamp()}__{base}_{suffix}"; suffix += 1
     run_dir.mkdir(parents=True)
     submitted = run_dir / "_submitted.sas"
-    submitted.write_text(compose_sas(source, run_dir / "results", explicit_lib), encoding="utf-8")
+    submitted.write_text(compose_sas(source, run_dir / "results", explicit_lib, init_dir, extra_init_dir), encoding="utf-8")
     started = time.time()
     rc, console = execute_eg("RUNFILE", project, submitted, display_name or source.name, 0, 0, run_dir, tables)
     log_files = list((run_dir / "logs").glob("*.log"))
@@ -682,7 +688,9 @@ def runner_run(args: argparse.Namespace) -> int:
     project = choose_egp(args.template)
     tables = bool(args.tables or re.search(r"(?i)\.tables\.sas$", source.name))
     lib = Path(args.lib).resolve() if args.lib else None
-    result = run_job(source, project, tables, lib, not args.no_notify)
+    init_dir = Path(args.init_dir).expanduser().resolve() if getattr(args, "init_dir", None) else None
+    if init_dir is not None and not init_dir.is_dir(): raise FileNotFoundError(init_dir)
+    result = run_job(source, project, tables, lib, not args.no_notify, init_dir=init_dir)
     label = {"SUCCESS": "DONE", "SAS_ERROR": "DONE WITH SAS ERRORS", "FAILED": "RUNNER FAILED"}[result["status"]]
     print(f"{label}: {source.name}")
     print(result["run_dir"])
@@ -704,14 +712,18 @@ def dashboard(running: dict[str, float], inbox: Path, runs: Path, max_ready: int
     lines += ["", f"Ready to review ({len(ready)})"]
     for path in ready[:max_ready]: lines.append(f"  ✓ {path.name}")
     if len(ready) > max_ready: lines.append(f"  … and {len(ready) - max_ready} more in runner\\runs")
-    queued = len(list(inbox.glob("*.sas"))) if inbox.exists() else 0
+    queued = sum(1 for p in inbox.glob("*.sas") if not p.name.startswith("_")) if inbox.exists() else 0
     if queued: lines += ["", f"Queued in inbox: {queued}"]
-    lines += ["", "Drop .sas files into runner\\inbox. Press Ctrl+C to stop."]
+    lines += ["", f"Drop job .sas files into {inbox}. _*.sas files are shared initialization. Press Ctrl+C to stop."]
     return "\n".join(lines)
 
 
 def runner_watch(args: argparse.Namespace) -> int:
-    root = ROOT_DIR / "runner"; inbox = root / "inbox"; claimed = root / "claimed"; runs = root / "runs"
+    root = ROOT_DIR / "runner"
+    inbox = Path(args.inbox).expanduser().resolve() if getattr(args, "inbox", None) else root / "inbox"
+    claimed = root / "claimed"; runs = root / "runs"
+    init_dir = Path(args.init_dir).expanduser().resolve() if getattr(args, "init_dir", None) else None
+    if init_dir is not None and not init_dir.is_dir(): raise FileNotFoundError(init_dir)
     for path in (inbox, claimed, runs): path.mkdir(parents=True, exist_ok=True)
     project = choose_egp(args.template); lib = Path(args.lib).resolve() if args.lib else None
     max_workers = max(1, args.workers); running: dict[str, float] = {}; futures: dict[Any, tuple[str, Path]] = {}
@@ -721,6 +733,7 @@ def runner_watch(args: argparse.Namespace) -> int:
     try:
         while True:
             for path in sorted(inbox.glob("*.sas")):
+                if path.name.startswith("_"): continue
                 try: state = (path.stat().st_size, path.stat().st_mtime)
                 except FileNotFoundError: continue
                 if seen_stable.get(path) != state:
@@ -732,7 +745,7 @@ def runner_watch(args: argparse.Namespace) -> int:
                 except (FileNotFoundError, PermissionError): continue
                 seen_stable.pop(path, None)
                 tables = bool(args.tables or re.search(r"(?i)\.tables\.sas$", claimed_file.name))
-                future = executor.submit(run_job, claimed_file, project, tables, lib, not args.no_notify, runs, path.name)
+                future = executor.submit(run_job, claimed_file, project, tables, lib, not args.no_notify, runs, path.name, init_dir, inbox)
                 futures[future] = (path.name, claim_dir); running[path.name] = time.time()
             for future in list(futures):
                 if not future.done(): continue
@@ -778,36 +791,39 @@ def find_scheduler(value: str | None) -> Path:
 def load_schedule(path: Path) -> list[dict[str, Any]]:
     _, load_workbook, _, _, _ = require_openpyxl()
     wb = load_workbook(path, data_only=True, read_only=True)
-    ws = wb["Schedule"] if "Schedule" in wb.sheetnames else wb[wb.sheetnames[0]]
-    rows = ws.iter_rows(values_only=True)
-    headers = [str(v or "").strip().casefold() for v in next(rows)]
-    missing = REQUIRED_COLUMNS.difference(headers)
-    if missing: raise ValueError("Missing scheduler columns: " + ", ".join(sorted(missing)))
-    col = {name: headers.index(name) for name in REQUIRED_COLUMNS}; tasks = []; ids: set[str] = set()
-    for excel_row, values in enumerate(rows, 2):
-        if not any(v is not None and str(v).strip() for v in values): continue
-        def value(name: str): return values[col[name]] if col[name] < len(values) else None
-        task_id = str(value("task_id") or "").strip()
-        if not task_id: raise ValueError(f"Excel row {excel_row}: task_id is required")
-        if task_id.casefold() in ids: raise ValueError(f"Excel row {excel_row}: duplicate task_id: {task_id}")
-        ids.add(task_id.casefold())
-        dependencies = [x.strip() for x in str(value("depends_on") or "").split(",") if x.strip()]
-        tasks.append({
-            "task_id": task_id, "program": str(value("program") or "").strip(), "depends_on": dependencies,
-            "skip": truthy(value("skip")), "row_start": clean_int(value("row_start"), "row_start", excel_row),
-            "row_end": clean_int(value("row_end"), "row_end", excel_row), "section": str(value("section") or "").strip(),
-            "stop_process_on_error": truthy(value("stop_process_on_error")),
-            "stop_program_on_error": truthy(value("stop_program_on_error")),
-            "max_parallel": clean_int(value("max_parallel"), "max_parallel", excel_row),
-            "always_run": truthy(value("always_run")), "excel_row": excel_row,
-        })
-    known = {t["task_id"].casefold() for t in tasks}
-    for task in tasks:
-        absent = [d for d in task["depends_on"] if d.casefold() not in known]
-        if absent: raise ValueError(f"{task['task_id']}: unknown dependencies: {', '.join(absent)}")
-        if task["row_start"] and task["row_end"] and task["row_start"] > task["row_end"]:
-            raise ValueError(f"{task['task_id']}: row_start must not exceed row_end")
-    return tasks
+    try:
+        ws = wb["Schedule"] if "Schedule" in wb.sheetnames else wb[wb.sheetnames[0]]
+        rows = ws.iter_rows(values_only=True)
+        headers = [str(v or "").strip().casefold() for v in next(rows)]
+        missing = REQUIRED_COLUMNS.difference(headers)
+        if missing: raise ValueError("Missing scheduler columns: " + ", ".join(sorted(missing)))
+        col = {name: headers.index(name) for name in REQUIRED_COLUMNS}; tasks = []; ids: set[str] = set()
+        for excel_row, values in enumerate(rows, 2):
+            if not any(v is not None and str(v).strip() for v in values): continue
+            def value(name: str): return values[col[name]] if col[name] < len(values) else None
+            task_id = str(value("task_id") or "").strip()
+            if not task_id: raise ValueError(f"Excel row {excel_row}: task_id is required")
+            if task_id.casefold() in ids: raise ValueError(f"Excel row {excel_row}: duplicate task_id: {task_id}")
+            ids.add(task_id.casefold())
+            dependencies = [x.strip() for x in str(value("depends_on") or "").split(",") if x.strip()]
+            tasks.append({
+                "task_id": task_id, "program": str(value("program") or "").strip(), "depends_on": dependencies,
+                "skip": truthy(value("skip")), "row_start": clean_int(value("row_start"), "row_start", excel_row),
+                "row_end": clean_int(value("row_end"), "row_end", excel_row), "section": str(value("section") or "").strip(),
+                "stop_process_on_error": truthy(value("stop_process_on_error")),
+                "stop_program_on_error": truthy(value("stop_program_on_error")),
+                "max_parallel": clean_int(value("max_parallel"), "max_parallel", excel_row),
+                "always_run": truthy(value("always_run")), "excel_row": excel_row,
+            })
+        known = {t["task_id"].casefold() for t in tasks}
+        for task in tasks:
+            absent = [d for d in task["depends_on"] if d.casefold() not in known]
+            if absent: raise ValueError(f"{task['task_id']}: unknown dependencies: {', '.join(absent)}")
+            if task["row_start"] and task["row_end"] and task["row_start"] > task["row_end"]:
+                raise ValueError(f"{task['task_id']}: row_start must not exceed row_end")
+        return tasks
+    finally:
+        wb.close()
 
 
 def scheduler_task(task: dict[str, Any], project: Path, task_root: Path) -> dict[str, Any]:
@@ -849,20 +865,28 @@ def schedule_run(args: argparse.Namespace) -> int:
     satisfied: set[str] = set(); failed: set[str] = set(); stop = False
     max_workers = max(1, args.workers or max((t["max_parallel"] or 1 for t in tasks), default=1))
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers); active: dict[Any, dict[str, Any]] = {}
+    submitted_at: dict[str, float] = {}
     try:
         while pending or active:
+            pending_before = len(pending)
             for key, task in list(pending.items()):
                 deps = {d.casefold() for d in task["depends_on"]}
                 if task["skip"]:
                     result = {**task, "status": "SKIPPED_SUCCESS", "elapsed": 0.0, "message": "Marked skip"}
                     results.append(result); satisfied.add(key); pending.pop(key); continue
+                if stop and not task["always_run"]:
+                    result = {**task, "status": "STOPPED_ON_ERROR", "elapsed": 0.0, "message": "Not started after stop-on-error"}
+                    results.append(result); failed.add(key); pending.pop(key); continue
                 if deps & failed and not task["always_run"]:
                     result = {**task, "status": "BLOCKED_DEPENDENCY", "elapsed": 0.0, "message": "Dependency failed"}
                     results.append(result); failed.add(key); pending.pop(key); continue
-                if not deps.issubset(satisfied | failed) or stop or len(active) >= max_workers: continue
+                if not deps.issubset(satisfied | failed) or len(active) >= max_workers: continue
+                submitted_at[key] = time.time()
                 future = executor.submit(scheduler_task, task, project, run_dir / "tasks")
                 active[future] = task; pending.pop(key)
             if not active:
+                if pending and len(pending) < pending_before:
+                    continue
                 if pending:
                     for key, task in list(pending.items()):
                         results.append({**task, "status": "BLOCKED_DEPENDENCY", "elapsed": 0.0,
@@ -870,7 +894,13 @@ def schedule_run(args: argparse.Namespace) -> int:
                 break
             done, _ = concurrent.futures.wait(active, timeout=0.5, return_when=concurrent.futures.FIRST_COMPLETED)
             for future in done:
-                task = active.pop(future); result = future.result(); results.append(result); key = task["task_id"].casefold()
+                task = active.pop(future); key = task["task_id"].casefold()
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    result = {**task, "status": "FAILED", "elapsed": time.time() - submitted_at[key],
+                              "message": str(exc), "task_dir": run_dir / "tasks" / safe_name(task["task_id"])}
+                results.append(result)
                 if result["status"] == "SUCCESS": satisfied.add(key)
                 else:
                     failed.add(key)
@@ -901,8 +931,8 @@ def schedule_continue(args: argparse.Namespace) -> int:
     ws = wb["Schedule"] if "Schedule" in wb.sheetnames else wb[wb.sheetnames[0]]
     headers = [str(c.value or "").strip().casefold() for c in ws[1]]; skip_col = headers.index("skip") + 1
     for task in tasks:
-        if prior.get(task["task_id"].casefold()) in FINAL_OK: ws.cell(task["excel_row"], skip_col).value = 1
-    temp = ROOT_DIR / f"{workbook.stem}__next.xlsx"; wb.save(temp)
+        if not task["always_run"] and prior.get(task["task_id"].casefold()) in FINAL_OK: ws.cell(task["excel_row"], skip_col).value = 1
+    temp = ROOT_DIR / f"{workbook.stem}__next.xlsx"; wb.save(temp); wb.close()
     forwarded = argparse.Namespace(workbook=str(temp), project=str(project), workers=args.workers, no_notify=args.no_notify)
     try: return schedule_run(forwarded)
     finally:
@@ -944,6 +974,10 @@ def parser() -> argparse.ArgumentParser:
     rw = rsub.add_parser("watch"); rw.add_argument("--template"); rw.add_argument("--lib"); rw.add_argument("--tables", action="store_true")
     rw.add_argument("--workers", type=int, default=2); rw.add_argument("--poll", type=float, default=2.0)
     rw.add_argument("--no-notify", action="store_true"); rw.set_defaults(func=runner_watch)
+
+    rr.add_argument("--init-dir", help="folder containing shared _*.sas initialization files")
+    rw.add_argument("--init-dir", help="folder containing shared _*.sas initialization files")
+    rw.add_argument("--inbox", help="folder to watch; _*.sas files here initialize jobs instead of being queued")
 
     schedule = subs.add_parser("schedule", help="run an Excel dependency schedule")
     schedule.add_argument("action", nargs="?", choices=["run", "continue"], default="run")

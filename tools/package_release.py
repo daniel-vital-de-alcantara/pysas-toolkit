@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from pysas_ui import VERSION
 
-FILES = ["pysas.py", "pysas_ui.py", "ui_worker.py", "START_PYSAS.bat", "START_HERE.txt",
+FILES = ["pysas.py", "pysas_ui.py", "ui_worker.py", "ui_support.py", "START_PYSAS.bat", "START_HERE.txt",
          "README.md", "LICENSE", "docs/scheduler-schema.md", "docs/ui-workbench.md",
          "examples/schedule_example.csv", "ui/index.html", "ui/app.js", "ui/style.css", "ui/icon.svg"]
 

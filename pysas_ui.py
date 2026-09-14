@@ -19,8 +19,9 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
+from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT
 
-VERSION = "0.4.0-preview.3"
+VERSION = "0.4.0-preview.4"
 APP_DIR = Path(__file__).resolve().parent
 PREFIX = "@@PYSAS_UI@@"
 ACTIVE = {"RUNNING", "STOPPING"}
@@ -67,9 +68,13 @@ class Workbench:
             raise ValueError("The workspace must contain pysas.py.")
         self.storage = self.root / ".pysas-ui"
         self.storage.mkdir(exist_ok=True)
+        (self.root / "runner" / "inbox").mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
         self.processes = {}
         self.commands = {}
+        self.awake = KeepAwake()
+        self.upload_lock = threading.Lock()
+        self.uploading = False
         for path in sorted(self.storage.glob("*.json")):
             item = read_json(path)
             if not isinstance(item, dict) or "id" not in item:
@@ -90,6 +95,60 @@ class Workbench:
 
     def save(self, item):
         atomic_json(self.storage / (item["id"] + ".json"), item)
+
+    def folders(self):
+        defaults = {"inputs": str(self.root), "init": str(self.root), "inbox": str(self.root / "runner" / "inbox")}
+        saved = read_json(self.storage / "folders.json", {})
+        return {key: saved.get(key) or value for key, value in defaults.items()}
+
+    def update_folders(self, data):
+        with self.lock:
+            if self.uploading or any(c["status"] in ACTIVE for c in self.commands.values()):
+                raise ValueError("Let active commands finish and stop the watcher before changing folders.")
+            settings = self.folders()
+            for key in settings:
+                if key in data:
+                    default = self.root / "runner" / "inbox" if key == "inbox" else self.root
+                    raw = str(data[key]).strip()
+                    candidate = Path(raw).expanduser() if raw else default
+                    if not candidate.is_absolute():
+                        candidate = self.root / candidate
+                    candidate = candidate.resolve()
+                    if not candidate.is_dir():
+                        raise ValueError("Create this folder first, then select it: " + str(candidate))
+                    settings[key] = str(candidate)
+            atomic_json(self.storage / "folders.json", settings)
+            return settings
+
+    def input_path(self, value):
+        path = (self.root / value).expanduser().resolve()
+        roots = [self.root, *(Path(p).resolve() for p in self.folders().values())]
+        if not any(path.is_relative_to(root) for root in roots):
+            raise ValueError("Select a file inside the workspace or a configured input folder.")
+        return path
+
+    def upload(self, query, stream, length):
+        destination = query.get("target", ["inputs"])[0]
+        folders = self.folders()
+        if destination == "bundle":
+            folder = self.code_root(query.get("code_root", [""])[0])
+        elif destination in folders:
+            folder = Path(folders[destination])
+            if destination == "inbox":
+                folder.mkdir(parents=True, exist_ok=True)
+        else:
+            raise ValueError("Unknown upload destination.")
+        name = query.get("name", [""])[0]
+        if destination in {"inbox", "init"} and Path(name).suffix.lower() != ".sas":
+            raise ValueError("The inbox and initialization folders accept SAS files only.")
+        if destination == "init" and not name.startswith("_"):
+            raise ValueError("Shared initialization filenames must start with an underscore.")
+        with self.upload_lock:
+            self.uploading = True
+            try:
+                return receive_upload(folder, name, stream, length)
+            finally:
+                self.uploading = False
 
     def bundle_settings(self):
         settings = read_json(self.storage / "bundle-paths.json", {})
@@ -138,7 +197,22 @@ class Workbench:
             raise ValueError("Unknown command.")
         if action in {"run", "watch", "schedule", "continue"} and os.name != "nt":
             raise ValueError("SAS execution requires Windows and SAS Enterprise Guide. File tools and history work here.")
+        data = dict(data)
+        folders = self.folders()
+        project_field = "template" if action in {"run", "watch", "egp-pack"} else "project"
+        if action in {"run", "watch", "schedule", "egp-pack", "egp-inspect", "egp-extract"} and not data.get(project_field) and Path(folders["inputs"]) != self.root:
+            projects = sorted(Path(folders["inputs"]).glob("*.egp"))
+            if len(projects) != 1:
+                raise ValueError("Select an EGP project from the input folder.")
+            data[project_field] = str(projects[0])
         args = choices[action].copy()
+        if action in {"run", "watch"}:
+            init_dir = Path(folders["init"])
+            if not init_dir.is_dir():
+                raise ValueError("The configured initialization folder is unavailable.")
+            args.extend(["--init-dir", str(init_dir)])
+        if action == "watch":
+            args.extend(["--inbox", folders["inbox"]])
         file_root = self.code_root(data.get("code_root")) if action.startswith("bundle-") else self.root
         if action.startswith("bundle-") and data.get("code_root"):
             args.extend(["--root", str(file_root)])
@@ -147,12 +221,12 @@ class Workbench:
             value = str(data.get(required[action], "")).strip()
             if not value:
                 raise ValueError("Select " + required[action].replace("_", " ") + ".")
-            path = within(self.root, value)
+            path = self.input_path(value)
             if not path.exists():
                 raise ValueError("The selected path no longer exists.")
             args.append(str(path))
         if action in {"egp-inspect", "egp-extract"} and data.get("project"):
-            args.append(str(within(self.root, data["project"])))
+            args.append(str(self.input_path(data["project"])))
         allowed = {
             "run": ["template", "lib"], "watch": ["template", "lib"],
             "schedule": ["workbook", "project"], "continue": [],
@@ -162,7 +236,7 @@ class Workbench:
         }
         for field in allowed[action]:
             if data.get(field):
-                path = within(file_root, str(data[field]).strip())
+                path = within(file_root, str(data[field]).strip()) if action.startswith("bundle-") or field == "output" else self.input_path(str(data[field]).strip())
                 if field != "output" and not path.is_file():
                     raise ValueError("File not found: " + str(data[field]))
                 if field == "output":
@@ -294,16 +368,18 @@ class Workbench:
             return {"ok": True}
 
     def inventory(self):
-        paths = []
-        for base, dirs, names in os.walk(self.root):
-            dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in {"runner", "runs", "__pycache__", "_codebase_backups", "node_modules", "release", "ui", "tests"})
-            for name in sorted(names):
-                path = Path(base) / name
-                if path.suffix.lower() in {".sas", ".egp", ".xlsx", ".txt"} and path.resolve().is_relative_to(self.root):
-                    paths.append(self.relative(path))
-                if len(paths) >= 3000:
-                    return paths
-        return paths
+        paths = set()
+        roots = {self.root, Path(self.folders()["inputs"]), Path(self.folders()["init"])}
+        for root in sorted(roots):
+            for base, dirs, names in os.walk(root):
+                dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in {"runner", "runs", "__pycache__", "_codebase_backups", "node_modules", "release", "ui", "tests"})
+                for name in sorted(names):
+                    path = Path(base) / name
+                    if path.suffix.lower() in {".sas", ".egp", ".xlsx", ".txt", ".csv"} and path.resolve().is_relative_to(root.resolve()):
+                        paths.add(self.relative(path) or str(path.resolve()))
+                    if len(paths) >= 3000:
+                        return sorted(paths)
+        return sorted(paths)
 
     def history(self):
         records = []
@@ -343,11 +419,13 @@ class Workbench:
             for task in command.get("tasks", {}).values():
                 if task.get("path") in paths:
                     paths[task["path"]].update(status=task["status"], elapsed=task.get("elapsed"), started=task.get("started") or paths[task["path"]]["started"])
-        inbox = self.root / "runner" / "inbox"
-        queued = sorted(p.name for p in inbox.glob("*.sas")) if inbox.exists() else []
+        inbox = Path(self.folders()["inbox"])
+        queued = sorted(p.name for p in inbox.glob("*.sas") if not p.name.startswith("_")) if inbox.exists() else []
         return {"version": VERSION, "workspace": str(self.root), "windows": os.name == "nt",
                 "openpyxl": importlib.util.find_spec("openpyxl") is not None,
                 "files": self.inventory(), "commands": commands[:200], "history": history,
+                "folders": self.folders(), "awake": self.awake.status(),
+                "initialization_files": sorted({str(p.resolve()) for folder in {Path(self.folders()["init"]), inbox} for p in folder.glob("_*.sas") if p.is_file()}),
                 "queued": queued, "bundle_settings": self.bundle_settings(), "now": time.time()}
 
     def details(self, relative):
@@ -365,7 +443,7 @@ class Workbench:
         return {"files": files, "tasks": tasks}
 
     def preview(self, relative):
-        path = within(self.root, relative)
+        path = self.input_path(relative)
         if path.suffix.lower() == ".xlsx":
             try:
                 import openpyxl
@@ -440,7 +518,7 @@ class Handler(BaseHTTPRequestHandler):
                     console = "Waiting for output…"
                 self.respond({"text": console})
             elif url.path == "/api/download":
-                path = within(self.server.app.root, value("path"))
+                path = self.server.app.input_path(value("path"))
                 if not path.is_file():
                     raise ValueError("File not found.")
                 self.send_response(200)
@@ -470,6 +548,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
+            url = urlsplit(self.path)
+            if url.path == "/api/upload":
+                if not 0 <= length <= UPLOAD_LIMIT:
+                    raise ValueError("Each file must be 512 MB or smaller.")
+                self.connection.settimeout(60)
+                self.respond(self.server.app.upload(parse_qs(url.query), self.rfile, length))
+                return
             if length < 0 or length > 64_000:
                 raise ValueError("Request is too large.")
             data = json.loads(self.rfile.read(length))
@@ -477,6 +562,10 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Expected an object.")
             if self.path == "/api/launch":
                 self.respond(self.server.app.launch(data))
+            elif self.path == "/api/folders":
+                self.respond(self.server.app.update_folders(data))
+            elif self.path == "/api/awake":
+                self.respond(self.server.app.awake.set(data.get("enabled")))
             elif self.path == "/api/bundle-paths":
                 self.respond(self.server.app.update_bundle_paths(data))
             elif self.path == "/api/stop":
@@ -496,6 +585,8 @@ class LocalServer(ThreadingHTTPServer):
 
     def server_close(self):
         super().server_close()
+        if hasattr(self, "app"):
+            self.app.awake.close()
         handle = getattr(self, "workspace_lock", None)
         if handle is not None:
             handle.close()

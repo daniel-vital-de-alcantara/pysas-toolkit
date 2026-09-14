@@ -1,7 +1,7 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.3 is a separate browser UI for the standalone PySAS
-0.3.3 command-line engine. Download the Python ZIP from GitHub Releases, extract
+The Workbench 0.4.0-preview.4 is a separate browser UI for the standalone PySAS
+0.3.4 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
 
@@ -50,6 +50,25 @@ POST requests require a per-server token and same-origin validation. Host
 validation also rejects non-loopback hostnames. Runner and history paths are restricted to the selected workspace. Bundle
 operations can use an explicitly chosen code folder outside the workspace;
 bundle/output filenames are restricted to that code folder. The UI does not accept arbitrary shell commands.
+
+The Files & folders page persists input/init/inbox locations in
+`.pysas-ui/folders.json`. Configured input folders join the workspace as allowed
+read roots for file selectors and previews. Results remain in the workspace.
+The UI passes `--init-dir` and `--inbox` to the single-file engine.
+
+Multi-file uploads stream into temporary files in the selected destination,
+then rename after completion. Incomplete files are removed; name collisions are
+rejected. Uploading to the watcher can execute jobs automatically. Upload shared
+initialization files first. Uploads accept the supported SAS/EGP/workbook/text
+formats, up to 512 MB each.
+
+`ui_support.py` owns uploads and a Windows keep-awake controller. A dedicated
+thread sets `ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED`; disabling
+or shutting down clears the request on that same thread. This is an opt-in,
+session-only setting with no generated mouse/keyboard input. It cannot override
+manual sleep/lid-close or managed lock policies. See Microsoft's
+[API documentation](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setthreadexecutionstate).
+
 
 Only UI-launched jobs are monitored live. Existing completed runs are imported
 from `status.txt` and `run_summary.csv`. Old schedule summaries contain per-task

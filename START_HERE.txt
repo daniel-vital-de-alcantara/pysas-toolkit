@@ -1,10 +1,10 @@
-PySAS Workbench 0.4.0-preview.3
+PySAS Workbench 0.4.0-preview.4
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
 2. Place your EGP project, SAS programs, Schedule.xlsx, and _*.sas init files
    beside pysas.py in that folder. You can also copy the UI files into your
-   existing workspace, including the updated pysas.py 0.3.3. Keep your SAS,
+   existing workspace, including the updated pysas.py 0.3.4. Keep your SAS,
    EGP and Excel files. The updated engine remains a standalone single file.
 3. Double-click START_PYSAS.bat. Your browser opens the local workbench.
 4. Keep the launcher window open while jobs run. Stop the watcher using
@@ -27,8 +27,34 @@ What is included
 - Scheduler task statuses, individual task clocks, and total schedule duration.
 - Run history, searchable statuses, console, SAS logs/code and file downloads.
 - Excel previews (up to 100 data rows, 30 columns and 10 sheets per workbook).
-- Standalone pysas.py 0.3.3; existing CLI commands still work.
+- Standalone pysas.py 0.3.4; existing CLI commands still work.
 - Blue styling and saved code folders for repeated bundle operations.
+- Fixed always-run cleanup after scheduler failures and on continuation.
+- Watcher _*.sas files are shared initialization, never queued as jobs.
+- Files & folders: input locations, multi-file uploads and Keep PC awake.
+
+Folders, uploads and keep-awake
+------------------------------
+Use Files & folders to set existing folders for project inputs, shared _*.sas
+initialization files and the watcher inbox. Finish jobs and stop the watcher
+before changing folders. Leave the defaults to keep your previous workflow.
+
+Upload multiple files from the same page. Initialization filenames must start
+with _. Upload these before jobs: files uploaded to a running watcher can start
+immediately. Files are copied locally, up to 512 MB each. Duplicate filenames
+are rejected; existing files are not replaced.
+
+The watcher uses _*.sas from the shared folder plus the inbox, in alphabetical
+filename order. --lib (or the override dropdown) still replaces this list with
+one selected initialization file. Defaults still use files beside pysas.py.
+
+Keep PC awake prevents Windows idle sleep and display timeout while enabled.
+It does not click/type, override manual sleep or closing the lid, or bypass
+organization screen-lock policies. It resets when the server closes.
+
+The scheduler now runs always_run tasks despite stop-on-error and worker
+exceptions. Dependencies must still finish. Explicit skip wins. Continuation
+reruns always_run tasks even when a previous run completed them successfully.
 
 Bundle folders
 --------------

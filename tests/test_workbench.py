@@ -186,11 +186,30 @@ class WorkbenchTests(unittest.TestCase):
         self.assertEqual(restored.commands["stale"]["status"], "UNKNOWN")
         self.assertEqual(restored.commands["stale"]["tasks"]["file"]["status"], "UNKNOWN")
 
+    def test_configured_inputs_are_listed_and_passed_to_engine(self):
+        with tempfile.TemporaryDirectory() as folder:
+            inputs = Path(folder).resolve()
+            (inputs / 'job.sas').write_text('run;')
+            (inputs / 'project.egp').write_text('fake')
+            (inputs / '_init.sas').write_text('init;')
+            self.app.update_folders({'inputs': str(inputs), 'init': str(inputs)})
+            self.assertIn(str(inputs / 'job.sas'), self.app.inventory())
+            from types import SimpleNamespace
+            with patch('pysas_ui.os', SimpleNamespace(name='nt')):
+                _, args = self.app.arguments({'action': 'run', 'program': str(inputs / 'job.sas')})
+            self.assertEqual(args[args.index('--init-dir') + 1], str(inputs))
+            self.assertEqual(args[args.index('--template') + 1], str(inputs / 'project.egp'))
+            self.assertEqual(ui.Workbench(self.root).folders()['inputs'], str(inputs))
+            self.app.commands['active'] = {'status': 'RUNNING'}
+            with self.assertRaisesRegex(ValueError, 'active commands'):
+                self.app.update_folders({'inputs': str(self.root)})
+
     def test_native_execution_gate(self):
         if os.name != "nt":
             with self.assertRaisesRegex(ValueError, "Windows"):
                 self.app.arguments({"action": "watch"})
-        with patch.object(ui.os, "name", "nt"):
+        from types import SimpleNamespace
+        with patch("pysas_ui.os", SimpleNamespace(name="nt")):
             with self.assertRaisesRegex(ValueError, "Workers"):
                 self.app.arguments({"action": "watch", "workers": 0.2})
 
@@ -309,6 +328,20 @@ class HttpTests(unittest.TestCase):
             self.assertIn("Content-Security-Policy", headers)
         _, body, _ = self.request("GET", "/api/state")
         self.assertIn("token", json.loads(body))
+
+    def test_http_upload_and_folder_settings(self):
+        headers = {'X-PySAS-Token': self.server.token, 'Content-Type': 'application/json'}
+        status, body, _ = self.request('POST', '/api/folders', json.dumps({'inputs': str(self.root), 'init': str(self.root), 'inbox': str(self.root / 'runner/inbox')}), headers)
+        self.assertEqual(status, 200, body)
+        status, body, _ = self.request('POST', '/api/upload?target=init&name=_setup.sas', b'init;', headers)
+        self.assertEqual(status, 200, body)
+        self.assertEqual((self.root / '_setup.sas').read_bytes(), b'init;')
+        self.assertEqual(self.request('POST', '/api/upload?target=init&name=job.sas', b'run;', headers)[0], 400)
+        self.assertEqual(self.request('POST', '/api/upload?target=inputs&name=secret.sas', b'run;')[0], 403)
+        self.assertEqual(self.request('POST', '/api/upload?target=inbox&name=job.sas', b'run;', headers)[0], 200)
+        self.assertEqual(self.server.app.state()['queued'], ['job.sas'])
+        self.assertEqual(self.request('POST', '/api/upload?target=inbox&name=job.sas', b'edit;', headers)[0], 400)
+        self.assertEqual((self.root / 'runner/inbox/job.sas').read_bytes(), b'run;')
 
     def test_cross_origin_host_and_missing_token_rejected(self):
         self.assertEqual(self.request("GET", "/api/state", headers={"Host": "evil.example"})[0], 403)

@@ -1,6 +1,6 @@
 # Scheduler schema
 
-PySAS 0.3.2 reads an Excel workbook and uses the worksheet named `Schedule` when it exists; otherwise it reads the first worksheet.
+PySAS 0.3.4 reads an Excel workbook and uses the worksheet named `Schedule` when it exists; otherwise it reads the first worksheet.
 
 The public repository includes [`examples/schedule_example.csv`](../examples/schedule_example.csv) as a sanitized example. To use it as a workbook template, open it in Excel, save it as `Schedule.xlsx`, and name the worksheet `Schedule`.
 
@@ -16,9 +16,9 @@ The public repository includes [`examples/schedule_example.csv`](../examples/sch
 | `row_end` | Integer or blank | Optional last source line to execute. Row bounds are inclusive. |
 | `section` | Text | Free-form grouping or documentation field. |
 | `stop_process_on_error` | Boolean-like value | If enabled and the task fails, PySAS stops launching additional normal tasks. |
-| `stop_program_on_error` | Boolean-like value | Reserved scheduler control field in 0.3.2; retained in task metadata but not currently used to alter execution independently. |
+| `stop_program_on_error` | Boolean-like value | Reserved scheduler control field in 0.3.4; retained in task metadata but not currently used to alter execution independently. |
 | `max_parallel` | Positive integer | Concurrency value used when deriving the scheduler worker limit. |
-| `always_run` | Boolean-like value | Allows cleanup/finalisation tasks to run despite failed prerequisites where scheduler rules permit. |
+| `always_run` | Boolean-like value | Runs after prerequisites finish, even if they failed, were blocked, or were stopped by stop-on-error. Explicit skip still takes precedence. |
 
 ## Example dependency graph
 
@@ -36,7 +36,7 @@ The example schedule represents this flow:
 
 ## Validation behaviour
 
-Before execution PySAS 0.3.2 checks key structural conditions including:
+Before execution PySAS 0.3.4 checks key structural conditions including:
 
 - duplicate `task_id` values;
 - dependencies that reference unknown tasks;
@@ -51,3 +51,17 @@ Keep task IDs stable across reruns. They are used by the continuation workflow t
 For production schedules, prefer small task units with explicit dependencies over one very large program. That makes concurrency, failure isolation and reruns easier to reason about.
 
 Do not publish real client names, server paths, library names, credentials, production datasets or proprietary SAS code in example workbooks.
+
+## Failure and continuation behavior
+
+A stop-on-error failure prevents new normal tasks from launching; these tasks
+receive `STOPPED_ON_ERROR`. Tasks already running finish. `always_run` tasks
+remain eligible once their prerequisites have reached a final state, including
+failed or blocked states. Worker exceptions are recorded as task failures, so
+cleanup is still scheduled and summaries are retained.
+
+Continuation automatically skips previous successful normal tasks, but reruns
+always-run tasks unless the workbook explicitly marks them skipped. Give cleanup
+explicit dependencies to control when it runs; an always-run task without
+dependencies is eligible at the start. Invalid/circular schedules and forced
+process termination are not overridden by always-run.

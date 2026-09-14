@@ -46,23 +46,20 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'preview') }}
           fail_on_unmatched_files: true
           body: |
-            Local UI preview with blue styling and saved code folders for repeat bundle workflows.
+            PySAS Workbench with scheduler/watcher fixes, configurable input folders, multi-file uploads and Windows keep-awake.
 
-            **Download PySAS-Workbench-Python-0.4.0-preview.3.zip below**, extract the entire ZIP, place your project/SAS/workbook files beside pysas.py, and double-click START_PYSAS.bat.
+            **Download PySAS-Workbench-Python-0.4.0-preview.4.zip below**, extract the entire ZIP and double-click START_PYSAS.bat.
 
-            - Live running filenames and elapsed clocks, plus completed-file history.
-            - Single-file runner, graceful watcher stop, scheduler and continuation.
-            - Individual task durations and total schedule elapsed time.
-            - Bundles, EGP inspection/extraction/repacking, logs, code, results and Excel previews.
-            - Save and switch code folders for bundle pack, verify, and unpack.
-            - Single-file PySAS 0.3.3 adds optional bundle --root; existing terminal commands still work.
-            - Blue accents and icon.
+            - Always-run tasks execute after stop-on-error, blocked dependencies and worker exceptions; continuation reruns them unless explicitly skipped.
+            - Watcher _*.sas files remain shared initialization and are never queued as jobs. Shared-folder and inbox init files are prepended alphabetically; --lib retains its override behavior.
+            - Files & folders: configure project inputs, shared initialization and watcher inbox. Upload multiple files directly, with progress and no replacement of existing files.
+            - Keep PC awake prevents idle sleep/display timeout on Windows without generating clicks. Does not override manual sleep/lid-close or managed lock policies.
+            - Live filenames, elapsed time, saved history, bundle folder shortcuts and blue styling remain included.
+            - pysas.py 0.3.4 remains a standalone single-file CLI. Default paths and existing commands still work; optional --inbox and --init-dir select custom folders.
 
-            When upgrading an existing workspace, copy the updated pysas.py along with the UI files; keep your SAS/EGP/workbook files.
+            Upgrade by copying all application files, including pysas.py and ui_support.py, into your existing workspace. Keep your SAS/EGP/workbook files and .pysas-ui settings.
 
-            Requires Windows, Python 3.10+, configured SAS Enterprise Guide, and openpyxl for Excel functionality. Python and SAS are not bundled. No Node.js or UI installation is required.
-
-            Actual SAS execution must be tested in your Windows/Enterprise Guide environment. Console/SAS output appears when the engine writes it; job clocks and lifecycle states update live. Commands started outside the UI are not monitored live. See START_HERE.txt for setup and preview limitations.
+            Requires Windows, Python 3.10+, configured SAS Enterprise Guide, and openpyxl for Excel features. No Node.js is needed. Automated tests cover lifecycle/scheduling with fake SAS jobs; real Enterprise Guide execution must be tested in your environment.
           files: |
             release/PySAS-Workbench-Python-*.zip
             release/SHA256SUMS.txt
