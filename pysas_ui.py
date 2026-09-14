@@ -21,7 +21,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT
 
-VERSION = "0.4.0-preview.4"
+VERSION = "0.4.0-preview.5"
 APP_DIR = Path(__file__).resolve().parent
 PREFIX = "@@PYSAS_UI@@"
 ACTIVE = {"RUNNING", "STOPPING"}

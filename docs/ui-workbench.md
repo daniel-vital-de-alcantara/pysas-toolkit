@@ -1,6 +1,6 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.4 is a separate browser UI for the standalone PySAS
+The Workbench 0.4.0-preview.5 is a separate browser UI for the standalone PySAS
 0.3.4 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
@@ -96,3 +96,7 @@ Windows, Linux, and macOS and publishes the Python ZIP plus SHA256SUMS for
 
 SAS Enterprise Guide integration must be tested on a configured Windows
 machine; CI uses fake jobs to verify monitoring and shutdown without SAS.
+
+Custom watcher inboxes keep their temporary claimed jobs in `.pysas-claimed`
+inside that inbox, so claiming works across local drives and network shares.
+The default inbox retains the existing `runner/claimed` location.

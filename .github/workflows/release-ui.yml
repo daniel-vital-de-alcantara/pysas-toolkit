@@ -48,7 +48,7 @@ jobs:
           body: |
             PySAS Workbench with scheduler/watcher fixes, configurable input folders, multi-file uploads and Windows keep-awake.
 
-            **Download PySAS-Workbench-Python-0.4.0-preview.4.zip below**, extract the entire ZIP and double-click START_PYSAS.bat.
+            **Download PySAS-Workbench-Python-0.4.0-preview.5.zip below**, extract the entire ZIP and double-click START_PYSAS.bat.
 
             - Always-run tasks execute after stop-on-error, blocked dependencies and worker exceptions; continuation reruns them unless explicitly skipped.
             - Watcher _*.sas files remain shared initialization and are never queued as jobs. Shared-folder and inbox init files are prepended alphabetically; --lib retains its override behavior.

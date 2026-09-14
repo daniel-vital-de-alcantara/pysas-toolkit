@@ -721,7 +721,9 @@ def dashboard(running: dict[str, float], inbox: Path, runs: Path, max_ready: int
 def runner_watch(args: argparse.Namespace) -> int:
     root = ROOT_DIR / "runner"
     inbox = Path(args.inbox).expanduser().resolve() if getattr(args, "inbox", None) else root / "inbox"
-    claimed = root / "claimed"; runs = root / "runs"
+    # Claim on the inbox volume so custom/network inboxes can be moved atomically.
+    claimed = root / "claimed" if inbox.resolve() == (root / "inbox").resolve() else inbox / ".pysas-claimed"
+    runs = root / "runs"
     init_dir = Path(args.init_dir).expanduser().resolve() if getattr(args, "init_dir", None) else None
     if init_dir is not None and not init_dir.is_dir(): raise FileNotFoundError(init_dir)
     for path in (inbox, claimed, runs): path.mkdir(parents=True, exist_ok=True)

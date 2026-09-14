@@ -51,6 +51,7 @@ class EngineTests(unittest.TestCase):
         seen = []
         finished = threading.Event()
         def fake_job(source, project, tables, lib, notify, runs, name, init_dir, extra_init_dir):
+            self.assertEqual(source.parent.parent, inbox.resolve() / '.pysas-claimed')
             seen.append((name, self.engine.compose_sas(source, runs, lib, init_dir, extra_init_dir)))
             finished.set()
             return {'status': 'SUCCESS', 'run_dir': runs / 'job'}
