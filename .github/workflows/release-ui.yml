@@ -1,0 +1,64 @@
+name: Test and release PySAS Workbench
+
+on:
+  push:
+    branches: [main]
+    tags: ['v0.4.*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m pip install openpyxl
+      - run: python -m unittest discover -s tests -v
+      - run: node --check ui/app.js
+      - run: node --test tests/test_ui.cjs
+  release:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - run: python tools/package_release.py
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: PySAS Workbench ${{ github.ref_name }}
+          prerelease: ${{ contains(github.ref_name, 'preview') }}
+          fail_on_unmatched_files: true
+          body: |
+            First local UI preview for the unchanged PySAS 0.3.2 engine.
+
+            **Download PySAS-Workbench-Python-0.4.0-preview.1.zip below**, extract the entire ZIP, place your project/SAS/workbook files beside pysas.py, and double-click START_PYSAS.bat.
+
+            - Live running filenames and elapsed clocks, plus completed-file history.
+            - Single-file runner, graceful watcher stop, scheduler and continuation.
+            - Individual task durations and total schedule elapsed time.
+            - Bundles, EGP inspection/extraction/repacking, logs, code, results and Excel previews.
+            - Python engine unchanged; existing terminal commands still work.
+
+            Requires Windows, Python 3.10+, configured SAS Enterprise Guide, and openpyxl for Excel functionality. Python and SAS are not bundled. No Node.js or UI installation is required.
+
+            Actual SAS execution must be tested in your Windows/Enterprise Guide environment. Console/SAS output appears when the engine writes it; job clocks and lifecycle states update live. Commands started outside the UI are not monitored live. See START_HERE.txt for setup and preview limitations.
+          files: |
+            release/PySAS-Workbench-Python-*.zip
+            release/SHA256SUMS.txt

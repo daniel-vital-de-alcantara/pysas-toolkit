@@ -45,3 +45,7 @@ Schedule.xlsx
 .env
 .env.*
 *.local
+
+# Local workbench state and release artifacts
+.pysas-ui/
+release/

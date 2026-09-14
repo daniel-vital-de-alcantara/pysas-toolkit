@@ -16,6 +16,22 @@ It grew out of day-to-day model-development and consulting work where large SAS 
 | Excel dependency scheduler | Implemented | Run EGP programs according to dependencies, skip/error rules and a parallelism limit |
 | Schedule continuation | Implemented | Resume a prior schedule while automatically skipping tasks that already completed successfully |
 
+## Local UI preview
+
+The **PySAS Workbench** adds a local browser interface while keeping `pysas.py`
+unchanged. It includes live running filenames and elapsed time, completed-run
+history, a runner and watcher, schedules with per-task clocks, bundle/EGP tools,
+and a log/code/results inspector.
+
+Download the **Python ZIP** from [GitHub Releases](https://github.com/daniel-vital-de-alcantara/pysas-toolkit/releases),
+extract it completely, put your SAS/EGP/workbook files beside `pysas.py`, and
+double-click **START_PYSAS.bat**. Requires Python 3.10+ and your existing Windows /
+Enterprise Guide setup; `openpyxl` is required for Excel features. No Node.js or
+frontend installation is needed.
+
+See [START_HERE.txt](START_HERE.txt) and the [workbench guide](docs/ui-workbench.md).
+The command-line toolkit remains version 0.3.2; the UI preview is 0.4.0-preview.1.
+
 ## Requirements
 
 PySAS 0.3.2 is designed for controlled Windows environments with:

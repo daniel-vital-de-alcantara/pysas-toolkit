@@ -1,0 +1,268 @@
+from __future__ import annotations
+import contextlib
+import hashlib
+import http.client
+import io
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import unittest
+from unittest.mock import patch
+import zipfile
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+import pysas_ui as ui
+import ui_worker as worker
+
+
+class WorkbenchTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        shutil.copy2(ROOT / "pysas.py", self.root / "pysas.py")
+        self.app = ui.Workbench(self.root)
+
+    def tearDown(self):
+        deadline = time.time() + 5
+        while self.app.processes and time.time() < deadline:
+            time.sleep(.05)
+        self.temp.cleanup()
+
+    def wait_command(self, identifier):
+        deadline = time.time() + 10
+        while identifier in self.app.processes and time.time() < deadline:
+            time.sleep(.05)
+        self.assertNotIn(identifier, self.app.processes)
+        return self.app.commands[identifier]
+
+    def test_bundle_commands_execute_original_engine(self):
+        (self.root / "example.sas").write_text("data demo; x=1; run;\n")
+        result = self.app.launch({"action": "bundle-pack"})
+        item = self.wait_command(result["id"])
+        self.assertEqual(item["status"], "SUCCESS")
+        self.assertGreater(item["elapsed"], 0)
+        self.assertTrue((self.root / "codebase.sasbundle.txt").exists())
+        result = self.app.launch({"action": "bundle-verify"})
+        self.assertEqual(self.wait_command(result["id"])["status"], "SUCCESS")
+        (self.root / "example.sas").write_text("changed")
+        result = self.app.launch({"action": "bundle-unpack"})
+        self.assertEqual(self.wait_command(result["id"])["status"], "SUCCESS")
+        self.assertIn("data demo", (self.root / "example.sas").read_text())
+        self.assertTrue(list((self.root / "_codebase_backups").rglob("example.sas")))
+        restored = ui.Workbench(self.root)
+        self.assertEqual(len(restored.commands), 3)
+
+    def test_egp_round_trip(self):
+        with zipfile.ZipFile(self.root / "demo.egp", "w") as z:
+            z.writestr("Program1/code.sas", "proc print; run;")
+            z.writestr("project.xml", "<Project/>")
+        for action in ("egp-inspect", "egp-extract"):
+            item = self.wait_command(self.app.launch({"action": action, "project": "demo.egp"})["id"])
+            self.assertEqual(item["status"], "SUCCESS")
+        extracted = list(self.root.rglob(".pysas_egp_manifest.json"))[0].parent
+        item = self.wait_command(self.app.launch({"action": "egp-pack", "source": str(extracted), "template": "demo.egp", "output": "updated.egp"})["id"])
+        self.assertEqual(item["status"], "SUCCESS")
+        with zipfile.ZipFile(self.root / "updated.egp") as z:
+            self.assertEqual(z.read("project.xml"), b"<Project/>")
+
+    def test_path_escape_and_command_injection_rejected(self):
+        for value in ("../outside.txt", str(self.root.parent / "outside.txt")):
+            with self.assertRaises(ValueError):
+                self.app.arguments({"action": "bundle-pack", "output": value})
+            with self.assertRaises(ValueError):
+                self.app.preview(value)
+        with self.assertRaises(ValueError):
+            self.app.arguments({"action": "shell", "command": "echo unsafe"})
+        with self.assertRaises(ValueError):
+            self.app.arguments({"action": "bundle-pack", "output": "pysas.py"})
+        _, args = self.app.arguments({"action": "bundle-pack", "output": "name & literal.txt"})
+        self.assertEqual(args[-1], str((self.root / "name & literal.txt").resolve()))
+
+    def test_monitor_preserves_elapsed_and_status(self):
+        item = {"id": "test", "tasks": {}}
+        self.app.event(item, {"event": "plan", "tasks": [{"task_id": "A", "program": "prepare", "depends_on": [], "skip": False}]})
+        self.app.event(item, {"event": "start", "key": "A", "name": "prepare", "kind": "task", "time": 100})
+        self.app.event(item, {"event": "location", "key": "A", "path": self.root / "runs/test/tasks/A"})
+        self.assertEqual(item["tasks"]["A"]["status"], "RUNNING")
+        self.assertEqual(item["tasks"]["A"]["started"], 100)
+        self.app.event(item, {"event": "finish", "key": "A", "status": "FAILED", "time": 107})
+        self.assertEqual(item["tasks"]["A"]["elapsed"], 7)
+        self.app.event(item, {"event": "summary", "path": self.root / "runs/test", "tasks": [{"task_id": "A", "program": "prepare", "status": "FAILED", "elapsed": 7}, {"task_id": "B", "program": "next", "status": "BLOCKED_DEPENDENCY", "elapsed": 0}]})
+        self.assertEqual(item["tasks"]["B"]["status"], "BLOCKED_DEPENDENCY")
+
+    def test_historical_status_and_duration(self):
+        complete = self.root / "runner/runs/20260914__done"
+        complete.mkdir(parents=True)
+        (complete / "status.txt").write_text("status=SAS_ERROR\nsource=check.sas\nstarted=2026-09-14T12:00:00\nelapsed_seconds=65.4\n")
+        unknown = self.root / "runner/runs/20260914__unfinished"
+        unknown.mkdir()
+        old_schedule = self.root / "runs/old__schedule"
+        old_schedule.mkdir(parents=True)
+        (old_schedule / "run_summary.csv").write_text("task_id,program,status,elapsed,depends_on,message\nA,one,SUCCESS,10,,\nB,two,SUCCESS,10,,\n")
+        rows = {r["name"]: r for r in self.app.history()}
+        self.assertEqual(rows["check.sas"]["elapsed"], 65.4)
+        self.assertEqual(rows["check.sas"]["status"], "SAS_ERROR")
+        self.assertEqual(rows[unknown.name]["status"], "UNKNOWN")
+        self.assertIsNone(rows[old_schedule.name]["elapsed"])
+        self.assertEqual(rows[old_schedule.name]["status"], "SUCCESS")
+
+    def test_interrupted_commands_are_unknown_on_restart(self):
+        item = {"id": "stale", "action": "watch", "status": "RUNNING", "tasks": {"file": {"status": "RUNNING"}}}
+        self.app.save(item)
+        restored = ui.Workbench(self.root)
+        self.assertEqual(restored.commands["stale"]["status"], "UNKNOWN")
+        self.assertEqual(restored.commands["stale"]["tasks"]["file"]["status"], "UNKNOWN")
+
+    def test_native_execution_gate(self):
+        if os.name != "nt":
+            with self.assertRaisesRegex(ValueError, "Windows"):
+                self.app.arguments({"action": "watch"})
+        with patch.object(ui.os, "name", "nt"):
+            with self.assertRaisesRegex(ValueError, "Workers"):
+                self.app.arguments({"action": "watch", "workers": 0.2})
+
+    def test_excel_preview_is_bounded(self):
+        try:
+            import openpyxl
+        except ImportError:
+            self.skipTest("openpyxl is optional locally")
+        book = openpyxl.Workbook()
+        for n in range(150):
+            book.active.append([n, "value"])
+        book.save(self.root / "tables.xlsx")
+        result = self.app.preview("tables.xlsx")
+        self.assertEqual(len(result["sheets"][0]["rows"]), 101)
+
+
+class ObservationTests(unittest.TestCase):
+    def test_adapter_calls_original_functions_and_reports_events(self):
+        engine = worker.load_engine(ROOT / "pysas.py")
+        calls = []
+        def fake_job(source, *args, **kwargs):
+            calls.append((source, args, kwargs))
+            engine.execute_eg("RUNFILE", Path("p.egp"), source, "test", 0, 0, Path("run"), False)
+            return {"name": source.name, "status": "SUCCESS", "elapsed": 2.5, "run_dir": Path("run")}
+        engine.run_job = fake_job
+        engine.execute_eg = lambda *a: (0, "done")
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            worker.observe(engine)
+            result = engine.run_job(Path("hello.sas"), "sentinel", tables=True)
+        self.assertEqual(calls, [(Path("hello.sas"), ("sentinel",), {"tables": True})])
+        self.assertEqual(result["elapsed"], 2.5)
+        events = [json.loads(line[len(worker.PREFIX):]) for line in buffer.getvalue().splitlines()]
+        self.assertEqual([e["event"] for e in events], ["start", "location", "finish"])
+        self.assertEqual(events[-1]["elapsed"], 2.5)
+
+    def test_exceptions_are_observed_then_reraised(self):
+        engine = worker.load_engine(ROOT / "pysas.py")
+        def fail(*args, **kwargs):
+            raise RuntimeError("automation failed")
+        engine.run_job = fail
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            worker.observe(engine)
+            with self.assertRaisesRegex(RuntimeError, "automation failed"):
+                engine.run_job(Path("bad.sas"))
+        self.assertIn('"status": "FAILED"', output.getvalue())
+
+    def test_watcher_stop_allows_running_job_to_finish(self):
+        # Exercise the real adapter control pipe on Windows and POSIX without SAS.
+        with tempfile.TemporaryDirectory() as folder:
+            engine = Path(folder) / "fake_engine.py"
+            engine.write_text("""import concurrent.futures, time
+from pathlib import Path
+def execute_eg(*a): return (0, '')
+def run_job(source):
+    time.sleep(0.6)
+    return dict(name=source.name, status='SUCCESS', elapsed=0.6, run_dir=Path('run'))
+def scheduler_task(*a): pass
+def load_schedule(*a): return []
+def write_summary(*a): pass
+def main(args):
+    executor = concurrent.futures.ThreadPoolExecutor(1)
+    executor.submit(run_job, Path('test.sas'))
+    try:
+        while True: time.sleep(0.05)
+    except KeyboardInterrupt:
+        print('Watcher stopped; waiting for jobs.', flush=True)
+        return 130
+    finally: executor.shutdown(wait=True)
+""")
+            process = subprocess.Popen([sys.executable, "-u", str(ROOT / "ui_worker.py"), str(engine), "runner", "watch"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
+            try:
+                first = process.stdout.readline()
+                self.assertIn('"event": "start"', first)
+                output, errors = process.communicate("stop\n", timeout=10)
+                self.assertEqual(process.returncode, 130, errors)
+                self.assertIn('"status": "SUCCESS"', output)
+                self.assertIn("waiting for jobs", output)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate()
+
+
+class HttpTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        shutil.copy2(ROOT / "pysas.py", self.root / "pysas.py")
+        self.server = ui.make_server(self.root)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+        self.temp.cleanup()
+
+    def request(self, method, path, body=None, headers=None):
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port)
+        connection.request(method, path, body=body, headers=headers or {})
+        response = connection.getresponse()
+        result = response.status, response.read(), dict(response.getheaders())
+        connection.close()
+        return result
+
+    def test_second_launcher_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "already running"):
+            ui.make_server(self.root)
+
+    def test_serves_ui_assets_and_state(self):
+        for path in ("/", "/app.js", "/style.css", "/icon.svg", "/api/state"):
+            status, body, headers = self.request("GET", path)
+            self.assertEqual(status, 200, path)
+            self.assertIn("Content-Security-Policy", headers)
+        _, body, _ = self.request("GET", "/api/state")
+        self.assertIn("token", json.loads(body))
+
+    def test_cross_origin_host_and_missing_token_rejected(self):
+        self.assertEqual(self.request("GET", "/api/state", headers={"Host": "evil.example"})[0], 403)
+        self.assertEqual(self.request("GET", "/api/state", headers={"Origin": "https://evil.example"})[0], 403)
+        self.assertEqual(self.request("POST", "/api/launch", body='{"action":"bundle-pack"}')[0], 403)
+        self.assertEqual(self.request("GET", "/api/preview?path=../outside.txt")[0], 400)
+
+
+class PackagingTests(unittest.TestCase):
+    def test_zip_is_explicit_and_engine_is_unmodified(self):
+        from tools.package_release import build, FILES
+        with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()):
+            archive = build(folder)
+            with zipfile.ZipFile(archive) as z:
+                self.assertEqual(set(z.namelist()), {"PySAS-Workbench/" + name for name in FILES})
+                self.assertEqual(z.read("PySAS-Workbench/pysas.py"), (ROOT / "pysas.py").read_bytes())
+                self.assertFalse(any(".pysas-ui" in name for name in z.namelist()))
+            checksum = (Path(folder) / "SHA256SUMS.txt").read_text().split()[0]
+            self.assertEqual(checksum, hashlib.sha256(archive.read_bytes()).hexdigest())
+
+
+if __name__ == "__main__":
+    unittest.main()

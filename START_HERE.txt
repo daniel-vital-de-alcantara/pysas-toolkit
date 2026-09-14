@@ -1,0 +1,73 @@
+PySAS Workbench 0.4.0-preview.1
+==============================
+
+1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
+2. Place your EGP project, SAS programs, Schedule.xlsx, and _*.sas init files
+   beside pysas.py in that folder. You can also copy the UI files into your
+   existing PySAS 0.3.2 workspace; keep your original pysas.py.
+3. Double-click START_PYSAS.bat. Your browser opens the local workbench.
+4. Keep the launcher window open while jobs run. Stop the watcher using
+   "Stop after current files", and let active jobs finish before closing.
+
+Requirements
+------------
+- Windows with Python 3.10+ and SAS Enterprise Guide configured for your SAS
+  environment. This ZIP does not bundle Python or SAS Enterprise Guide.
+- openpyxl is needed for schedules and Excel exports/previews. If it is not
+  already installed, use your approved installation process, or run:
+      py -3 -m pip install openpyxl
+- No Node.js, npm, Git, administrator access, or UI dependencies are needed.
+  Once existing Python/SAS requirements are met, the workbench works offline.
+
+What is included
+----------------
+- Running filenames and elapsed time updated every second.
+- Runner, watcher, schedule, schedule continuation, bundles, and EGP tools.
+- Scheduler task statuses, individual task clocks, and total schedule duration.
+- Run history, searchable statuses, console, SAS logs/code and file downloads.
+- Excel previews (up to 100 data rows, 30 columns and 10 sheets per workbook).
+- The original pysas.py 0.3.2, unchanged. All CLI commands still work.
+
+Notes for this first preview
+----------------------------
+The UI listens only on 127.0.0.1. Your files are not uploaded to a hosted UI.
+SAS still uses your existing Enterprise Guide server connection.
+
+The UI monitors commands started in the UI. Existing completed runs are read
+from disk, but commands started separately in a terminal are not monitored
+live. Run one UI launcher and one watcher per workspace.
+
+SAS logs and Enterprise Guide console output appear when the existing engine
+writes them, generally when each job finishes. Elapsed clocks and start/finish
+states are live, but this is not live streaming of SAS statements.
+
+Legacy schedule folders have per-task durations, but do not record total
+wall-clock time. The UI shows a dash for that total rather than adding up
+parallel task durations. New UI schedule runs retain the actual total time.
+
+The UI stores command history in .pysas-ui. An interrupted run with no final
+status is marked Unknown; check its console and output before rerunning.
+History lists up to 500 run folders and 200 commands. Run inspectors list up
+to 1,000 files. Very large workspaces may take longer to refresh.
+
+Schedule dependencies remain managed in Excel. There is no calendar-based
+scheduler, dependency graph editor, or force-cancel button in this preview.
+The original engine's documented scheduler limitations still apply.
+
+The interface and adapter are tested automatically on Windows, macOS and
+Linux. Actual SAS execution needs testing on your Windows/Enterprise Guide
+installation; it cannot be integration-tested without that environment.
+
+Advanced
+--------
+Use a different existing workspace:
+  py -3 pysas_ui.py --workspace "C:\your\workspace"
+
+Use a fixed local port:
+  py -3 pysas_ui.py --port 8765
+
+macOS/Linux can preview the UI, inspect history, and use bundle/EGP tools:
+  python3 pysas_ui.py
+SAS execution is only available on Windows.
+
+Project: https://github.com/daniel-vital-de-alcantara/pysas-toolkit
