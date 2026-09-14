@@ -29,7 +29,7 @@ from typing import Any, Iterable
 from xml.etree import ElementTree as ET
 
 
-VERSION = "0.3.2"
+VERSION = "0.3.3"
 ROOT_DIR = Path(__file__).resolve().parent
 CODEBASE_FILE = "codebase.sasbundle.txt"
 BACKUP_FOLDER = "_codebase_backups"
@@ -148,42 +148,58 @@ def marker(prefix: str, data: dict[str, Any], suffix: str) -> str:
     return f"{prefix} {json.dumps(data, ensure_ascii=False, sort_keys=True)} {suffix}\n"
 
 
-def discover_sas(recursive: bool) -> list[Path]:
-    paths = ROOT_DIR.glob("**/*.sas" if recursive else "*.sas")
-    backup = (ROOT_DIR / BACKUP_FOLDER).resolve()
+def discover_sas(recursive: bool, root: Path = ROOT_DIR) -> list[Path]:
+    paths = root.glob("**/*.sas" if recursive else "*.sas")
+    backup = (root / BACKUP_FOLDER).resolve()
     result = []
     for path in paths:
-        if not path.is_file():
+        if not path.is_file() or not path.resolve().is_relative_to(root.resolve()):
             continue
         try:
             path.resolve().relative_to(backup)
             continue
         except ValueError:
             result.append(path)
-    return sorted(result, key=lambda p: p.relative_to(ROOT_DIR).as_posix().casefold())
+    return sorted(result, key=lambda p: p.relative_to(root).as_posix().casefold())
+
+
+def bundle_root(args: argparse.Namespace) -> Path:
+    value = getattr(args, "root", None)
+    root = Path(value).expanduser().resolve() if value else ROOT_DIR
+    if not root.is_dir():
+        raise ValueError(f"Code folder does not exist: {root}")
+    return root
+
+
+def bundle_target(root: Path, relative: str) -> Path:
+    target = root.joinpath(*PurePosixPath(relative).parts)
+    if not target.resolve().is_relative_to(root.resolve()):
+        raise ValueError(f"Bundle path escapes the code folder: {relative}")
+    return target
 
 
 def bundle_pack(args: argparse.Namespace) -> int:
-    paths = discover_sas(args.recursive)
+    root = bundle_root(args)
+    paths = discover_sas(args.recursive, root)
     if not paths:
         raise ValueError("No SAS files found")
     hashes: list[str] = []
     chunks = [marker(BUNDLE_START, {
         "format": "sas-codebase-bundle", "version": FORMAT_VERSION,
-        "generated_utc": utc_now(), "root_name": ROOT_DIR.name,
+        "generated_utc": utc_now(), "root_name": root.name,
         "recursive": bool(args.recursive), "file_count": len(paths),
     }, BUNDLE_END), "\n"]
     for path in paths:
         content = normalized(read_text(path))
         digest = sha256_text(content)
         hashes.append(digest)
-        rel = path.relative_to(ROOT_DIR).as_posix()
+        rel = path.relative_to(root).as_posix()
         chunks += [marker(FILE_START, {"path": rel, "sha256": digest, "chars": len(content)}, FILE_END),
                    content, f"{FILE_END}\n\n"]
     chunks.append(marker(FOOTER_START, {
         "file_count": len(paths), "manifest_sha256": sha256_text("".join(hashes)),
     }, FOOTER_END))
-    output = ROOT_DIR / (args.output or CODEBASE_FILE)
+    output = root / (args.output or CODEBASE_FILE)
     output.write_text("".join(chunks), encoding="utf-8", newline="\n")
     print(f"Packed {len(paths)} SAS file(s): {output}")
     return 0
@@ -251,12 +267,13 @@ def validate_bundle(path: Path) -> tuple[list[dict[str, Any]], list[str]]:
 
 
 def bundle_verify(args: argparse.Namespace) -> int:
-    path = ROOT_DIR / (args.bundle or CODEBASE_FILE)
+    root = bundle_root(args)
+    path = root / (args.bundle or CODEBASE_FILE)
     files, errors = validate_bundle(path)
     edited = sum(bool(i["edited"]) for i in files)
     identical = different = missing = 0
     for item in files:
-        target = ROOT_DIR.joinpath(*PurePosixPath(item["meta"]["path"]).parts)
+        target = bundle_target(root, item["meta"]["path"])
         if not target.exists(): missing += 1
         elif normalized(read_text(target)) == item["content"]: identical += 1
         else: different += 1
@@ -271,20 +288,21 @@ def bundle_verify(args: argparse.Namespace) -> int:
 
 
 def bundle_unpack(args: argparse.Namespace) -> int:
-    path = ROOT_DIR / (args.bundle or CODEBASE_FILE)
+    root = bundle_root(args)
+    path = root / (args.bundle or CODEBASE_FILE)
     files, errors = validate_bundle(path)
     if errors: raise ValueError("; ".join(errors))
     changed: list[tuple[Path, str]] = []
     for item in files:
-        target = ROOT_DIR.joinpath(*PurePosixPath(item["meta"]["path"]).parts)
+        target = bundle_target(root, item["meta"]["path"])
         if not target.exists() or normalized(read_text(target)) != item["content"]:
             changed.append((target, item["content"]))
     backup: Path | None = None
     existing = [p for p, _ in changed if p.exists()]
     if existing and not args.no_backup:
-        backup = ROOT_DIR / BACKUP_FOLDER / now_stamp()
+        backup = root / BACKUP_FOLDER / now_stamp()
         for source in existing:
-            destination = backup / source.relative_to(ROOT_DIR)
+            destination = backup / source.relative_to(root)
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
     for target, content in changed:
@@ -909,6 +927,9 @@ def parser() -> argparse.ArgumentParser:
     bp = bsub.add_parser("pack"); bp.add_argument("--recursive", action="store_true"); bp.add_argument("--output"); bp.set_defaults(func=bundle_pack)
     bv = bsub.add_parser("verify"); bv.add_argument("--bundle"); bv.set_defaults(func=bundle_verify)
     bu = bsub.add_parser("unpack"); bu.add_argument("--bundle"); bu.add_argument("--no-backup", action="store_true"); bu.set_defaults(func=bundle_unpack)
+
+    for command in (bp, bv, bu):
+        command.add_argument("--root", help="code folder to pack, compare or restore (default: folder beside pysas.py)")
 
     egp = subs.add_parser("egp", help="inspect, extract or repack EGP projects")
     esub = egp.add_subparsers(dest="egp_command", required=True)

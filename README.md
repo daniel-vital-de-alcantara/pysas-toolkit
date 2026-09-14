@@ -1,12 +1,12 @@
 # PySAS Toolkit
 
-**PySAS 0.3.2** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
+**PySAS 0.3.3** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
 
 It grew out of day-to-day model-development and consulting work where large SAS processes were difficult to inspect, rerun, parallelise, move between environments and review consistently. The current implementation brings those workflows together in one portable `pysas.py` utility.
 
 ## What it does
 
-| Component | Status in 0.3.2 | Purpose |
+| Component | Status in 0.3.3 | Purpose |
 | --- | --- | --- |
 | SAS bundle utility | Implemented | Pack, verify and safely unpack SAS source trees with SHA-256 integrity metadata and backups |
 | EGP tools | Implemented | Inspect EGP archives, extract embedded SAS programs and conservatively repack them into an EGP template |
@@ -18,8 +18,7 @@ It grew out of day-to-day model-development and consulting work where large SAS 
 
 ## Local UI preview
 
-The **PySAS Workbench** adds a local browser interface while keeping `pysas.py`
-unchanged. It includes live running filenames and elapsed time, completed-run
+The **PySAS Workbench** adds a local browser interface around the standalone `pysas.py` engine. It includes live running filenames and elapsed time, completed-run
 history, a runner and watcher, schedules with per-task clocks, bundle/EGP tools,
 and a log/code/results inspector.
 
@@ -30,11 +29,11 @@ Enterprise Guide setup; `openpyxl` is required for Excel features. No Node.js or
 frontend installation is needed.
 
 See [START_HERE.txt](START_HERE.txt) and the [workbench guide](docs/ui-workbench.md).
-The command-line toolkit remains version 0.3.2; the UI preview is 0.4.0-preview.2.
+The command-line toolkit is version 0.3.3; the UI preview is 0.4.0-preview.3.
 
 ## Requirements
 
-PySAS 0.3.2 is designed for controlled Windows environments with:
+PySAS 0.3.3 is designed for controlled Windows environments with:
 
 - Python 3.9+ recommended;
 - SAS Enterprise Guide installed and configured for the target SAS environment;
@@ -89,6 +88,19 @@ py pysas.py bundle pack --recursive
 py pysas.py bundle verify
 py pysas.py bundle unpack
 ```
+
+Set a code folder explicitly when working outside the script directory:
+
+```powershell
+py pysas.py bundle pack --root "C:\Projects\Model A" --recursive
+py pysas.py bundle verify --root "C:\Projects\Model A"
+py pysas.py bundle unpack --root "C:\Projects\Model A"
+```
+
+Without `--root`, existing commands still use the folder beside `pysas.py`.
+The UI's Bundles panel lets you save frequently used code folders and switch
+between them. Relative bundle/output filenames use the selected code folder.
+Saved paths and the last-used folder persist per workspace.
 
 Before replacing existing source files, unpacking creates timestamped backups under `_codebase_backups/` unless `--no-backup` is explicitly supplied. Bundle paths are validated to prevent absolute-path or `..` traversal outside the working directory.
 
@@ -236,13 +248,13 @@ Important limitations include:
 - Enterprise Guide COM automation must be available locally;
 - EGP archive structure can vary across Enterprise Guide versions;
 - table export depends on Enterprise Guide exposing output datasets through the automation model;
-- `stop_program_on_error` is part of the scheduler schema in 0.3.2 but is not yet used to alter execution behaviour independently;
+- `stop_program_on_error` is part of the scheduler schema in 0.3.3 but is not yet used to alter execution behaviour independently;
 - scheduler dependency cycles are surfaced as unresolved/blocked tasks during execution rather than by a separate pre-run graph-cycle algorithm;
 - automated Windows/Enterprise Guide integration tests are not yet included in the public repository.
 
 ## Version
 
-Current published implementation: **0.3.2**.
+Current published implementation: **0.3.3**.
 
 ```powershell
 py pysas.py version

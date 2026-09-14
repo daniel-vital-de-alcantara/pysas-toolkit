@@ -1,10 +1,11 @@
-PySAS Workbench 0.4.0-preview.2
+PySAS Workbench 0.4.0-preview.3
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
 2. Place your EGP project, SAS programs, Schedule.xlsx, and _*.sas init files
    beside pysas.py in that folder. You can also copy the UI files into your
-   existing PySAS 0.3.2 workspace; keep your original pysas.py.
+   existing workspace, including the updated pysas.py 0.3.3. Keep your SAS,
+   EGP and Excel files. The updated engine remains a standalone single file.
 3. Double-click START_PYSAS.bat. Your browser opens the local workbench.
 4. Keep the launcher window open while jobs run. Stop the watcher using
    "Stop after current files", and let active jobs finish before closing.
@@ -26,9 +27,19 @@ What is included
 - Scheduler task statuses, individual task clocks, and total schedule duration.
 - Run history, searchable statuses, console, SAS logs/code and file downloads.
 - Excel previews (up to 100 data rows, 30 columns and 10 sheets per workbook).
-- The original pysas.py 0.3.2, unchanged. All CLI commands still work.
+- Standalone pysas.py 0.3.3; existing CLI commands still work.
+- Blue styling and saved code folders for repeated bundle operations.
 
-Notes for this first preview
+Bundle folders
+--------------
+In Bundles & EGP, paste a full code-folder path and click Save path. Choose
+between your saved folders using the dropdown. Pack reads SAS files there;
+verify compares against that folder; unpack restores into it with backups.
+Relative bundle/output filenames are resolved in the selected code folder.
+Leave the code-folder field blank to use the workspace. Remove saved path
+only removes the shortcut, never your files. Paths are saved per workspace.
+
+Notes for this preview
 ----------------------------
 The UI listens only on 127.0.0.1. Your files are not uploaded to a hosted UI.
 SAS still uses your existing Enterprise Guide server connection.

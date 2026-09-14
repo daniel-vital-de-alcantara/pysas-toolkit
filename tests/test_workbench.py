@@ -59,6 +59,58 @@ class WorkbenchTests(unittest.TestCase):
         restored = ui.Workbench(self.root)
         self.assertEqual(len(restored.commands), 3)
 
+    def test_saved_external_code_folders_and_bundle_round_trip(self):
+        with tempfile.TemporaryDirectory(prefix="code folder ") as folder:
+            code = Path(folder).resolve()
+            (code / "job.sas").write_text("data external; run;\n")
+            (self.root / "workspace.sas").write_text("data workspace; run;\n")
+            settings = self.app.update_bundle_paths({"path": str(code)})
+            self.assertEqual(settings["paths"], [str(code)])
+            self.app.update_bundle_paths({"path": str(code)})
+            self.assertEqual(len(self.app.bundle_settings()["paths"]), 1)
+            for action in ("bundle-pack", "bundle-verify"):
+                item = self.wait_command(self.app.launch({"action": action, "code_root": str(code)})["id"])
+                self.assertEqual(item["status"], "SUCCESS")
+                self.assertEqual(item["code_root"], str(code))
+            bundle = (code / "codebase.sasbundle.txt").read_text()
+            self.assertIn("job.sas", bundle)
+            self.assertNotIn("workspace.sas", bundle)
+            self.assertFalse((self.root / "codebase.sasbundle.txt").exists())
+            (code / "job.sas").write_text("changed")
+            item = self.wait_command(self.app.launch({"action": "bundle-unpack", "code_root": str(code)})["id"])
+            self.assertEqual(item["status"], "SUCCESS")
+            self.assertIn("data external", (code / "job.sas").read_text())
+            self.assertTrue(list((code / "_codebase_backups").rglob("job.sas")))
+            restored = ui.Workbench(self.root)
+            self.assertEqual(restored.bundle_settings()["last"], str(code))
+            self.assertEqual(restored.bundle_settings()["paths"], [str(code)])
+            restored.update_bundle_paths({"operation": "remove", "path": str(code)})
+            self.assertEqual(restored.bundle_settings()["paths"], [])
+            self.assertTrue((code / "job.sas").exists())
+
+    def test_invalid_code_folder_and_output_escape(self):
+        with self.assertRaisesRegex(ValueError, "does not exist"):
+            self.app.update_bundle_paths({"path": "missing-folder"})
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaises(ValueError):
+                self.app.arguments({"action": "bundle-pack", "code_root": folder, "output": "../escape.txt"})
+
+    def test_single_file_cli_accepts_root_without_ui_modules(self):
+        code = self.root / "code"
+        code.mkdir()
+        (code / "standalone.sas").write_text("proc print; run;")
+        for action in ("pack", "verify", "unpack"):
+            result = subprocess.run([sys.executable, str(self.root / "pysas.py"), "bundle", action, "--root", str(code)], cwd=self.root, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((code / "codebase.sasbundle.txt").exists())
+
+    def test_bundle_target_rejects_escape(self):
+        engine = worker.load_engine(self.root / "pysas.py")
+        with self.assertRaises(ValueError):
+            engine.bundle_target(self.root, "../elsewhere.sas")
+        with self.assertRaises(ValueError):
+            engine.bundle_target(self.root, str(self.root.parent / "elsewhere.sas"))
+
     def test_egp_round_trip(self):
         with zipfile.ZipFile(self.root / "demo.egp", "w") as z:
             z.writestr("Program1/code.sas", "proc print; run;")
@@ -266,7 +318,7 @@ class HttpTests(unittest.TestCase):
 
 
 class PackagingTests(unittest.TestCase):
-    def test_zip_is_explicit_and_engine_is_unmodified(self):
+    def test_zip_contains_current_engine_and_only_release_files(self):
         from tools.package_release import build, FILES
         with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()):
             archive = build(folder)

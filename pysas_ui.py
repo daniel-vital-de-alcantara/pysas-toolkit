@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
-VERSION = "0.4.0-preview.2"
+VERSION = "0.4.0-preview.3"
 APP_DIR = Path(__file__).resolve().parent
 PREFIX = "@@PYSAS_UI@@"
 ACTIVE = {"RUNNING", "STOPPING"}
@@ -91,6 +91,40 @@ class Workbench:
     def save(self, item):
         atomic_json(self.storage / (item["id"] + ".json"), item)
 
+    def bundle_settings(self):
+        settings = read_json(self.storage / "bundle-paths.json", {})
+        return {"paths": settings.get("paths", []), "last": settings.get("last", "")}
+
+    def code_root(self, value):
+        root = Path(str(value).strip()).expanduser() if value else self.root
+        if not root.is_absolute():
+            root = self.root / root
+        root = root.resolve()
+        if not root.is_dir():
+            raise ValueError("Code folder does not exist: " + str(root))
+        return root
+
+    def update_bundle_paths(self, data):
+        operation = data.get("operation", "save")
+        if operation not in {"save", "remove"}:
+            raise ValueError("Unknown saved-path action.")
+        with self.lock:
+            settings = self.bundle_settings()
+            if operation == "save":
+                path = str(self.code_root(data.get("path")))
+                if path not in settings["paths"]:
+                    if len(settings["paths"]) >= 20:
+                        raise ValueError("You can save up to 20 code folders.")
+                    settings["paths"].append(path)
+                settings["last"] = path
+            else:
+                path = str(data.get("path", ""))
+                settings["paths"] = [p for p in settings["paths"] if p != path]
+                if settings["last"] == path:
+                    settings["last"] = ""
+            atomic_json(self.storage / "bundle-paths.json", settings)
+            return settings
+
     def arguments(self, data):
         action = data.get("action", "")
         choices = {
@@ -105,6 +139,9 @@ class Workbench:
         if action in {"run", "watch", "schedule", "continue"} and os.name != "nt":
             raise ValueError("SAS execution requires Windows and SAS Enterprise Guide. File tools and history work here.")
         args = choices[action].copy()
+        file_root = self.code_root(data.get("code_root")) if action.startswith("bundle-") else self.root
+        if action.startswith("bundle-") and data.get("code_root"):
+            args.extend(["--root", str(file_root)])
         required = {"run": "program", "continue": "run_dir", "egp-pack": "source"}
         if action in required:
             value = str(data.get(required[action], "")).strip()
@@ -125,7 +162,7 @@ class Workbench:
         }
         for field in allowed[action]:
             if data.get(field):
-                path = within(self.root, str(data[field]).strip())
+                path = within(file_root, str(data[field]).strip())
                 if field != "output" and not path.is_file():
                     raise ValueError("File not found: " + str(data[field]))
                 if field == "output":
@@ -159,6 +196,7 @@ class Workbench:
             identifier = uuid.uuid4().hex
             item = {"id": identifier, "action": action, "args": args,
                     "name": data.get("program") or data.get("workbook") or data.get("run_dir") or action.replace("-", " "),
+                    "code_root": str(self.code_root(data.get("code_root"))) if action.startswith("bundle-") else None,
                     "started": time.time(), "finished": None, "status": "RUNNING", "tasks": {}, "message": ""}
             env = os.environ.copy()
             env.update(PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
@@ -169,6 +207,10 @@ class Workbench:
             self.commands[identifier] = item
             self.processes[identifier] = process
             self.save(item)
+            if action.startswith("bundle-"):
+                settings = self.bundle_settings()
+                settings["last"] = item["code_root"]
+                atomic_json(self.storage / "bundle-paths.json", settings)
             threading.Thread(target=self.consume, args=(identifier, process), daemon=True).start()
             return {"id": identifier}
 
@@ -306,7 +348,7 @@ class Workbench:
         return {"version": VERSION, "workspace": str(self.root), "windows": os.name == "nt",
                 "openpyxl": importlib.util.find_spec("openpyxl") is not None,
                 "files": self.inventory(), "commands": commands[:200], "history": history,
-                "queued": queued, "now": time.time()}
+                "queued": queued, "bundle_settings": self.bundle_settings(), "now": time.time()}
 
     def details(self, relative):
         path = within(self.root, relative)
@@ -435,6 +477,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Expected an object.")
             if self.path == "/api/launch":
                 self.respond(self.server.app.launch(data))
+            elif self.path == "/api/bundle-paths":
+                self.respond(self.server.app.update_bundle_paths(data))
             elif self.path == "/api/stop":
                 self.respond(self.server.app.stop(data.get("id")))
             else:

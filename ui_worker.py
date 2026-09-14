@@ -1,4 +1,4 @@
-"""Observation adapter for the unchanged PySAS engine. Runs in a child process."""
+"""Observation adapter for the standalone PySAS engine. Runs in a child process."""
 from __future__ import annotations
 import _thread
 import functools

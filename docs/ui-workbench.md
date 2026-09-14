@@ -1,7 +1,7 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.2 is a separate browser UI for the unchanged PySAS
-0.3.2 command-line engine. Download the Python ZIP from GitHub Releases, extract
+The Workbench 0.4.0-preview.3 is a separate browser UI for the standalone PySAS
+0.3.3 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
 
@@ -22,7 +22,11 @@ launches tasks through the existing dependency engine, and supports continuing
 previous schedule runs. The task list displays dependencies and statuses.
 Continue follows the existing engine's semantics, including its skip rules.
 
-Bundles & EGP provides all existing bundle and project commands. Bundle unpack
+Bundles & EGP provides all existing bundle and project commands. Save your
+frequently used code folders and select one before packing, verifying, or
+unpacking. Paths and the last-used folder persist in `.pysas-ui/bundle-paths.json`.
+The single-file CLI supports the same behavior through optional `--root` on
+bundle subcommands. Omitting it preserves the original script-folder default. Bundle unpack
 always retains the engine's backup behavior. The UI confirms that restoration
 will replace source files. It does not expose the CLI's `--no-backup` option.
 
@@ -34,7 +38,7 @@ source text. Download generated reports to open them in their normal app.
 
 - `pysas_ui.py`: standard-library HTTP server bound to loopback, constrained
   command arguments, subprocess management, history/files and previews.
-- `ui_worker.py`: loads the workspace's original `pysas.py` in a separate
+- `ui_worker.py`: loads the workspace's `pysas.py` in a separate
   process; wraps entry/exit of run functions to emit observation events.
   Original function arguments, return values, exceptions and scheduler
   decisions remain under the engine's control.
@@ -43,8 +47,9 @@ source text. Download generated reports to open them in their normal app.
   by Git and excluded from release ZIPs.
 
 POST requests require a per-server token and same-origin validation. Host
-validation also rejects non-loopback hostnames. Paths are restricted to the
-selected workspace. The UI does not accept arbitrary shell commands.
+validation also rejects non-loopback hostnames. Runner and history paths are restricted to the selected workspace. Bundle
+operations can use an explicitly chosen code folder outside the workspace;
+bundle/output filenames are restricted to that code folder. The UI does not accept arbitrary shell commands.
 
 Only UI-launched jobs are monitored live. Existing completed runs are imported
 from `status.txt` and `run_summary.csv`. Old schedule summaries contain per-task
