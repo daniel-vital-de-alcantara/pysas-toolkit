@@ -48,7 +48,7 @@ jobs:
           body: |
             First local UI preview for the unchanged PySAS 0.3.2 engine.
 
-            **Download PySAS-Workbench-Python-0.4.0-preview.1.zip below**, extract the entire ZIP, place your project/SAS/workbook files beside pysas.py, and double-click START_PYSAS.bat.
+            **Download PySAS-Workbench-Python-0.4.0-preview.2.zip below**, extract the entire ZIP, place your project/SAS/workbook files beside pysas.py, and double-click START_PYSAS.bat.
 
             - Live running filenames and elapsed clocks, plus completed-file history.
             - Single-file runner, graceful watcher stop, scheduler and continuation.

@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
-VERSION = "0.4.0-preview.1"
+VERSION = "0.4.0-preview.2"
 APP_DIR = Path(__file__).resolve().parent
 PREFIX = "@@PYSAS_UI@@"
 ACTIVE = {"RUNNING", "STOPPING"}
@@ -208,10 +208,14 @@ class Workbench:
     def consume(self, identifier, process):
         with (self.storage / (identifier + ".txt")).open("w", encoding="utf-8") as log:
             for line in process.stdout:
-                if line.startswith(PREFIX):
+                if PREFIX in line:
+                    before, payload = line.split(PREFIX, 1)
                     try:
                         with self.lock:
-                            self.event(self.commands[identifier], json.loads(line[len(PREFIX):]))
+                            self.event(self.commands[identifier], json.loads(payload))
+                        if before:
+                            log.write(before)
+                            log.flush()
                         continue
                     except (ValueError, KeyError):
                         pass

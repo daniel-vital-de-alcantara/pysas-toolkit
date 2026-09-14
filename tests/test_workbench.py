@@ -97,6 +97,20 @@ class WorkbenchTests(unittest.TestCase):
         self.app.event(item, {"event": "summary", "path": self.root / "runs/test", "tasks": [{"task_id": "A", "program": "prepare", "status": "FAILED", "elapsed": 7}, {"task_id": "B", "program": "next", "status": "BLOCKED_DEPENDENCY", "elapsed": 0}]})
         self.assertEqual(item["tasks"]["B"]["status"], "BLOCKED_DEPENDENCY")
 
+    def test_event_after_partial_console_line_is_not_lost(self):
+        # Python print writes its text and newline separately. A worker event
+        # can therefore follow ordinary console text on the same physical line.
+        from types import SimpleNamespace
+        item = {"id": "mixed", "action": "run", "started": time.time(), "status": "RUNNING", "tasks": {}}
+        self.app.commands["mixed"] = item
+        event = {"event": "start", "key": "A", "name": "a.sas", "time": time.time()}
+        finished = {"event": "finish", "key": "A", "name": "a.sas", "status": "SUCCESS", "elapsed": 2, "time": time.time()}
+        process = SimpleNamespace(stdout=io.StringIO("console text" + worker.PREFIX + json.dumps(event) + "\n" + worker.PREFIX + json.dumps(finished) + "\n"), stdin=io.StringIO(), wait=lambda: 0)
+        self.app.consume("mixed", process)
+        self.assertEqual(item["tasks"]["A"]["status"], "SUCCESS")
+        self.assertEqual(item["tasks"]["A"]["elapsed"], 2)
+        self.assertEqual((self.app.storage / "mixed.txt").read_text(), "console text")
+
     def test_historical_status_and_duration(self):
         complete = self.root / "runner/runs/20260914__done"
         complete.mkdir(parents=True)
