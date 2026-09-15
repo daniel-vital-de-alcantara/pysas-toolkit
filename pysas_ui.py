@@ -718,6 +718,10 @@ def main():
         if window_process is not None:
             from windows_app import close_windows
             close_windows(window_process.pid)
+            try:
+                window_process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                print("Browser is still finishing shutdown.", flush=True)
         server.server_close()
 
 

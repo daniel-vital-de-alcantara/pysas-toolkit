@@ -69,25 +69,43 @@ class WindowsTests(unittest.TestCase):
             user.DestroyWindow(hwnd)
 
     def test_pythonw_server_starts_without_console_and_quits(self):
+        self.run_hidden_server(['--no-browser'])
+
+    def test_real_browser_window_starts_and_closes_with_hidden_server(self):
+        from ui_support import app_browser_candidates
+        if not app_browser_candidates():
+            self.skipTest('Edge/Chrome not installed')
+        self.run_hidden_server([])
+
+    def run_hidden_server(self, options):
         pythonw = Path(sys.executable).with_name('pythonw.exe')
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             shutil.copy2(ROOT / 'pysas.py', root / 'pysas.py')
             ready = root / 'ready'
             process = subprocess.Popen([str(pythonw), str(ROOT / 'pysas_ui.py'), '--workspace', str(root),
-                                        '--no-browser', '--ready-file', str(ready)], creationflags=subprocess.DETACHED_PROCESS)
+                                        '--ready-file', str(ready), *options], creationflags=subprocess.DETACHED_PROCESS)
             try:
-                deadline = time.monotonic() + 20
+                deadline = time.monotonic() + 50
                 while not ready.exists() and process.poll() is None and time.monotonic() < deadline: time.sleep(.1)
                 log = root / '.pysas-ui/launcher.log'
                 self.assertTrue(ready.exists(), log.read_text() if log.exists() else 'No startup log')
+                if not options:
+                    from windows_app import process_windows, window_property
+                    identities = []
+                    for hwnd in process_windows(None):
+                        try:
+                            identities.append(window_property(hwnd, 5))
+                        except OSError:
+                            pass
+                    self.assertIn(app_id(root), identities, log.read_text())
                 url = ready.read_text()
                 with urlopen(url + '/api/state', timeout=5) as response:
                     state = json.load(response)
                 req = Request(url + '/api/quit', data=b'{}', headers={'Content-Type': 'application/json', 'X-PySAS-Token': state['token']})
                 with urlopen(req, timeout=5) as response:
                     self.assertEqual(response.status, 200)
-                self.assertEqual(process.wait(timeout=10), 0)
+                self.assertEqual(process.wait(timeout=20), 0)
             finally:
                 if process.poll() is None:
                     process.kill(); process.wait()

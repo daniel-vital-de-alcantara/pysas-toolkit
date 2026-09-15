@@ -79,7 +79,7 @@ def process_windows(pid):
     def collect(hwnd, unused):
         owner = W.DWORD()
         user.GetWindowThreadProcessId(hwnd, C.byref(owner))
-        if owner.value == pid and user.IsWindowVisible(hwnd):
+        if (pid is None or owner.value == pid) and user.IsWindowVisible(hwnd):
             result.append(hwnd)
         return True
     user.EnumWindows.argtypes = [callback_type, W.LPARAM]
