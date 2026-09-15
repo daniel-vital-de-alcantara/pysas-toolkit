@@ -29,6 +29,28 @@ class LiveControlsTests(unittest.TestCase):
         self.app.awake.close()
         self.temp.cleanup()
 
+    def test_slow_folder_scan_does_not_block_live_status(self):
+        release=threading.Event()
+        entered=threading.Event()
+        def slow_inventory():
+            entered.set()
+            release.wait(5)
+            return ['job.sas']
+        try:
+            with patch.object(self.app,'inventory',side_effect=slow_inventory):
+                began=time.monotonic()
+                first=self.app.state()
+                self.assertLess(time.monotonic()-began,1)
+                self.assertTrue(entered.wait(1))
+                self.assertEqual(first['files'],[])
+                self.assertEqual(self.app.state()['files'],[])
+                release.set()
+                deadline=time.monotonic()+2
+                while not self.app.state()['files'] and time.monotonic()<deadline: time.sleep(.02)
+                self.assertEqual(self.app.state()['files'],['job.sas'])
+        finally:
+            release.set()
+
     def test_legacy_accents_do_not_decode_as_chinese(self):
         text='/* Informação, realização — preço € */\ndata café; run;\n'
         for encoding in ('cp1252','utf-8','utf-8-sig','utf-16','utf-16-le','utf-16-be'):
@@ -100,36 +122,26 @@ class LiveControlsTests(unittest.TestCase):
                 if process.poll() is None: process.kill()
                 process.wait()
 
-    @unittest.skipUnless(sys.platform=='win32','Windows PowerShell snapshot bridge')
-    def test_powershell_parses_and_snapshots_before_completion(self):
-        script=self.root/'bridge.ps1';script.write_text(engine.LIVE_POWERSHELL,encoding='utf-8-sig')
-        start=engine.LIVE_POWERSHELL.index('Add-Type -TypeDefinition')
-        end=engine.LIVE_POWERSHELL.index("\n'@",start)+4
-        helper=engine.LIVE_POWERSHELL[start:end]
-        test=self.root/'test.ps1'
-        test.write_text('''param($Bridge,$Log)
-$errors=$null; $tokens=$null
-[void][System.Management.Automation.Language.Parser]::ParseFile($Bridge,[ref]$tokens,[ref]$errors)
-if($errors.Count){throw ($errors | Out-String)}
-'''+helper+'''
-Add-Type 'public class StubLog { public string Text {get;set;} } public class StubCode { public StubLog Log {get;set;} }'
-$code=New-Object StubCode
-$code.Log=New-Object StubLog
-$code.Log.Text='NOTE: first'
-$monitor=New-Object PySASLogMonitor($code,$Log)
-$monitor.Start()
-try {
-  Start-Sleep -Seconds 2
-  if([IO.File]::ReadAllText($Log) -ne 'NOTE: first'){throw 'Missing live snapshot'}
-  $code.Log.Text='NOTE: second'
-  Start-Sleep -Seconds 2
-  if([IO.File]::ReadAllText($Log) -ne 'NOTE: second'){throw 'Snapshot did not update'}
-} finally {$monitor.Stop()}
-Write-Output 'PASS'
-''',encoding='utf-8-sig')
-        result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-File',str(test),str(script),str(self.root/'live.log')],capture_output=True,text=True,timeout=30)
-        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
-        self.assertIn('PASS',result.stdout)
+    def test_finished_process_does_not_wait_for_inherited_output_handle(self):
+        run=self.root/'finished';run.mkdir()
+        original=subprocess.Popen
+        child_pid=self.root/'child.pid'
+        helper=self.root/'simulate.py'
+        helper.write_text("import subprocess, sys\nfrom pathlib import Path\np=subprocess.Popen([sys.executable,'-c','import time; time.sleep(4)'])\nPath(sys.argv[1]).write_text(str(p.pid))\nprint('Completed',flush=True)\n")
+        launched=[]
+        def start(command, **kwargs):
+            process=original([sys.executable,str(helper),str(child_pid)],**kwargs)
+            launched.append(process)
+            return process
+        began=time.monotonic()
+        with patch.object(engine.subprocess,'Popen',side_effect=start), patch.object(engine,'cscript_path',return_value=Path(sys.executable)), patch.dict(os.environ,{'PYSAS_LIVE_LOG':'1'}):
+            rc, text=engine.execute_eg('RUNFILE',self.root/'project.egp',self.root/'job.sas','job',0,0,run,False)
+        self.assertEqual(rc,0)
+        self.assertIn('Completed',text)
+        self.assertLess(time.monotonic()-began,3, 'Completion waited for an inherited output handle')
+        # The unrelated simulated server naturally exits; it was not killed by the runner.
+        time.sleep(max(0,4.5-(time.monotonic()-began)))
+
 
 
 if __name__=='__main__': unittest.main()

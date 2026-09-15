@@ -46,18 +46,17 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'preview') }}
           fail_on_unmatched_files: true
           body: |
-            Fixes garbled code previews and adds running-output inspection, individual file stops and bundle downloads.
+            Stability update for runs that remain active and uneven elapsed counters.
 
-            Download PySAS-Workbench-Python-0.4.0-preview.10.zip, extract the entire ZIP and open START_PYSAS.bat.
+            Download PySAS-Workbench-Python-0.4.0-preview.11.zip and extract the entire ZIP. Stop old stuck runs before closing the old app, then launch START_PYSAS.bat from the new folder.
 
-            - Windows-1252 text is no longer misread as UTF-16. New submitted-code exports use UTF-8.
-            - Inspect refreshes automatically and shows the newest log output and last update time. Execution console output streams during runs.
-            - Optional Live SAS log snapshots (PowerShell) queries EG directly without a shared server folder. Availability depends on what EG exposes while running; some versions buffer until completion. The standard VBScript mode remains available. No execution policy is changed.
-            - Stop file targets only that file's automation process. CANCELLED tasks respect scheduler dependency/stop-on-error rules. Partial outputs may remain; local termination cannot confirm remote SAS cancellation.
-            - Download bundle keeps a separate copy for every completed bundle command, including custom folders.
-            - Includes the blue taskbar identity, automatic terminal closing, elapsed times, watcher initialization and scheduler shared setup from earlier previews.
+            - Removed the experimental PowerShell live-log polling mode. UI and CLI use the same standard VBScript execution bridge.
+            - Completion no longer waits for output-pipe EOF from lingering child processes. Console output goes straight to disk and is readable while running.
+            - Console stages distinguish SAS execution, saving results and closing Enterprise Guide. Full remote SAS logs are available after EG exports them; this release does not stream them during execution.
+            - Monotonic elapsed counters do not reset on each status poll. Unchanged run lists are not redrawn. Slow folder/history scans run in the background without blocking live status.
+            - Keeps per-file stops, original source recovery, encoding fixes, bundle downloads, taskbar identity and terminal-free startup.
 
-            Requires Windows, Python 3.10+, configured Enterprise Guide and openpyxl for Excel features. Tests cover output streaming/cancellation and the PowerShell snapshot helper; real SAS execution and live-log availability require validation in your environment.
+            Windows, Python 3.10+, Enterprise Guide and openpyxl for Excel features are still required. Regression tests cover inherited-output-handle completion, slow-folder isolation, clocks and cancellation. Actual SAS execution must be verified in your environment.
 
           files: |
             release/PySAS-Workbench-Python-*.zip

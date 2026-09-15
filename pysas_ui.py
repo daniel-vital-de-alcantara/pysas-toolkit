@@ -23,7 +23,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 from pysas import text_encoding
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.10"
+VERSION = "0.4.0-preview.11"
 APP_DIR = Path(__file__).resolve().parent
 PREFIX = "@@PYSAS_UI@@"
 ACTIVE = {"RUNNING", "STOPPING"}
@@ -89,6 +89,10 @@ class Workbench:
         self.lock = threading.RLock()
         self.processes = {}
         self.commands = {}
+        self.list_cache = {}
+        self.cache_loading = set()
+        self.cache_generation = 0
+        self.cache_lock = threading.RLock()
         self.awake = KeepAwake()
         self.upload_lock = threading.Lock()
         self.uploading = False
@@ -295,7 +299,8 @@ class Workbench:
                 root = self.code_root(data.get("code_root"))
                 item["artifact"] = str(within(root, str(data.get("output") or "codebase.sasbundle.txt")))
             env = os.environ.copy()
-            env.update(PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8", PYSAS_LIVE_LOG="1" if data.get("live_log") else "0")
+            env.update(PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
+            env.pop("PYSAS_LIVE_LOG", None)
             isolation = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {"start_new_session": True}
             python = str(Path(sys.executable).with_name("python.exe")) if os.name == "nt" else sys.executable
             process = subprocess.Popen([python, "-u", str(APP_DIR / "ui_worker.py"), str(self.script), *args],
@@ -416,6 +421,33 @@ class Workbench:
             self.save(item)
             return {"ok": True}
 
+    def cached_listing(self, name, loader, ttl):
+        # Slow/network directory scans must never hold up live command status.
+        with self.cache_lock:
+            cached = self.list_cache.get(name)
+            generation = self.cache_generation
+            key = (name, generation)
+            if (not cached or time.monotonic() - cached[0] >= ttl) and key not in self.cache_loading:
+                self.cache_loading.add(key)
+                def update():
+                    try:
+                        value = loader()
+                        with self.cache_lock:
+                            if generation == self.cache_generation:
+                                self.list_cache[name] = (time.monotonic(), value)
+                    except OSError:
+                        pass  # Retain the previous listing if a network folder is unavailable.
+                    finally:
+                        with self.cache_lock:
+                            self.cache_loading.discard(key)
+                threading.Thread(target=update, daemon=True).start()
+            return cached[1] if cached else []
+
+    def invalidate_lists(self):
+        with self.cache_lock:
+            self.cache_generation += 1
+            self.list_cache.clear()
+
     def inventory(self):
         paths = set()
         roots = {self.root, Path(self.folders()["inputs"]), Path(self.folders()["init"])}
@@ -457,10 +489,12 @@ class Workbench:
                 records.append(row)
         return sorted(records, key=lambda x: x["started"], reverse=True)[:500]
 
-    def state(self):
+    def state(self, refresh=False):
+        if refresh:
+            self.invalidate_lists()
         with self.lock:
-            commands = json.loads(json.dumps(sorted(self.commands.values(), key=lambda x: x["started"], reverse=True)))
-        history = self.history()
+            commands = json.loads(json.dumps(sorted(self.commands.values(), key=lambda x: x["started"], reverse=True)[:200]))
+        history = [dict(row) for row in self.cached_listing("history", self.history, 15)]
         paths = {h["path"]: h for h in history}
         for command in commands:
             if command.get("path") in paths:
@@ -469,12 +503,12 @@ class Workbench:
                 if task.get("path") in paths:
                     paths[task["path"]].update(status=task["status"], elapsed=task.get("elapsed"), started=task.get("started") or paths[task["path"]]["started"])
         inbox = Path(self.folders()["inbox"])
-        queued = sorted(p.name for p in inbox.iterdir() if p.is_file() and p.suffix.casefold() == ".sas" and not p.name.startswith("_")) if inbox.exists() else []
+        queued = self.cached_listing("queue", lambda: sorted(p.name for p in inbox.iterdir() if p.is_file() and p.suffix.casefold() == ".sas" and not p.name.startswith("_")) if inbox.exists() else [], 2)
         return {"version": VERSION, "workspace": str(self.root), "windows": os.name == "nt",
                 "openpyxl": importlib.util.find_spec("openpyxl") is not None,
-                "files": self.inventory(), "commands": commands[:200], "history": history,
+                "files": self.cached_listing("inventory", self.inventory, 30), "commands": commands[:200], "history": history,
                 "folders": self.folders(), "awake": self.awake.status(),
-                "initialization_files": sorted({str(p.resolve()) for folder in {Path(self.folders()["init"]), inbox} for p in folder.glob("_*") if p.is_file() and p.suffix.casefold() == ".sas"}),
+                "initialization_files": self.cached_listing("init", lambda: sorted({str(p.resolve()) for folder in {Path(self.folders()["init"]), inbox} for p in folder.glob("_*") if p.is_file() and p.suffix.casefold() == ".sas"}), 5),
                 "queued": queued, "bundle_settings": self.bundle_settings(), "now": time.time()}
 
     def details(self, relative):
@@ -511,7 +545,7 @@ class Workbench:
                 workbook.close()
         if path.suffix.lower() not in {".sas", ".log", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".xml"}:
             raise ValueError("Download this file to open it in its application.")
-        return {"text": read_text(path, tail=path.suffix.lower() == ".log" or path.name == "console.txt"),
+        return {"text": read_text(path, limit=60000 if path.suffix.lower() == ".log" or path.name == "console.txt" else 400000, tail=path.suffix.lower() == ".log" or path.name == "console.txt"),
                 "modified": path.stat().st_mtime, "size": path.stat().st_size}
 
 
@@ -550,7 +584,7 @@ class Handler(BaseHTTPRequestHandler):
         value = lambda key: query.get(key, [""])[0]
         try:
             if url.path == "/api/state":
-                self.respond({**self.server.app.state(), "token": self.server.token})
+                self.respond({**self.server.app.state(refresh=value("refresh") == "1"), "token": self.server.token})
             elif url.path == "/api/details":
                 self.respond(self.server.app.details(value("path")))
             elif url.path == "/api/preview":
@@ -566,6 +600,13 @@ class Handler(BaseHTTPRequestHandler):
                         console = f.read().decode("utf-8", errors="replace")
                 else:
                     console = "Waiting for output…"
+                with self.server.app.lock:
+                    tasks = list(self.server.app.commands[identifier].get("tasks", {}).values())[-8:]
+                for task in tasks:
+                    if task.get("path"):
+                        stage = within(self.server.app.root, task["path"]) / "console.txt"
+                        if stage.is_file():
+                            console += "\n\n--- " + str(task.get("name", task.get("key", "File"))) + " ---\n" + read_text(stage, limit=8000, tail=True)
                 self.respond({"text": console})
             elif url.path == "/api/download":
                 if value("command"):
@@ -603,6 +644,7 @@ class Handler(BaseHTTPRequestHandler):
             self.respond({"error": "Refresh the workbench before trying again."}, 403)
             return
         try:
+            self.server.app.invalidate_lists()
             length = int(self.headers.get("Content-Length", "0"))
             url = urlsplit(self.path)
             if url.path == "/api/upload":
@@ -728,13 +770,18 @@ def main():
         opened = False
         deadline = time.monotonic() + 45
         missing_since = None
+        branded = {}
         while not monitor_stop.wait(.5):
             windows = process_windows(process.pid)
             if windows:
                 missing_since = None
                 for hwnd in windows:
+                    count, last = branded.get(hwnd, (0, 0))
+                    if count >= 3 or time.monotonic() - last < 3:
+                        continue
                     try:
                         brand_window(hwnd, args.workspace, APP_DIR / "ui" / "icon.ico")
+                        branded[hwnd] = (count + 1, time.monotonic())
                     except OSError as exc:
                         print(f"Taskbar identity: {exc}", flush=True)
                 if not opened:

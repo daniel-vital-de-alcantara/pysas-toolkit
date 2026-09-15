@@ -15,7 +15,7 @@ const context = {
   fetch:async()=>({ok:true,json:async()=>snapshot}),setInterval(){},AbortController,Date,console
 };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={duration,elapsed,timer,esc,badge,taskTable,commandCards};',context);
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds};',context);
 const h = context.helpers;
 test('elapsed formatting supports seconds, hours, and runs longer than a day',()=>{
   assert.equal(h.duration(65.9),'00:01:05');
@@ -49,4 +49,13 @@ test('only running owned files show stop controls and bundle cards show download
   assert.match(h.taskTable([task],'owner'),/data-cancel-command="owner"/);
   assert.doesNotMatch(h.taskTable([{...task,status:'SUCCESS'}],'owner'),/data-cancel-command/);
   assert.match(h.commandCards([{id:'bundle1',name:'Bundle',status:'SUCCESS',download:'bundle1/code.txt',tasks:{}}]),/api\/download\?command=bundle1/);
+});
+
+test('running clock ignores delayed status-poll timestamps',()=>{
+  h.syncClock(100);
+  const before=h.clockSeconds();
+  h.syncClock(90);
+  assert.ok(h.clockSeconds()>=before);
+  h.syncClock(120);
+  assert.ok(h.clockSeconds()-before<1);
 });

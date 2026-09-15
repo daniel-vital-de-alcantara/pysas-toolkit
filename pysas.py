@@ -29,7 +29,7 @@ from typing import Any, Iterable
 from xml.etree import ElementTree as ET
 
 
-VERSION = "0.3.7"
+VERSION = "0.3.8"
 ROOT_DIR = Path(__file__).resolve().parent
 CODEBASE_FILE = "codebase.sasbundle.txt"
 BACKUP_FOLDER = "_codebase_backups"
@@ -530,6 +530,7 @@ Sub SaveOutputs(theCode)
 End Sub
 
 On Error Resume Next
+WScript.Echo "Starting Enterprise Guide automation..."
 Set app = CreateObject("SASEGObjectModel.Application.8.1")
 If Err.Number <> 0 Then
   Err.Clear
@@ -540,6 +541,7 @@ If Err.Number <> 0 Then
   WScript.Quit 20
 End If
 On Error GoTo 0
+WScript.Echo "Opening Enterprise Guide project..."
 Set project = app.Open(projectPath, "")
 
 If UCase(mode) = "RUNFILE" Then
@@ -582,10 +584,14 @@ saved.SaveToFile codePath, 2
 saved.Close
 WScript.Echo "Running: " & code.Name
 code.Run
+WScript.Echo "SAS execution returned. Saving logs and results..."
 SaveOutputs code
 WScript.Echo "EG Results detected: " & code.Results.Count
+WScript.Echo "Closing project..."
 project.Close
+WScript.Echo "Closing Enterprise Guide..."
 app.Quit
+WScript.Echo "Automation completed."
 WScript.Quit 0
 '''
 
@@ -666,123 +672,6 @@ def detect_sas_error(log_path: Path) -> bool:
     return bool(re.search(r"(?mi)^\s*ERROR(?:\s+\d+-\d+)?:", read_text(log_path)))
 
 
-LIVE_POWERSHELL = r'''
-param([string]$Config)
-$ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
-$c = Get-Content -LiteralPath $Config -Raw -Encoding UTF8 | ConvertFrom-Json
-Add-Type -TypeDefinition @'
-using System;
-using System.IO;
-using System.Text;
-using System.Reflection;
-using System.Threading;
-public class PySASLogMonitor {
-  private volatile bool finished;
-  private object code;
-  private string path;
-  private Thread worker;
-  public PySASLogMonitor(object code, string path) { this.code=code; this.path=path; }
-  public static object Get(object obj, string name) {
-    return obj.GetType().InvokeMember(name, BindingFlags.GetProperty, null, obj, null);
-  }
-  public void Start() {
-    worker = new Thread(Poll); worker.IsBackground=true; worker.SetApartmentState(ApartmentState.MTA); worker.Start();
-  }
-  private void Poll() {
-    string previous=null;
-    while (!finished) {
-      try {
-        object log=Get(code,"Log");
-        string text=Convert.ToString(Get(log,"Text"));
-        if (!finished && !String.IsNullOrEmpty(text) && text!=previous) {
-          File.WriteAllText(path,text,new UTF8Encoding(false)); previous=text;
-        }
-      } catch { /* Some EG versions expose the log only after Run returns. */ }
-      Thread.Sleep(1500);
-    }
-  }
-  public void Stop() { finished=true; if(worker!=null) worker.Join(200); }
-}
-'@
-# This marker proves bootstrap completed, before any SAS program can be submitted.
-[IO.File]::WriteAllText($c.started, 'ready')
-function Program-Text($project, [string]$name, [int]$first, [int]$last) {
-  for($i=0; $i -lt $project.CodeCollection.Count; $i++) {
-    $item=$project.CodeCollection.Item($i)
-    if($item.Name -ieq $name -or ($item.Name+'.sas') -ieq $name) {
-      $lines=($item.Text -replace "`r`n","`n") -split "`n"
-      $start=0; if($first -gt 0){$start=$first-1}
-      $end=$lines.Length-1; if($last -gt 0){$end=[Math]::Min($end,$last-1)}
-      $text=''; for($j=$start; $j -le $end; $j++){$text += $lines[$j]+"`r`n"}
-      return $text
-    }
-  }
-  throw "EGP program not found: $name"
-}
-function Clean-Name([string]$name) {
-  $name=$name -replace '[^a-zA-Z0-9_-]','_'
-  if(!$name){$name='item'}
-  return $name.Substring(0,[Math]::Min(60,$name.Length))
-}
-$app=$null; $project=$null; $monitor=$null
-try {
-  try {$app=New-Object -ComObject SASEGObjectModel.Application.8.1}
-  catch {$app=New-Object -ComObject SASEGObjectModel.Application.7.1}
-  $project=$app.Open($c.project,'')
-  if($c.mode -eq 'RUNFILE') {$text=[IO.File]::ReadAllText($c.source,[Text.Encoding]::UTF8)}
-  else {
-    $text=''
-    [xml]$setup=[IO.File]::ReadAllText($c.source)
-    foreach($definition in $setup.SelectNodes('/setup/program')) {
-      $text += (Program-Text $project ($definition.GetAttribute("name")) ([int]$definition.GetAttribute("first")) ([int]$definition.GetAttribute("last")))+"`r`n"
-    }
-    $text += Program-Text $project $c.program $c.first $c.last
-  }
-  $code=$project.CodeCollection.Add()
-  $code.Name=$c.program+'_PySAS'
-  $text="options iomlogautoflush;`r`n"+$text
-  $code.Text=$text
-  try {$code.UseApplicationOptions=$true} catch {}
-  [IO.File]::WriteAllText($c.code,$text,(New-Object Text.UTF8Encoding($false)))
-  [Console]::WriteLine('Running: '+$c.program)
-  [Console]::WriteLine('Live SAS log snapshots are requested through Enterprise Guide. If EG buffers its log, the SAS log will appear after execution completes.')
-  $monitor=New-Object PySASLogMonitor($code,$c.live)
-  $monitor.Start()
-  $code.Run()
-  $monitor.Stop()
-  $code.Log.SaveAs($c.log)
-  for($i=0;$i -lt $code.Results.Count;$i++) {
-    try {
-      $item=$code.Results.Item($i)
-      $path=Join-Path $c.results ((Clean-Name $item.Name)+'_'+('{0:D3}' -f ($i+1))+'.html')
-      $item.SaveAs($path)
-    } catch {[Console]::WriteLine('WARNING: result save failed: '+$_.Exception.Message)}
-  }
-  if($c.manifest) {
-    $rows=@()
-    for($i=0;$i -lt $code.OutputDatasets.Count;$i++) {
-      try {
-        $item=$code.OutputDatasets.Item($i)
-        $path=$c.prefix+'_'+('{0:D3}' -f ($i+1))+'.xlsx'
-        $item.SaveAs($path)
-        $rows += (Clean-Name $item.Name)+"`t"+$path
-      } catch {[Console]::WriteLine('WARNING: table export failed: '+$_.Exception.Message)}
-    }
-    [IO.File]::WriteAllLines($c.manifest,[string[]]$rows,(New-Object Text.UTF8Encoding($false)))
-  }
-  [Console]::WriteLine('Completed: '+$c.program)
-} catch {
-  [Console]::WriteLine('ERROR: '+$_.Exception.Message)
-  exit 1
-} finally {
-  if($monitor){$monitor.Stop()}
-  if($project){try {$project.Close()} catch {}}
-  if($app){try {$app.Quit()} catch {}}
-}
-'''
-
-
 def execute_eg(mode: str, project: Path, sas_path: Path, program: str, row_start: int,
                row_end: int, run_dir: Path, tables: bool) -> tuple[int, str]:
     logs = run_dir / "logs"; code_dir = run_dir / "code"; results = run_dir / "results"
@@ -797,37 +686,13 @@ def execute_eg(mode: str, project: Path, sas_path: Path, program: str, row_start
     command = [str(cscript_path()), "//nologo", str(vbs_path), mode, str(project), str(sas_path),
                program, str(row_start), str(row_end), str(log_path), str(code_path), str(results),
                str(manifest) if tables else "", str(temp_prefix)]
-    live_files = []
-    if os.environ.get("PYSAS_LIVE_LOG") == "1":
-        powershell = shutil.which("powershell.exe")
-        if powershell:
-            script_path = vbs_path.with_suffix(".ps1")
-            config_path = vbs_path.with_suffix(".json")
-            started_path = vbs_path.with_suffix(".started")
-            live_files = [script_path, config_path, started_path]
-            script_path.write_text(LIVE_POWERSHELL, encoding="utf-8-sig")
-            config_path.write_text(json.dumps({"mode": mode, "project": str(project), "source": str(sas_path),
-                "program": program, "first": row_start, "last": row_end, "log": str(log_path),
-                "live": str(logs / (stem + ".live.log")), "code": str(code_path), "results": str(results),
-                "manifest": str(manifest) if tables else "", "prefix": str(temp_prefix),
-                "started": str(started_path)}), encoding="utf-8")
-            command = [powershell, "-NoProfile", "-NonInteractive", "-File", str(script_path), str(config_path)]
-        else:
-            print("Live SAS log snapshots require Windows PowerShell; using the standard bridge.", flush=True)
     console_path = run_dir / "console.txt"
     rc = 127
     try:
-        with console_path.open("w", encoding="utf-8", buffering=1) as output:
-            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                       text=True, encoding="utf-8" if live_files else None, errors="replace", bufsize=1,
+        # A file cannot keep the parent waiting for EOF when EG leaves a child alive.
+        with console_path.open("wb", buffering=0) as output:
+            process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT,
                                        **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}))
-            def copy_output():
-                for line in process.stdout:
-                    output.write(line)
-                    output.flush()
-                    print(line, end="", flush=True)
-            reader = threading.Thread(target=copy_output, daemon=True)
-            reader.start()
             cancelled = False
             while process.poll() is None:
                 if (run_dir / "_cancel.request").exists():
@@ -841,7 +706,7 @@ def execute_eg(mode: str, project: Path, sas_path: Path, program: str, row_start
                         else:
                             process.kill()
                     except (OSError, subprocess.TimeoutExpired) as exc:
-                        output.write(f"Stop request not completed: {exc}. Retrying while the file remains active.\n")
+                        output.write(f"Stop request not completed: {exc}. Retrying while the file remains active.\n".encode("utf-8"))
                         output.flush()
                         time.sleep(3)
                         continue
@@ -849,27 +714,16 @@ def execute_eg(mode: str, project: Path, sas_path: Path, program: str, row_start
                     break
                 time.sleep(.2)
             rc = process.wait()
-            reader.join(timeout=5)
-            if not reader.is_alive():
-                process.stdout.close()
             if cancelled:
                 rc = 130
-                output.write("Stopped by user. The local automation process was terminated; verify remote SAS session state if needed.\n")
+                output.write(b"Stopped by user. The local automation process was terminated; verify remote SAS session state if needed.\n")
     except OSError as exc:
         with console_path.open("a", encoding="utf-8") as output:
             output.write(f"ERROR: Enterprise Guide automation: {exc}\n")
     finally:
         try: vbs_path.unlink()
         except OSError: pass
-    if live_files:
-        bootstrap_ok = live_files[-1].exists()
-        for path in live_files:
-            path.unlink(missing_ok=True)
-        if not bootstrap_ok:
-            # No program was submitted. Do not retry after COM execution has started.
-            with console_path.open("a", encoding="utf-8") as output:
-                output.write("Live-log bridge could not start. Turn off Live SAS log snapshots and retry using the standard bridge.\n")
-    console = console_path.read_text(encoding="utf-8", errors="replace")
+    console = read_text(console_path)
     if tables:
         combine_workbooks(manifest, results / f"{stem}_tables.xlsx")
         try: manifest.unlink()

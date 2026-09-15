@@ -361,6 +361,9 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(self.request('POST', '/api/upload?target=init&name=job.sas', b'run;', headers)[0], 400)
         self.assertEqual(self.request('POST', '/api/upload?target=inputs&name=secret.sas', b'run;')[0], 403)
         self.assertEqual(self.request('POST', '/api/upload?target=inbox&name=job.sas', b'run;', headers)[0], 200)
+        deadline = time.monotonic() + 3
+        while not self.server.app.state()['queued'] and time.monotonic() < deadline:
+            time.sleep(.02)
         self.assertEqual(self.server.app.state()['queued'], ['job.sas'])
         self.assertEqual(self.request('POST', '/api/upload?target=inbox&name=job.sas', b'edit;', headers)[0], 400)
         self.assertEqual((self.root / 'runner/inbox/job.sas').read_bytes(), b'run;')

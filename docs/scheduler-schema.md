@@ -1,6 +1,6 @@
 # Scheduler schema
 
-PySAS 0.3.7 reads an Excel workbook and uses the worksheet named `Schedule` when it exists; otherwise it reads the first worksheet.
+PySAS 0.3.8 reads an Excel workbook and uses the worksheet named `Schedule` when it exists; otherwise it reads the first worksheet.
 
 The public repository includes [`examples/schedule_example.csv`](../examples/schedule_example.csv) as a sanitized example. To use it as a workbook template, open it in Excel, save it as `Schedule.xlsx`, and name the worksheet `Schedule`.
 
@@ -16,7 +16,7 @@ The public repository includes [`examples/schedule_example.csv`](../examples/sch
 | `row_end` | Integer or blank | Optional last source line to execute. Row bounds are inclusive. |
 | `section` | Text | Free-form grouping or documentation field. |
 | `stop_process_on_error` | Boolean-like value | If enabled and the task fails, PySAS stops launching additional normal tasks. |
-| `stop_program_on_error` | Boolean-like value | Reserved scheduler control field in 0.3.7; retained in task metadata but not currently used to alter execution independently. |
+| `stop_program_on_error` | Boolean-like value | Reserved scheduler control field in 0.3.8; retained in task metadata but not currently used to alter execution independently. |
 | `max_parallel` | Positive integer | Concurrency value used when deriving the scheduler worker limit. |
 | `always_run` | Boolean-like value | Shared setup definition, prepended before every normal program in the same SAS submission. Not a separate job. Explicit skip disables it. |
 
@@ -35,7 +35,7 @@ then quality checks and publication run in sequence. All include setup.
 
 ## Validation behaviour
 
-Before execution PySAS 0.3.7 checks key structural conditions including:
+Before execution PySAS 0.3.8 checks key structural conditions including:
 
 - duplicate `task_id` values;
 - dependencies that reference unknown tasks;

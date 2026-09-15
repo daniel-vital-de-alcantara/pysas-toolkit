@@ -1,7 +1,7 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.10 is a separate browser UI for the standalone PySAS
-0.3.7 command-line engine. Download the Python ZIP from GitHub Releases, extract
+The Workbench 0.4.0-preview.11 is a separate browser UI for the standalone PySAS
+0.3.8 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
 
@@ -120,20 +120,21 @@ folders and PATH, preferring Edge. Launch failures try the next available engine
 ## Inspecting running output and stopping a file
 
 Open Inspect on a running file. The file list and selected preview refresh every
-two seconds. Logs show their latest 400 KB, with the last file update time;
+two seconds. Logs show their latest 60 KB, with the last file update time;
 scroll up to read earlier lines without the viewer jumping back down. The
 Download link retrieves the complete file. The execution console now streams
 as automation writes it. A quiet console does not prove SAS is stuck.
 
-For direct remote SAS log snapshots, enable **Live SAS log snapshots (PowerShell)**
-before starting a file, watcher or schedule. This optional bridge polls the
-running EG code object's log through automation; it needs no shared server folder.
-Some EG versions/settings expose the log only after execution, so live SAS output
-is best effort. Empty snapshots are not presented as evidence of progress.
-Windows PowerShell and its Add-Type capability must be permitted by your local
-policy. No policy settings are changed. If bootstrap fails, turn the option off
-and retry with the standard VBScript bridge; execution is not retried automatically.
-The ordinary standalone CLI keeps its standard bridge.
+The experimental PowerShell live-SAS-log mode has been removed after reports of
+runs hanging. UI and CLI use the same standard VBScript automation bridge.
+Console stages update without polling EG's COM objects during execution. Full
+remote SAS logs become available when EG exports them after the program returns;
+this version does not promise live remote SAS log streaming.
+
+Elapsed counters use a monotonic clock, independent of status requests. Unchanged
+run lists are not rebuilt on each poll. Folder/history scans run in the background,
+so a slow network folder cannot block command status updates. Use Refresh to request
+fresh listings; background scans may take a moment to finish.
 
 **Stop file** targets only that file's local automation process and descendants,
 not the watcher or other running files. A stopped task is CANCELLED; normal
