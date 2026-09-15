@@ -29,7 +29,7 @@ from typing import Any, Iterable
 from xml.etree import ElementTree as ET
 
 
-VERSION = "0.3.8"
+VERSION = "0.3.2"
 ROOT_DIR = Path(__file__).resolve().parent
 CODEBASE_FILE = "codebase.sasbundle.txt"
 BACKUP_FOLDER = "_codebase_backups"
@@ -66,28 +66,11 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def text_encoding(raw: bytes) -> str:
-    """Only treat text as UTF-16 when its BOM or NUL layout supports it."""
-    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
-        return "utf-16"
-    sample = raw[:4096]
-    if len(sample) >= 4:
-        even, odd = sample[::2], sample[1::2]
-        if odd.count(0) / len(odd) > .3 and even.count(0) / len(even) < .1:
-            return "utf-16-le"
-        if even.count(0) / len(even) > .3 and odd.count(0) / len(odd) < .1:
-            return "utf-16-be"
-    import codecs
-    try:
-        codecs.getincrementaldecoder("utf-8-sig")().decode(raw, final=False)
-        return "utf-8-sig"
-    except UnicodeDecodeError:
-        return "cp1252"
-
-
 def read_text(path: Path) -> str:
-    raw = path.read_bytes()
-    return raw.decode(text_encoding(raw), errors="replace")
+    try:
+        return path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError:
+        return path.read_text(encoding="latin-1", errors="replace")
 
 
 def normalized(text: str) -> str:
@@ -100,7 +83,7 @@ def safe_name(value: str, limit: int = 70) -> str:
 
 
 def truthy(value: Any) -> bool:
-    return str(value or "").strip().casefold() in {"1", "1.0", "true", "yes", "y", "x"}
+    return str(value or "").strip().casefold() in {"1", "true", "yes", "y", "x"}
 
 
 def require_openpyxl():
@@ -122,22 +105,12 @@ def find_one(pattern: str, description: str, folder: Path = ROOT_DIR) -> Path:
     return items[0]
 
 
-def sas_files(folder: Path) -> list[Path]:
-    """Find SAS files without depending on the filesystem's case sensitivity."""
-    return sorted((p for p in folder.iterdir() if p.is_file() and p.suffix.casefold() == ".sas"),
-                  key=lambda p: (p.name.casefold(), p.name)) if folder.is_dir() else []
-
-
-def init_files(explicit: Path | None = None, folder: Path | None = None, extra_folder: Path | None = None) -> list[Path]:
+def init_files(explicit: Path | None = None) -> list[Path]:
     if explicit:
         if not explicit.is_file():
             raise FileNotFoundError(explicit)
         return [explicit]
-    folders = [folder or ROOT_DIR]
-    if extra_folder is not None:
-        folders.append(extra_folder)
-    paths = {p.resolve() for directory in folders for p in sas_files(directory) if p.name.startswith("_")}
-    return sorted(paths, key=lambda p: (p.name.casefold(), str(p).casefold()))
+    return sorted((p for p in ROOT_DIR.glob("_*.sas") if p.is_file()), key=lambda p: p.name.casefold())
 
 
 def print_home() -> None:
@@ -175,58 +148,42 @@ def marker(prefix: str, data: dict[str, Any], suffix: str) -> str:
     return f"{prefix} {json.dumps(data, ensure_ascii=False, sort_keys=True)} {suffix}\n"
 
 
-def discover_sas(recursive: bool, root: Path = ROOT_DIR) -> list[Path]:
-    paths = root.glob("**/*.sas" if recursive else "*.sas")
-    backup = (root / BACKUP_FOLDER).resolve()
+def discover_sas(recursive: bool) -> list[Path]:
+    paths = ROOT_DIR.glob("**/*.sas" if recursive else "*.sas")
+    backup = (ROOT_DIR / BACKUP_FOLDER).resolve()
     result = []
     for path in paths:
-        if not path.is_file() or not path.resolve().is_relative_to(root.resolve()):
+        if not path.is_file():
             continue
         try:
             path.resolve().relative_to(backup)
             continue
         except ValueError:
             result.append(path)
-    return sorted(result, key=lambda p: p.relative_to(root).as_posix().casefold())
-
-
-def bundle_root(args: argparse.Namespace) -> Path:
-    value = getattr(args, "root", None)
-    root = Path(value).expanduser().resolve() if value else ROOT_DIR
-    if not root.is_dir():
-        raise ValueError(f"Code folder does not exist: {root}")
-    return root
-
-
-def bundle_target(root: Path, relative: str) -> Path:
-    target = root.joinpath(*PurePosixPath(relative).parts)
-    if not target.resolve().is_relative_to(root.resolve()):
-        raise ValueError(f"Bundle path escapes the code folder: {relative}")
-    return target
+    return sorted(result, key=lambda p: p.relative_to(ROOT_DIR).as_posix().casefold())
 
 
 def bundle_pack(args: argparse.Namespace) -> int:
-    root = bundle_root(args)
-    paths = discover_sas(args.recursive, root)
+    paths = discover_sas(args.recursive)
     if not paths:
         raise ValueError("No SAS files found")
     hashes: list[str] = []
     chunks = [marker(BUNDLE_START, {
         "format": "sas-codebase-bundle", "version": FORMAT_VERSION,
-        "generated_utc": utc_now(), "root_name": root.name,
+        "generated_utc": utc_now(), "root_name": ROOT_DIR.name,
         "recursive": bool(args.recursive), "file_count": len(paths),
     }, BUNDLE_END), "\n"]
     for path in paths:
         content = normalized(read_text(path))
         digest = sha256_text(content)
         hashes.append(digest)
-        rel = path.relative_to(root).as_posix()
+        rel = path.relative_to(ROOT_DIR).as_posix()
         chunks += [marker(FILE_START, {"path": rel, "sha256": digest, "chars": len(content)}, FILE_END),
                    content, f"{FILE_END}\n\n"]
     chunks.append(marker(FOOTER_START, {
         "file_count": len(paths), "manifest_sha256": sha256_text("".join(hashes)),
     }, FOOTER_END))
-    output = root / (args.output or CODEBASE_FILE)
+    output = ROOT_DIR / (args.output or CODEBASE_FILE)
     output.write_text("".join(chunks), encoding="utf-8", newline="\n")
     print(f"Packed {len(paths)} SAS file(s): {output}")
     return 0
@@ -294,13 +251,12 @@ def validate_bundle(path: Path) -> tuple[list[dict[str, Any]], list[str]]:
 
 
 def bundle_verify(args: argparse.Namespace) -> int:
-    root = bundle_root(args)
-    path = root / (args.bundle or CODEBASE_FILE)
+    path = ROOT_DIR / (args.bundle or CODEBASE_FILE)
     files, errors = validate_bundle(path)
     edited = sum(bool(i["edited"]) for i in files)
     identical = different = missing = 0
     for item in files:
-        target = bundle_target(root, item["meta"]["path"])
+        target = ROOT_DIR.joinpath(*PurePosixPath(item["meta"]["path"]).parts)
         if not target.exists(): missing += 1
         elif normalized(read_text(target)) == item["content"]: identical += 1
         else: different += 1
@@ -315,21 +271,20 @@ def bundle_verify(args: argparse.Namespace) -> int:
 
 
 def bundle_unpack(args: argparse.Namespace) -> int:
-    root = bundle_root(args)
-    path = root / (args.bundle or CODEBASE_FILE)
+    path = ROOT_DIR / (args.bundle or CODEBASE_FILE)
     files, errors = validate_bundle(path)
     if errors: raise ValueError("; ".join(errors))
     changed: list[tuple[Path, str]] = []
     for item in files:
-        target = bundle_target(root, item["meta"]["path"])
+        target = ROOT_DIR.joinpath(*PurePosixPath(item["meta"]["path"]).parts)
         if not target.exists() or normalized(read_text(target)) != item["content"]:
             changed.append((target, item["content"]))
     backup: Path | None = None
     existing = [p for p, _ in changed if p.exists()]
     if existing and not args.no_backup:
-        backup = root / BACKUP_FOLDER / now_stamp()
+        backup = ROOT_DIR / BACKUP_FOLDER / now_stamp()
         for source in existing:
-            destination = backup / source.relative_to(root)
+            destination = backup / source.relative_to(ROOT_DIR)
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
     for target, content in changed:
@@ -449,12 +404,8 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 
 Function ReadAll(path)
   Dim s
-  Set s = CreateObject("ADODB.Stream")
-  s.Type = 2
-  s.Charset = "utf-8"
-  s.Open
-  s.LoadFromFile path
-  ReadAll = s.ReadText
+  Set s = fso.OpenTextFile(path, 1, False, -2)
+  ReadAll = s.ReadAll
   s.Close
 End Function
 
@@ -471,21 +422,6 @@ Function SliceLines(value, firstLine, lastLine)
     answer = answer & a(i) & vbCrLf
   Next
   SliceLines = answer
-End Function
-
-Function ProgramText(theProject, name, firstLine, lastLine)
-  Dim j, candidate
-  For j = 0 To theProject.CodeCollection.Count - 1
-    Set candidate = theProject.CodeCollection.Item(j)
-    If LCase(candidate.Name) = LCase(name) Or LCase(candidate.Name & ".sas") = LCase(name) Then
-      ProgramText = SliceLines(candidate.Text, firstLine, lastLine)
-      Exit Function
-    End If
-  Next
-  WScript.Echo "ERROR: EGP program not found: " & name
-  theProject.Close
-  app.Quit
-  WScript.Quit 21
 End Function
 
 Function CleanName(value)
@@ -530,7 +466,6 @@ Sub SaveOutputs(theCode)
 End Sub
 
 On Error Resume Next
-WScript.Echo "Starting Enterprise Guide automation..."
 Set app = CreateObject("SASEGObjectModel.Application.8.1")
 If Err.Number <> 0 Then
   Err.Clear
@@ -541,7 +476,6 @@ If Err.Number <> 0 Then
   WScript.Quit 20
 End If
 On Error GoTo 0
-WScript.Echo "Opening Enterprise Guide project..."
 Set project = app.Open(projectPath, "")
 
 If UCase(mode) = "RUNFILE" Then
@@ -550,24 +484,19 @@ If UCase(mode) = "RUNFILE" Then
   code.Name = fso.GetBaseName(sasPath)
   code.Text = text
 Else
-  Dim setupDoc, setupNode
-  text = ""
-  If fso.FileExists(sasPath) Then
-    Set setupDoc = CreateObject("MSXML2.DOMDocument.6.0")
-    setupDoc.async = False
-    If Not setupDoc.Load(sasPath) Then
-      WScript.Echo "ERROR: Cannot read shared setup definitions"
-      project.Close
-      app.Quit
-      WScript.Quit 22
-    End If
-    For Each setupNode In setupDoc.selectNodes("/setup/program")
-      WScript.Echo "Prepending setup: " & setupNode.getAttribute("name") & " (rows " & setupNode.getAttribute("first") & " to " & setupNode.getAttribute("last") & "; 0 means boundary)"
-      text = text & ProgramText(project, setupNode.getAttribute("name"), CLng(setupNode.getAttribute("first")), CLng(setupNode.getAttribute("last"))) & vbCrLf
-    Next
+  Set code = Nothing
+  Dim j, candidate
+  For j = 0 To project.CodeCollection.Count - 1
+    Set candidate = project.CodeCollection.Item(j)
+    If LCase(candidate.Name) = LCase(programName) Or LCase(candidate.Name & ".sas") = LCase(programName) Then Set code = candidate
+  Next
+  If code Is Nothing Then
+    WScript.Echo "ERROR: EGP program not found: " & programName
+    project.Close
+    app.Quit
+    WScript.Quit 21
   End If
-  WScript.Echo "Selected program: " & programName & " (rows " & rowStart & " to " & rowEnd & "; 0 means boundary)"
-  text = text & ProgramText(project, programName, rowStart, rowEnd)
+  text = SliceLines(code.Text, rowStart, rowEnd)
   Set code = project.CodeCollection.Add
   code.Name = programName & "_PySAS"
   code.Text = text
@@ -577,24 +506,15 @@ On Error Resume Next
 code.UseApplicationOptions = True
 On Error GoTo 0
 Dim saved
-Set saved = CreateObject("ADODB.Stream")
-saved.Type = 2
-saved.Charset = "utf-8"
-saved.Open
-saved.WriteText code.Text
-saved.SaveToFile codePath, 2
+Set saved = fso.OpenTextFile(codePath, 2, True)
+saved.Write code.Text
 saved.Close
-WScript.Echo "Submitted code saved: " & codePath
 WScript.Echo "Running: " & code.Name
 code.Run
-WScript.Echo "SAS execution returned. Saving logs and results..."
 SaveOutputs code
 WScript.Echo "EG Results detected: " & code.Results.Count
-WScript.Echo "Closing project..."
 project.Close
-WScript.Echo "Closing Enterprise Guide..."
 app.Quit
-WScript.Echo "Automation completed."
 WScript.Quit 0
 '''
 
@@ -627,12 +547,11 @@ def notify(title: str, message: str, error: bool = False, flash: bool = False) -
         pass
 
 
-def compose_sas(source: Path, result_dir: Path, explicit_lib: Path | None = None,
-                init_dir: Path | None = None, extra_init_dir: Path | None = None) -> str:
+def compose_sas(source: Path, result_dir: Path, explicit_lib: Path | None = None) -> str:
     parts = ["options iomlogautoflush;\n",
              f"%let PYSAS_RESULT_DIR=\"{result_dir.as_posix()}\";\n",
              "/* PYSAS_LIB_START */\n"]
-    for path in init_files(explicit_lib, init_dir, extra_init_dir):
+    for path in init_files(explicit_lib):
         parts += [f"/* PYSAS_INIT_FILE_START: {path.name} */\n", normalized(read_text(path)),
                   f"/* PYSAS_INIT_FILE_END: {path.name} */\n"]
     parts += ["/* PYSAS_LIB_END */\n", f"/* PYSAS_JOB_START: {source.name} */\n",
@@ -689,54 +608,25 @@ def execute_eg(mode: str, project: Path, sas_path: Path, program: str, row_start
     command = [str(cscript_path()), "//nologo", str(vbs_path), mode, str(project), str(sas_path),
                program, str(row_start), str(row_end), str(log_path), str(code_path), str(results),
                str(manifest) if tables else "", str(temp_prefix)]
-    console_path = run_dir / "console.txt"
-    rc = 127
     try:
-        # A file cannot keep the parent waiting for EOF when EG leaves a child alive.
-        with console_path.open("wb", buffering=0) as output:
-            process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT,
-                                       **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}))
-            cancelled = False
-            while process.poll() is None:
-                if (run_dir / "_cancel.request").exists():
-                    # Target only the automation process owned by this file, never all SAS/EG processes.
-                    try:
-                        if os.name == "nt":
-                            stopped = subprocess.run(["taskkill.exe", "/PID", str(process.pid), "/T", "/F"],
-                                                     capture_output=True, timeout=15, creationflags=subprocess.CREATE_NO_WINDOW)
-                            if stopped.returncode and process.poll() is None:
-                                raise OSError("Windows refused the stop request")
-                        else:
-                            process.kill()
-                    except (OSError, subprocess.TimeoutExpired) as exc:
-                        output.write(f"Stop request not completed: {exc}. Retrying while the file remains active.\n".encode("utf-8"))
-                        output.flush()
-                        time.sleep(3)
-                        continue
-                    cancelled = True
-                    break
-                time.sleep(.2)
-            rc = process.wait()
-            if cancelled:
-                rc = 130
-                output.write(b"Stopped by user. The local automation process was terminated; verify remote SAS session state if needed.\n")
+        completed = subprocess.run(command, capture_output=True, text=True, errors="replace")
+        console = (completed.stdout or "") + (completed.stderr or "")
     except OSError as exc:
-        with console_path.open("a", encoding="utf-8") as output:
-            output.write(f"ERROR: Enterprise Guide automation: {exc}\n")
+        completed = subprocess.CompletedProcess(command, 127)
+        console = f"ERROR: Could not launch Enterprise Guide automation: {exc}\n"
     finally:
         try: vbs_path.unlink()
         except OSError: pass
-    console = read_text(console_path)
+    (run_dir / "console.txt").write_text(console, encoding="utf-8", errors="replace")
     if tables:
         combine_workbooks(manifest, results / f"{stem}_tables.xlsx")
         try: manifest.unlink()
         except OSError: pass
-    return rc, console
+    return completed.returncode, console
 
 
 def run_job(source: Path, project: Path, tables: bool, explicit_lib: Path | None,
-            notify_user: bool, runs_dir: Path | None = None, display_name: str | None = None,
-            init_dir: Path | None = None, extra_init_dir: Path | None = None) -> dict[str, Any]:
+            notify_user: bool, runs_dir: Path | None = None, display_name: str | None = None) -> dict[str, Any]:
     logical_stem = re.sub(r"(?i)\.tables$", "", source.stem)
     base = safe_name(logical_stem)
     root = runs_dir or (ROOT_DIR / "runner" / "runs")
@@ -745,17 +635,13 @@ def run_job(source: Path, project: Path, tables: bool, explicit_lib: Path | None
     suffix = 2
     while run_dir.exists(): run_dir = root / f"{now_stamp()}__{base}_{suffix}"; suffix += 1
     run_dir.mkdir(parents=True)
-    source_dir = run_dir / "source"
-    source_dir.mkdir()
-    shutil.copy2(source, source_dir / source.name)
     submitted = run_dir / "_submitted.sas"
-    submitted.write_text(compose_sas(source, run_dir / "results", explicit_lib, init_dir, extra_init_dir), encoding="utf-8")
+    submitted.write_text(compose_sas(source, run_dir / "results", explicit_lib), encoding="utf-8")
     started = time.time()
     rc, console = execute_eg("RUNFILE", project, submitted, display_name or source.name, 0, 0, run_dir, tables)
     log_files = list((run_dir / "logs").glob("*.log"))
     sas_error = any(detect_sas_error(p) for p in log_files)
-    if rc == 130: status = "CANCELLED"
-    elif rc != 0: status = "FAILED"
+    if rc != 0: status = "FAILED"
     elif sas_error: status = "SAS_ERROR"
     else: status = "SUCCESS"
     elapsed = time.time() - started
@@ -763,9 +649,8 @@ def run_job(source: Path, project: Path, tables: bool, explicit_lib: Path | None
         f"status={status}\nsource={source.name}\nstarted={datetime.fromtimestamp(started).isoformat(timespec='seconds')}\n"
         f"finished={datetime.now().isoformat(timespec='seconds')}\nelapsed_seconds={elapsed:.1f}\n",
         encoding="utf-8")
-    if status == "SUCCESS":
-        try: submitted.unlink()
-        except OSError: pass
+    try: submitted.unlink()
+    except OSError: pass
     if notify_user:
         label = "completed" if status == "SUCCESS" else ("completed with SAS errors" if status == "SAS_ERROR" else "runner failed")
         notify("PySAS", f"{source.name}: {label}", error=status != "SUCCESS")
@@ -779,9 +664,7 @@ def runner_run(args: argparse.Namespace) -> int:
     project = choose_egp(args.template)
     tables = bool(args.tables or re.search(r"(?i)\.tables\.sas$", source.name))
     lib = Path(args.lib).resolve() if args.lib else None
-    init_dir = Path(args.init_dir).expanduser().resolve() if getattr(args, "init_dir", None) else None
-    if init_dir is not None and not init_dir.is_dir(): raise FileNotFoundError(init_dir)
-    result = run_job(source, project, tables, lib, not args.no_notify, init_dir=init_dir)
+    result = run_job(source, project, tables, lib, not args.no_notify)
     label = {"SUCCESS": "DONE", "SAS_ERROR": "DONE WITH SAS ERRORS", "FAILED": "RUNNER FAILED"}[result["status"]]
     print(f"{label}: {source.name}")
     print(result["run_dir"])
@@ -803,20 +686,14 @@ def dashboard(running: dict[str, float], inbox: Path, runs: Path, max_ready: int
     lines += ["", f"Ready to review ({len(ready)})"]
     for path in ready[:max_ready]: lines.append(f"  ✓ {path.name}")
     if len(ready) > max_ready: lines.append(f"  … and {len(ready) - max_ready} more in runner\\runs")
-    queued = sum(1 for p in sas_files(inbox) if not p.name.startswith("_")) if inbox.exists() else 0
+    queued = len(list(inbox.glob("*.sas"))) if inbox.exists() else 0
     if queued: lines += ["", f"Queued in inbox: {queued}"]
-    lines += ["", f"Drop job .sas files into {inbox}. _*.sas files are shared initialization. Press Ctrl+C to stop."]
+    lines += ["", "Drop .sas files into runner\\inbox. Press Ctrl+C to stop."]
     return "\n".join(lines)
 
 
 def runner_watch(args: argparse.Namespace) -> int:
-    root = ROOT_DIR / "runner"
-    inbox = Path(args.inbox).expanduser().resolve() if getattr(args, "inbox", None) else root / "inbox"
-    # Claim on the inbox volume so custom/network inboxes can be moved atomically.
-    claimed = root / "claimed" if inbox.resolve() == (root / "inbox").resolve() else inbox / ".pysas-claimed"
-    runs = root / "runs"
-    init_dir = Path(args.init_dir).expanduser().resolve() if getattr(args, "init_dir", None) else None
-    if init_dir is not None and not init_dir.is_dir(): raise FileNotFoundError(init_dir)
+    root = ROOT_DIR / "runner"; inbox = root / "inbox"; claimed = root / "claimed"; runs = root / "runs"
     for path in (inbox, claimed, runs): path.mkdir(parents=True, exist_ok=True)
     project = choose_egp(args.template); lib = Path(args.lib).resolve() if args.lib else None
     max_workers = max(1, args.workers); running: dict[str, float] = {}; futures: dict[Any, tuple[str, Path]] = {}
@@ -825,8 +702,7 @@ def runner_watch(args: argparse.Namespace) -> int:
     ansi = sys.stdout.isatty()
     try:
         while True:
-            for path in sorted(sas_files(inbox)):
-                if path.name.startswith("_"): continue
+            for path in sorted(inbox.glob("*.sas")):
                 try: state = (path.stat().st_size, path.stat().st_mtime)
                 except FileNotFoundError: continue
                 if seen_stable.get(path) != state:
@@ -838,7 +714,7 @@ def runner_watch(args: argparse.Namespace) -> int:
                 except (FileNotFoundError, PermissionError): continue
                 seen_stable.pop(path, None)
                 tables = bool(args.tables or re.search(r"(?i)\.tables\.sas$", claimed_file.name))
-                future = executor.submit(run_job, claimed_file, project, tables, lib, not args.no_notify, runs, path.name, init_dir, inbox)
+                future = executor.submit(run_job, claimed_file, project, tables, lib, not args.no_notify, runs, path.name)
                 futures[future] = (path.name, claim_dir); running[path.name] = time.time()
             for future in list(futures):
                 if not future.done(): continue
@@ -884,55 +760,46 @@ def find_scheduler(value: str | None) -> Path:
 def load_schedule(path: Path) -> list[dict[str, Any]]:
     _, load_workbook, _, _, _ = require_openpyxl()
     wb = load_workbook(path, data_only=True, read_only=True)
-    try:
-        ws = wb["Schedule"] if "Schedule" in wb.sheetnames else wb[wb.sheetnames[0]]
-        rows = ws.iter_rows(values_only=True)
-        headers = [str(v or "").strip().casefold() for v in next(rows)]
-        missing = REQUIRED_COLUMNS.difference(headers)
-        if missing: raise ValueError("Missing scheduler columns: " + ", ".join(sorted(missing)))
-        col = {name: headers.index(name) for name in REQUIRED_COLUMNS}; tasks = []; ids: set[str] = set()
-        for excel_row, values in enumerate(rows, 2):
-            if not any(v is not None and str(v).strip() for v in values): continue
-            def value(name: str): return values[col[name]] if col[name] < len(values) else None
-            task_id = str(value("task_id") or "").strip()
-            if not task_id: raise ValueError(f"Excel row {excel_row}: task_id is required")
-            if task_id.casefold() in ids: raise ValueError(f"Excel row {excel_row}: duplicate task_id: {task_id}")
-            ids.add(task_id.casefold())
-            dependencies = [x.strip() for x in str(value("depends_on") or "").split(",") if x.strip()]
-            tasks.append({
-                "task_id": task_id, "program": str(value("program") or "").strip(), "depends_on": dependencies,
-                "skip": truthy(value("skip")), "row_start": clean_int(value("row_start"), "row_start", excel_row),
-                "row_end": clean_int(value("row_end"), "row_end", excel_row), "section": str(value("section") or "").strip(),
-                "stop_process_on_error": truthy(value("stop_process_on_error")),
-                "stop_program_on_error": truthy(value("stop_program_on_error")),
-                "max_parallel": clean_int(value("max_parallel"), "max_parallel", excel_row),
-                "always_run": truthy(value("always_run")), "excel_row": excel_row,
-            })
-        known = {t["task_id"].casefold() for t in tasks}
-        for task in tasks:
-            absent = [d for d in task["depends_on"] if d.casefold() not in known]
-            if absent: raise ValueError(f"{task['task_id']}: unknown dependencies: {', '.join(absent)}")
-            if task["row_start"] and task["row_end"] and task["row_start"] > task["row_end"]:
-                raise ValueError(f"{task['task_id']}: row_start must not exceed row_end")
-        return tasks
-    finally:
-        wb.close()
+    ws = wb["Schedule"] if "Schedule" in wb.sheetnames else wb[wb.sheetnames[0]]
+    rows = ws.iter_rows(values_only=True)
+    headers = [str(v or "").strip().casefold() for v in next(rows)]
+    missing = REQUIRED_COLUMNS.difference(headers)
+    if missing: raise ValueError("Missing scheduler columns: " + ", ".join(sorted(missing)))
+    col = {name: headers.index(name) for name in REQUIRED_COLUMNS}; tasks = []; ids: set[str] = set()
+    for excel_row, values in enumerate(rows, 2):
+        if not any(v is not None and str(v).strip() for v in values): continue
+        def value(name: str): return values[col[name]] if col[name] < len(values) else None
+        task_id = str(value("task_id") or "").strip()
+        if not task_id: raise ValueError(f"Excel row {excel_row}: task_id is required")
+        if task_id.casefold() in ids: raise ValueError(f"Excel row {excel_row}: duplicate task_id: {task_id}")
+        ids.add(task_id.casefold())
+        dependencies = [x.strip() for x in str(value("depends_on") or "").split(",") if x.strip()]
+        tasks.append({
+            "task_id": task_id, "program": str(value("program") or "").strip(), "depends_on": dependencies,
+            "skip": truthy(value("skip")), "row_start": clean_int(value("row_start"), "row_start", excel_row),
+            "row_end": clean_int(value("row_end"), "row_end", excel_row), "section": str(value("section") or "").strip(),
+            "stop_process_on_error": truthy(value("stop_process_on_error")),
+            "stop_program_on_error": truthy(value("stop_program_on_error")),
+            "max_parallel": clean_int(value("max_parallel"), "max_parallel", excel_row),
+            "always_run": truthy(value("always_run")), "excel_row": excel_row,
+        })
+    known = {t["task_id"].casefold() for t in tasks}
+    for task in tasks:
+        absent = [d for d in task["depends_on"] if d.casefold() not in known]
+        if absent: raise ValueError(f"{task['task_id']}: unknown dependencies: {', '.join(absent)}")
+        if task["row_start"] and task["row_end"] and task["row_start"] > task["row_end"]:
+            raise ValueError(f"{task['task_id']}: row_start must not exceed row_end")
+    return tasks
 
 
 def scheduler_task(task: dict[str, Any], project: Path, task_root: Path) -> dict[str, Any]:
     task_dir = task_root / safe_name(task["task_id"]); task_dir.mkdir(parents=True, exist_ok=True)
     task_project = task_dir / project.name; shutil.copy2(project, task_project)
-    setup = ET.Element("setup")
-    for definition in task.get("_always_run", []):
-        ET.SubElement(setup, "program", name=definition["program"],
-                      first=str(definition["row_start"] or 0), last=str(definition["row_end"] or 0))
-    setup_path = task_dir / "shared_setup.xml"
-    ET.ElementTree(setup).write(setup_path, encoding="utf-8", xml_declaration=True)
     began = time.time()
-    rc, console = execute_eg("RUNPROJECT", task_project, setup_path, task["program"],
+    rc, console = execute_eg("RUNPROJECT", task_project, Path(""), task["program"],
                              task["row_start"] or 0, task["row_end"] or 0, task_dir, False)
     logs = list((task_dir / "logs").glob("*.log")); sas_error = any(detect_sas_error(p) for p in logs)
-    status = "CANCELLED" if rc == 130 else ("FAILED" if rc else ("SAS_ERROR" if sas_error else "SUCCESS"))
+    status = "FAILED" if rc else ("SAS_ERROR" if sas_error else "SUCCESS")
     if any(pattern in console.casefold() for pattern in CONNECTION_PATTERNS): status = "CONNECTION_LOST"
     return {**task, "status": status, "elapsed": time.time() - began, "task_dir": task_dir,
             "message": console.strip().splitlines()[-1] if console.strip() else ""}
@@ -960,37 +827,24 @@ def schedule_run(args: argparse.Namespace) -> int:
     suffix = 2
     while run_dir.exists(): run_dir = base_runs / f"{now_stamp()}__schedule_{suffix}"; suffix += 1
     run_dir.mkdir(); shutil.copy2(workbook, run_dir / workbook.name); shutil.copy2(project, run_dir / project.name)
-    definitions = [t for t in tasks if t["always_run"] and not t["skip"]]
-    pending = {t["task_id"].casefold(): {**t, "_always_run": definitions} for t in tasks if not t["always_run"]}
-    results = [{**t, "status": "SKIPPED_SUCCESS" if t["skip"] else "ALWAYS_RUN_DEFINITION",
-                "elapsed": 0.0, "message": "Marked skip" if t["skip"] else "Prepended before each program in workbook order"}
-               for t in tasks if t["always_run"]]
-    satisfied = {t["task_id"].casefold() for t in tasks if t["always_run"]}
-    failed: set[str] = set(); stop = False
+    pending = {t["task_id"].casefold(): t for t in tasks}; results: list[dict[str, Any]] = []
+    satisfied: set[str] = set(); failed: set[str] = set(); stop = False
     max_workers = max(1, args.workers or max((t["max_parallel"] or 1 for t in tasks), default=1))
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers); active: dict[Any, dict[str, Any]] = {}
-    submitted_at: dict[str, float] = {}
     try:
         while pending or active:
-            pending_before = len(pending)
             for key, task in list(pending.items()):
                 deps = {d.casefold() for d in task["depends_on"]}
                 if task["skip"]:
                     result = {**task, "status": "SKIPPED_SUCCESS", "elapsed": 0.0, "message": "Marked skip"}
                     results.append(result); satisfied.add(key); pending.pop(key); continue
-                if stop:
-                    result = {**task, "status": "STOPPED_ON_ERROR", "elapsed": 0.0, "message": "Not started after stop-on-error"}
-                    results.append(result); failed.add(key); pending.pop(key); continue
-                if deps & failed:
+                if deps & failed and not task["always_run"]:
                     result = {**task, "status": "BLOCKED_DEPENDENCY", "elapsed": 0.0, "message": "Dependency failed"}
                     results.append(result); failed.add(key); pending.pop(key); continue
-                if not deps.issubset(satisfied | failed) or len(active) >= max_workers: continue
-                submitted_at[key] = time.time()
+                if not deps.issubset(satisfied | failed) or stop or len(active) >= max_workers: continue
                 future = executor.submit(scheduler_task, task, project, run_dir / "tasks")
                 active[future] = task; pending.pop(key)
             if not active:
-                if pending and len(pending) < pending_before:
-                    continue
                 if pending:
                     for key, task in list(pending.items()):
                         results.append({**task, "status": "BLOCKED_DEPENDENCY", "elapsed": 0.0,
@@ -998,13 +852,7 @@ def schedule_run(args: argparse.Namespace) -> int:
                 break
             done, _ = concurrent.futures.wait(active, timeout=0.5, return_when=concurrent.futures.FIRST_COMPLETED)
             for future in done:
-                task = active.pop(future); key = task["task_id"].casefold()
-                try:
-                    result = future.result()
-                except Exception as exc:
-                    result = {**task, "status": "FAILED", "elapsed": time.time() - submitted_at[key],
-                              "message": str(exc), "task_dir": run_dir / "tasks" / safe_name(task["task_id"])}
-                results.append(result)
+                task = active.pop(future); result = future.result(); results.append(result); key = task["task_id"].casefold()
                 if result["status"] == "SUCCESS": satisfied.add(key)
                 else:
                     failed.add(key)
@@ -1035,8 +883,8 @@ def schedule_continue(args: argparse.Namespace) -> int:
     ws = wb["Schedule"] if "Schedule" in wb.sheetnames else wb[wb.sheetnames[0]]
     headers = [str(c.value or "").strip().casefold() for c in ws[1]]; skip_col = headers.index("skip") + 1
     for task in tasks:
-        if not task["always_run"] and prior.get(task["task_id"].casefold()) in FINAL_OK: ws.cell(task["excel_row"], skip_col).value = 1
-    temp = ROOT_DIR / f"{workbook.stem}__next.xlsx"; wb.save(temp); wb.close()
+        if prior.get(task["task_id"].casefold()) in FINAL_OK: ws.cell(task["excel_row"], skip_col).value = 1
+    temp = ROOT_DIR / f"{workbook.stem}__next.xlsx"; wb.save(temp)
     forwarded = argparse.Namespace(workbook=str(temp), project=str(project), workers=args.workers, no_notify=args.no_notify)
     try: return schedule_run(forwarded)
     finally:
@@ -1062,9 +910,6 @@ def parser() -> argparse.ArgumentParser:
     bv = bsub.add_parser("verify"); bv.add_argument("--bundle"); bv.set_defaults(func=bundle_verify)
     bu = bsub.add_parser("unpack"); bu.add_argument("--bundle"); bu.add_argument("--no-backup", action="store_true"); bu.set_defaults(func=bundle_unpack)
 
-    for command in (bp, bv, bu):
-        command.add_argument("--root", help="code folder to pack, compare or restore (default: folder beside pysas.py)")
-
     egp = subs.add_parser("egp", help="inspect, extract or repack EGP projects")
     esub = egp.add_subparsers(dest="egp_command", required=True)
     ei = esub.add_parser("inspect"); ei.add_argument("project", nargs="?"); ei.set_defaults(func=egp_inspect)
@@ -1078,10 +923,6 @@ def parser() -> argparse.ArgumentParser:
     rw = rsub.add_parser("watch"); rw.add_argument("--template"); rw.add_argument("--lib"); rw.add_argument("--tables", action="store_true")
     rw.add_argument("--workers", type=int, default=2); rw.add_argument("--poll", type=float, default=2.0)
     rw.add_argument("--no-notify", action="store_true"); rw.set_defaults(func=runner_watch)
-
-    rr.add_argument("--init-dir", help="folder containing shared _*.sas initialization files")
-    rw.add_argument("--init-dir", help="folder containing shared _*.sas initialization files")
-    rw.add_argument("--inbox", help="folder to watch; _*.sas files here initialize jobs instead of being queued")
 
     schedule = subs.add_parser("schedule", help="run an Excel dependency schedule")
     schedule.add_argument("action", nargs="?", choices=["run", "continue"], default="run")

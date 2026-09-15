@@ -46,17 +46,18 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'preview') }}
           fail_on_unmatched_files: true
           body: |
-            Scheduler programs now show their section and selected source rows in Running now, schedule activity and the inspector.
+            Execution investigation and original 0.3.2 scheduler comparison. The reported wait inside EG code.Run is not yet verified as resolved on a real SAS server.
 
-            Download PySAS-Workbench-Python-0.4.0-preview.12.zip, extract it fully and open START_PYSAS.bat.
+            Download PySAS-Workbench-Python-0.4.0-preview.13.zip and extract fully. Open START_PYSAS.bat.
 
-            - Example: Realised.sas — Section Realised · Rows 20–85.
-            - Open-ended ranges and whole-program runs are labelled explicitly.
-            - This displays the range selected in the workbook, not SAS's current executing line.
-            - Saved for new UI runs. Execution behavior and the standalone pysas.py engine remain unchanged from preview.11.
-            - Includes the previous stability, encoding, per-file stop and bundle download fixes. Experimental live SAS log polling remains removed.
+            - Scheduler offers Original 0.3.2 · terminal comparison: byte-identical published engine, original scheduler and EG bridge.
+            - Use Maximum parallel tasks = 0 to honor workbook settings. The UI previously forced two workers.
+            - Original 0.3.2 runs always_run rows as separate tasks; current mode prepends them to each program. Original mode has no per-file stop or live console capture.
+            - Worker output/events no longer depend on the UI draining a pipe. History-write failures cannot strand worker completion.
+            - Current console identifies prepended setup ranges and the saved submitted-code file.
+            - Includes docs/execution-investigation.md with evidence, remaining differences and a controlled comparison procedure.
 
-            Requires Windows, Python 3.10+, configured Enterprise Guide and openpyxl for Excel features.
+            Requires Windows, Python 3.10+, configured Enterprise Guide and openpyxl for Excel features. SAS-server execution is not covered by CI.
 
           files: |
             release/PySAS-Workbench-Python-*.zip

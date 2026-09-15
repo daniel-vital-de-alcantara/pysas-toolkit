@@ -70,3 +70,8 @@ test('scheduler scope displays section and inclusive row bounds without inventin
   const markup=h.taskTable([{name:'Realised.sas',section:'<setup>',row_start:2,row_end:5,status:'RUNNING'}]);
   assert.match(markup,/Section &lt;setup&gt; · Rows 2–5/);
 });
+
+ test('original 0.3.2 never offers unsupported per-file cancellation', () => {
+   const html = h.taskTable([{name:'job',key:'A',status:'RUNNING',path:'runs/A',can_cancel_file:false}], 'command');
+   assert.ok(!html.includes('data-cancel-command'));
+ });

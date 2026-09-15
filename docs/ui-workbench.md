@@ -1,6 +1,6 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.12 is a separate browser UI for the standalone PySAS
+The Workbench 0.4.0-preview.13 is a separate browser UI for the standalone PySAS
 0.3.8 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
@@ -162,3 +162,7 @@ row range beside the program name in Running now, schedule activity and the
 inspector. Open-ended ranges and whole-program runs are labelled explicitly.
 This is the selected execution range, not a live SAS line counter. The metadata
 is retained for new UI runs; older runs without it do not invent a range.
+
+### Original 0.3.2 scheduler comparison
+
+Scheduler and Continue offer an **Original 0.3.2 · terminal comparison** engine. This uses the exact published engine, including its separate-task always_run behavior. Per-file stops and live console capture are unavailable in this mode. The default current engine keeps shared setup. A maximum parallel task value of 0 uses workbook settings, matching the terminal default. See [the execution investigation](execution-investigation.md) for the verified differences and limitations.

@@ -4,6 +4,7 @@ import _thread
 import functools
 import importlib.util
 import json
+import os
 import sys
 import threading
 import time
@@ -16,8 +17,18 @@ _context = threading.local()
 
 def emit(event, **values):
     with _lock:
-        sys.stdout.write(PREFIX + json.dumps({"event": event, "time": time.time(), **values}, default=str) + "\n")
-        sys.stdout.flush()
+        payload = json.dumps({"event": event, "time": time.time(), **values}, default=str) + "\n"
+        event_path = os.environ.get("PYSAS_UI_EVENTS")
+        if event_path:
+            # Observation must never wait for the UI to consume a pipe.
+            try:
+                with open(event_path, "a", encoding="utf-8") as output:
+                    output.write(payload)
+            except OSError as exc:
+                sys.stderr.write(f"UI event could not be saved: {exc}\n")
+        else:
+            sys.stdout.write(PREFIX + payload)
+            sys.stdout.flush()
 
 
 def load_engine(script):
@@ -86,6 +97,8 @@ def observe(engine):
 def main():
     script, *arguments = sys.argv[1:]
     engine = load_engine(Path(script))
+    if getattr(engine, "VERSION", "") == "0.3.2" and os.environ.get("PYSAS_UI_LEGACY_ROOT"):
+        engine.ROOT_DIR = Path(os.environ["PYSAS_UI_LEGACY_ROOT"])
     observe(engine)
     if arguments[:2] == ["runner", "watch"]:
         def control():

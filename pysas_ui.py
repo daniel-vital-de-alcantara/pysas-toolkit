@@ -23,9 +23,8 @@ from urllib.parse import parse_qs, quote, urlsplit
 from pysas import text_encoding
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.12"
+VERSION = "0.4.0-preview.13"
 APP_DIR = Path(__file__).resolve().parent
-PREFIX = "@@PYSAS_UI@@"
 ACTIVE = {"RUNNING", "STOPPING"}
 
 
@@ -266,10 +265,11 @@ class Workbench:
                         raise ValueError("Choose an output path outside application files.")
                 args.extend(["--" + field, str(path)])
         if action in {"watch", "schedule", "continue"}:
-            workers = int(data.get("workers") or 2)
-            if not 1 <= workers <= 32:
-                raise ValueError("Workers must be between 1 and 32.")
-            args.extend(["--workers", str(workers)])
+            workers = int(data.get("workers") or (2 if action == "watch" else 0))
+            if not (1 <= workers <= 32 or (workers == 0 and action != "watch")):
+                raise ValueError("Workers must be between 1 and 32; schedules can use 0 for workbook settings.")
+            if workers:
+                args.extend(["--workers", str(workers)])
         if action == "watch":
             poll = float(data.get("poll") or 2)
             if not 0.5 <= poll <= 60:
@@ -285,6 +285,10 @@ class Workbench:
 
     def launch(self, data):
         action, args = self.arguments(data)
+        legacy = data.get("engine") == "0.3.2"
+        if legacy and action not in {"schedule", "continue"}:
+            raise ValueError("The 0.3.2 comparison is available for scheduler runs only.")
+        script = APP_DIR / "pysas_0_3_2.py" if legacy else self.script
         with self.lock:
             if getattr(self, "closing", False):
                 raise ValueError("PySAS is closing and finishing its active jobs.")
@@ -294,7 +298,8 @@ class Workbench:
             item = {"id": identifier, "action": action, "args": args,
                     "name": data.get("program") or data.get("workbook") or data.get("run_dir") or action.replace("-", " "),
                     "code_root": str(self.code_root(data.get("code_root"))) if action.startswith("bundle-") else None,
-                    "started": time.time(), "finished": None, "status": "RUNNING", "tasks": {}, "message": ""}
+                    "started": time.time(), "finished": None, "status": "RUNNING", "tasks": {}, "message": "",
+                    "engine": "0.3.2" if legacy else "current", "can_cancel_file": not legacy}
             if action == "bundle-pack":
                 root = self.code_root(data.get("code_root"))
                 item["artifact"] = str(within(root, str(data.get("output") or "codebase.sasbundle.txt")))
@@ -303,17 +308,32 @@ class Workbench:
             env.pop("PYSAS_LIVE_LOG", None)
             isolation = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {"start_new_session": True}
             python = str(Path(sys.executable).with_name("python.exe")) if os.name == "nt" else sys.executable
-            process = subprocess.Popen([python, "-u", str(APP_DIR / "ui_worker.py"), str(self.script), *args],
-                                       cwd=self.root, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                       stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", env=env, **isolation)
+            event_path = self.storage / (identifier + ".events.jsonl")
+            event_path.touch()
+            env["PYSAS_UI_EVENTS"] = str(event_path)
+            if legacy:
+                env["PYSAS_UI_LEGACY_ROOT"] = str(self.root)
+            else:
+                env.pop("PYSAS_UI_LEGACY_ROOT", None)
+            # Neither normal output nor events depend on the HTTP/history reader.
+            with (self.storage / (identifier + ".txt")).open("wb", buffering=0) as output:
+                process = subprocess.Popen([python, "-u", str(APP_DIR / "ui_worker.py"), str(script), *args],
+                                           cwd=self.root, stdin=subprocess.PIPE, stdout=output,
+                                           stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", env=env, **isolation)
             self.commands[identifier] = item
             self.processes[identifier] = process
-            self.save(item)
+            try:
+                self.save(item)
+            except OSError as exc:
+                item["message"] = "UI history could not be saved: " + str(exc)
+            threading.Thread(target=self.monitor_worker, args=(identifier, process, event_path), daemon=True).start()
             if action.startswith("bundle-"):
-                settings = self.bundle_settings()
-                settings["last"] = item["code_root"]
-                atomic_json(self.storage / "bundle-paths.json", settings)
-            threading.Thread(target=self.consume, args=(identifier, process), daemon=True).start()
+                try:
+                    settings = self.bundle_settings()
+                    settings["last"] = item["code_root"]
+                    atomic_json(self.storage / "bundle-paths.json", settings)
+                except OSError as exc:
+                    item["message"] = "Bundle folder preference could not be saved: " + str(exc)
             return {"id": identifier}
 
     def event(self, item, event):
@@ -323,12 +343,13 @@ class Workbench:
                 key = task["task_id"]
                 if key not in item["tasks"]:
                     item["tasks"][key] = {"key": key, "name": task["program"], "kind": "task",
-                        "status": "SKIPPED_SUCCESS" if task.get("skip") else ("ALWAYS_RUN_DEFINITION" if task.get("always_run") else "PENDING"),
+                        "status": "SKIPPED_SUCCESS" if task.get("skip") else ("ALWAYS_RUN_DEFINITION" if task.get("always_run") and item.get("engine") != "0.3.2" else "PENDING"),
                         "depends_on": task.get("depends_on", []), "started": None, "elapsed": 0,
                         "section": task.get("section", ""), "row_start": task.get("row_start"), "row_end": task.get("row_end")}
         elif kind in {"start", "finish"}:
             key = event["key"]
             task = item["tasks"].setdefault(key, {"key": key})
+            task["can_cancel_file"] = item.get("can_cancel_file", True)
             task.update({k: v for k, v in event.items() if k not in {"event", "time", "path"}})
             if event.get("path"):
                 task["path"] = self.relative(event["path"])
@@ -351,22 +372,37 @@ class Workbench:
                     task["path"] = self.relative(result["task_dir"])
         self.save(item)
 
-    def consume(self, identifier, process):
-        with (self.storage / (identifier + ".txt")).open("w", encoding="utf-8") as log:
-            for line in process.stdout:
-                if PREFIX in line:
-                    before, payload = line.split(PREFIX, 1)
-                    try:
-                        with self.lock:
-                            self.event(self.commands[identifier], json.loads(payload))
-                        if before:
-                            log.write(before)
-                            log.flush()
-                        continue
-                    except (ValueError, KeyError):
-                        pass
-                log.write(line)
-                log.flush()
+    def monitor_worker(self, identifier, process, event_path):
+        """Tail complete events; process exit, never inherited-file EOF, ends a run."""
+        pending = ""
+        try:
+            with event_path.open(encoding="utf-8", errors="replace") as events:
+                while True:
+                    exited = process.poll() is not None
+                    chunk = events.read(65536)
+                    pending += chunk
+                    lines = pending.split("\n")
+                    pending = lines.pop()
+                    for line in lines:
+                        try:
+                            event = json.loads(line)
+                            with self.lock:
+                                self.event(self.commands[identifier], event)
+                        except (ValueError, KeyError, OSError) as exc:
+                            # A history write failure cannot terminate observation or SAS.
+                            with self.lock:
+                                self.commands[identifier]["message"] = "UI history update failed: " + str(exc)
+                    if exited and not chunk:
+                        break
+                    if not chunk:
+                        time.sleep(.1)
+        except OSError as exc:
+            with self.lock:
+                self.commands[identifier]["message"] = "UI event file could not be read: " + str(exc)
+        finally:
+            self.complete_worker(identifier, process)
+
+    def complete_worker(self, identifier, process):
         rc = process.wait()
         with self.lock:
             item = self.commands[identifier]
@@ -387,9 +423,12 @@ class Workbench:
                 if task.get("status") in {"RUNNING", "PENDING", "CANCELLING"}:
                     task["status"] = "UNKNOWN"
                     task["message"] = "No final task status was received; check the console."
-            self.save(item)
-            self.processes.pop(identifier, None)
-        process.stdout.close()
+            try:
+                self.save(item)
+            except OSError as exc:
+                item["message"] = "Run ended, but history could not be saved: " + str(exc)
+            finally:
+                self.processes.pop(identifier, None)
         process.stdin.close()
 
     def stop(self, identifier):
@@ -412,6 +451,8 @@ class Workbench:
             task = item.get("tasks", {}).get(key) if item else None
             if identifier not in self.processes or not task or task.get("status") not in {"RUNNING", "CANCELLING"}:
                 raise ValueError("This file is no longer running.")
+            if item.get("can_cancel_file") is False:
+                raise ValueError("Original 0.3.2 has no per-file cancellation support.")
             if not task.get("path"):
                 raise ValueError("The file is still starting. Try again in a moment.")
             run_dir = within(self.root, task["path"])

@@ -149,19 +149,21 @@ class WorkbenchTests(unittest.TestCase):
         self.app.event(item, {"event": "summary", "path": self.root / "runs/test", "tasks": [{"task_id": "A", "program": "prepare", "status": "FAILED", "elapsed": 7}, {"task_id": "B", "program": "next", "status": "BLOCKED_DEPENDENCY", "elapsed": 0}]})
         self.assertEqual(item["tasks"]["B"]["status"], "BLOCKED_DEPENDENCY")
 
-    def test_event_after_partial_console_line_is_not_lost(self):
-        # Python print writes its text and newline separately. A worker event
-        # can therefore follow ordinary console text on the same physical line.
+    def test_file_events_are_independent_of_partial_console_lines(self):
         from types import SimpleNamespace
         item = {"id": "mixed", "action": "run", "started": time.time(), "status": "RUNNING", "tasks": {}}
         self.app.commands["mixed"] = item
         event = {"event": "start", "key": "A", "name": "a.sas", "time": time.time()}
         finished = {"event": "finish", "key": "A", "name": "a.sas", "status": "SUCCESS", "elapsed": 2, "time": time.time()}
-        process = SimpleNamespace(stdout=io.StringIO("console text" + worker.PREFIX + json.dumps(event) + "\n" + worker.PREFIX + json.dumps(finished) + "\n"), stdin=io.StringIO(), wait=lambda: 0)
-        self.app.consume("mixed", process)
+        events = self.app.storage / "mixed.events.jsonl"
+        events.write_text(json.dumps(event) + "\n" + json.dumps(finished) + "\n", encoding="utf-8")
+        console = self.app.storage / "mixed.txt"
+        console.write_text("console text without newline", encoding="utf-8")
+        process = SimpleNamespace(stdin=io.StringIO(), wait=lambda: 0, poll=lambda: 0)
+        self.app.monitor_worker("mixed", process, events)
         self.assertEqual(item["tasks"]["A"]["status"], "SUCCESS")
         self.assertEqual(item["tasks"]["A"]["elapsed"], 2)
-        self.assertEqual((self.app.storage / "mixed.txt").read_text(), "console text")
+        self.assertEqual(console.read_text(), "console text without newline")
 
     def test_historical_status_and_duration(self):
         complete = self.root / "runner/runs/20260914__done"
