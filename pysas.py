@@ -29,7 +29,7 @@ from typing import Any, Iterable
 from xml.etree import ElementTree as ET
 
 
-VERSION = "0.3.4"
+VERSION = "0.3.5"
 ROOT_DIR = Path(__file__).resolve().parent
 CODEBASE_FILE = "codebase.sasbundle.txt"
 BACKUP_FOLDER = "_codebase_backups"
@@ -83,7 +83,7 @@ def safe_name(value: str, limit: int = 70) -> str:
 
 
 def truthy(value: Any) -> bool:
-    return str(value or "").strip().casefold() in {"1", "true", "yes", "y", "x"}
+    return str(value or "").strip().casefold() in {"1", "1.0", "true", "yes", "y", "x"}
 
 
 def require_openpyxl():
@@ -105,6 +105,12 @@ def find_one(pattern: str, description: str, folder: Path = ROOT_DIR) -> Path:
     return items[0]
 
 
+def sas_files(folder: Path) -> list[Path]:
+    """Find SAS files without depending on the filesystem's case sensitivity."""
+    return sorted((p for p in folder.iterdir() if p.is_file() and p.suffix.casefold() == ".sas"),
+                  key=lambda p: (p.name.casefold(), p.name)) if folder.is_dir() else []
+
+
 def init_files(explicit: Path | None = None, folder: Path | None = None, extra_folder: Path | None = None) -> list[Path]:
     if explicit:
         if not explicit.is_file():
@@ -113,7 +119,7 @@ def init_files(explicit: Path | None = None, folder: Path | None = None, extra_f
     folders = [folder or ROOT_DIR]
     if extra_folder is not None:
         folders.append(extra_folder)
-    paths = {p.resolve() for directory in folders for p in directory.glob("_*.sas") if p.is_file()}
+    paths = {p.resolve() for directory in folders for p in sas_files(directory) if p.name.startswith("_")}
     return sorted(paths, key=lambda p: (p.name.casefold(), str(p).casefold()))
 
 
@@ -426,8 +432,12 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 
 Function ReadAll(path)
   Dim s
-  Set s = fso.OpenTextFile(path, 1, False, -2)
-  ReadAll = s.ReadAll
+  Set s = CreateObject("ADODB.Stream")
+  s.Type = 2
+  s.Charset = "utf-8"
+  s.Open
+  s.LoadFromFile path
+  ReadAll = s.ReadText
   s.Close
 End Function
 
@@ -444,6 +454,21 @@ Function SliceLines(value, firstLine, lastLine)
     answer = answer & a(i) & vbCrLf
   Next
   SliceLines = answer
+End Function
+
+Function ProgramText(theProject, name, firstLine, lastLine)
+  Dim j, candidate
+  For j = 0 To theProject.CodeCollection.Count - 1
+    Set candidate = theProject.CodeCollection.Item(j)
+    If LCase(candidate.Name) = LCase(name) Or LCase(candidate.Name & ".sas") = LCase(name) Then
+      ProgramText = SliceLines(candidate.Text, firstLine, lastLine)
+      Exit Function
+    End If
+  Next
+  WScript.Echo "ERROR: EGP program not found: " & name
+  theProject.Close
+  app.Quit
+  WScript.Quit 21
 End Function
 
 Function CleanName(value)
@@ -506,19 +531,22 @@ If UCase(mode) = "RUNFILE" Then
   code.Name = fso.GetBaseName(sasPath)
   code.Text = text
 Else
-  Set code = Nothing
-  Dim j, candidate
-  For j = 0 To project.CodeCollection.Count - 1
-    Set candidate = project.CodeCollection.Item(j)
-    If LCase(candidate.Name) = LCase(programName) Or LCase(candidate.Name & ".sas") = LCase(programName) Then Set code = candidate
-  Next
-  If code Is Nothing Then
-    WScript.Echo "ERROR: EGP program not found: " & programName
-    project.Close
-    app.Quit
-    WScript.Quit 21
+  Dim setupDoc, setupNode
+  text = ""
+  If fso.FileExists(sasPath) Then
+    Set setupDoc = CreateObject("MSXML2.DOMDocument.6.0")
+    setupDoc.async = False
+    If Not setupDoc.Load(sasPath) Then
+      WScript.Echo "ERROR: Cannot read shared setup definitions"
+      project.Close
+      app.Quit
+      WScript.Quit 22
+    End If
+    For Each setupNode In setupDoc.selectNodes("/setup/program")
+      text = text & ProgramText(project, setupNode.getAttribute("name"), CLng(setupNode.getAttribute("first")), CLng(setupNode.getAttribute("last"))) & vbCrLf
+    Next
   End If
-  text = SliceLines(code.Text, rowStart, rowEnd)
+  text = text & ProgramText(project, programName, rowStart, rowEnd)
   Set code = project.CodeCollection.Add
   code.Name = programName & "_PySAS"
   code.Text = text
@@ -712,7 +740,7 @@ def dashboard(running: dict[str, float], inbox: Path, runs: Path, max_ready: int
     lines += ["", f"Ready to review ({len(ready)})"]
     for path in ready[:max_ready]: lines.append(f"  ✓ {path.name}")
     if len(ready) > max_ready: lines.append(f"  … and {len(ready) - max_ready} more in runner\\runs")
-    queued = sum(1 for p in inbox.glob("*.sas") if not p.name.startswith("_")) if inbox.exists() else 0
+    queued = sum(1 for p in sas_files(inbox) if not p.name.startswith("_")) if inbox.exists() else 0
     if queued: lines += ["", f"Queued in inbox: {queued}"]
     lines += ["", f"Drop job .sas files into {inbox}. _*.sas files are shared initialization. Press Ctrl+C to stop."]
     return "\n".join(lines)
@@ -734,7 +762,7 @@ def runner_watch(args: argparse.Namespace) -> int:
     ansi = sys.stdout.isatty()
     try:
         while True:
-            for path in sorted(inbox.glob("*.sas")):
+            for path in sorted(sas_files(inbox)):
                 if path.name.startswith("_"): continue
                 try: state = (path.stat().st_size, path.stat().st_mtime)
                 except FileNotFoundError: continue
@@ -831,8 +859,14 @@ def load_schedule(path: Path) -> list[dict[str, Any]]:
 def scheduler_task(task: dict[str, Any], project: Path, task_root: Path) -> dict[str, Any]:
     task_dir = task_root / safe_name(task["task_id"]); task_dir.mkdir(parents=True, exist_ok=True)
     task_project = task_dir / project.name; shutil.copy2(project, task_project)
+    setup = ET.Element("setup")
+    for definition in task.get("_always_run", []):
+        ET.SubElement(setup, "program", name=definition["program"],
+                      first=str(definition["row_start"] or 0), last=str(definition["row_end"] or 0))
+    setup_path = task_dir / "shared_setup.xml"
+    ET.ElementTree(setup).write(setup_path, encoding="utf-8", xml_declaration=True)
     began = time.time()
-    rc, console = execute_eg("RUNPROJECT", task_project, Path(""), task["program"],
+    rc, console = execute_eg("RUNPROJECT", task_project, setup_path, task["program"],
                              task["row_start"] or 0, task["row_end"] or 0, task_dir, False)
     logs = list((task_dir / "logs").glob("*.log")); sas_error = any(detect_sas_error(p) for p in logs)
     status = "FAILED" if rc else ("SAS_ERROR" if sas_error else "SUCCESS")
@@ -863,8 +897,13 @@ def schedule_run(args: argparse.Namespace) -> int:
     suffix = 2
     while run_dir.exists(): run_dir = base_runs / f"{now_stamp()}__schedule_{suffix}"; suffix += 1
     run_dir.mkdir(); shutil.copy2(workbook, run_dir / workbook.name); shutil.copy2(project, run_dir / project.name)
-    pending = {t["task_id"].casefold(): t for t in tasks}; results: list[dict[str, Any]] = []
-    satisfied: set[str] = set(); failed: set[str] = set(); stop = False
+    definitions = [t for t in tasks if t["always_run"] and not t["skip"]]
+    pending = {t["task_id"].casefold(): {**t, "_always_run": definitions} for t in tasks if not t["always_run"]}
+    results = [{**t, "status": "SKIPPED_SUCCESS" if t["skip"] else "ALWAYS_RUN_DEFINITION",
+                "elapsed": 0.0, "message": "Marked skip" if t["skip"] else "Prepended before each program in workbook order"}
+               for t in tasks if t["always_run"]]
+    satisfied = {t["task_id"].casefold() for t in tasks if t["always_run"]}
+    failed: set[str] = set(); stop = False
     max_workers = max(1, args.workers or max((t["max_parallel"] or 1 for t in tasks), default=1))
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers); active: dict[Any, dict[str, Any]] = {}
     submitted_at: dict[str, float] = {}
@@ -876,10 +915,10 @@ def schedule_run(args: argparse.Namespace) -> int:
                 if task["skip"]:
                     result = {**task, "status": "SKIPPED_SUCCESS", "elapsed": 0.0, "message": "Marked skip"}
                     results.append(result); satisfied.add(key); pending.pop(key); continue
-                if stop and not task["always_run"]:
+                if stop:
                     result = {**task, "status": "STOPPED_ON_ERROR", "elapsed": 0.0, "message": "Not started after stop-on-error"}
                     results.append(result); failed.add(key); pending.pop(key); continue
-                if deps & failed and not task["always_run"]:
+                if deps & failed:
                     result = {**task, "status": "BLOCKED_DEPENDENCY", "elapsed": 0.0, "message": "Dependency failed"}
                     results.append(result); failed.add(key); pending.pop(key); continue
                 if not deps.issubset(satisfied | failed) or len(active) >= max_workers: continue

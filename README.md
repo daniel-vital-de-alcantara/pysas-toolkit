@@ -1,12 +1,12 @@
 # PySAS Toolkit
 
-**PySAS 0.3.4** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
+**PySAS 0.3.5** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
 
 It grew out of day-to-day model-development and consulting work where large SAS processes were difficult to inspect, rerun, parallelise, move between environments and review consistently. The current implementation brings those workflows together in one portable `pysas.py` utility.
 
 ## What it does
 
-| Component | Status in 0.3.4 | Purpose |
+| Component | Status in 0.3.5 | Purpose |
 | --- | --- | --- |
 | SAS bundle utility | Implemented | Pack, verify and safely unpack SAS source trees with SHA-256 integrity metadata and backups |
 | EGP tools | Implemented | Inspect EGP archives, extract embedded SAS programs and conservatively repack them into an EGP template |
@@ -31,11 +31,11 @@ Enterprise Guide setup; `openpyxl` is required for Excel features. No Node.js or
 frontend installation is needed.
 
 See [START_HERE.txt](START_HERE.txt) and the [workbench guide](docs/ui-workbench.md).
-The command-line toolkit is version 0.3.4; the UI preview is 0.4.0-preview.6.
+The command-line toolkit is version 0.3.5; the UI preview is 0.4.0-preview.7.
 
 ## Requirements
 
-PySAS 0.3.4 is designed for controlled Windows environments with:
+PySAS 0.3.5 is designed for controlled Windows environments with:
 
 - Python 3.9+ recommended;
 - SAS Enterprise Guide installed and configured for the target SAS environment;
@@ -203,7 +203,7 @@ The scheduler supports:
 - skip flags;
 - inclusive source row ranges;
 - process-level stop-on-error behaviour;
-- always-run cleanup/finalisation tasks, including after stop-on-error or worker exceptions;
+- always-run shared setup prepended before every scheduled program in the same SAS session;
 - schedule continuation from a previous run.
 
 Run a schedule with:
@@ -232,7 +232,7 @@ Continue a previous run with:
 py pysas.py schedule continue runs\20260908_120000__schedule
 ```
 
-PySAS reads the prior summary, temporarily marks previously successful normal tasks as skipped (always-run tasks run again unless explicitly skipped in the workbook) and launches a new isolated schedule run for the remaining work.
+PySAS reads the prior summary, temporarily marks previously successful normal tasks as skipped (shared setup stays enabled unless explicitly skipped in the workbook) and launches a new isolated schedule run for the remaining work.
 
 ## Files, uploads and keeping the PC awake
 
@@ -282,13 +282,13 @@ Important limitations include:
 - Enterprise Guide COM automation must be available locally;
 - EGP archive structure can vary across Enterprise Guide versions;
 - table export depends on Enterprise Guide exposing output datasets through the automation model;
-- `stop_program_on_error` is part of the scheduler schema in 0.3.4 but is not yet used to alter execution behaviour independently;
+- `stop_program_on_error` is part of the scheduler schema in 0.3.5 but is not yet used to alter execution behaviour independently;
 - scheduler dependency cycles are surfaced as unresolved/blocked tasks during execution rather than by a separate pre-run graph-cycle algorithm;
 - automated Windows/Enterprise Guide integration tests are not yet included in the public repository.
 
 ## Version
 
-Current published implementation: **0.3.4**.
+Current published implementation: **0.3.5**.
 
 ```powershell
 py pysas.py version

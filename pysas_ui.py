@@ -21,7 +21,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.6"
+VERSION = "0.4.0-preview.7"
 APP_DIR = Path(__file__).resolve().parent
 PREFIX = "@@PYSAS_UI@@"
 ACTIVE = {"RUNNING", "STOPPING"}
@@ -295,7 +295,7 @@ class Workbench:
                 key = task["task_id"]
                 if key not in item["tasks"]:
                     item["tasks"][key] = {"key": key, "name": task["program"], "kind": "task",
-                        "status": "SKIPPED_SUCCESS" if task.get("skip") else "PENDING",
+                        "status": "SKIPPED_SUCCESS" if task.get("skip") else ("ALWAYS_RUN_DEFINITION" if task.get("always_run") else "PENDING"),
                         "depends_on": task.get("depends_on", []), "started": None, "elapsed": 0}
         elif kind in {"start", "finish"}:
             key = event["key"]
@@ -420,12 +420,12 @@ class Workbench:
                 if task.get("path") in paths:
                     paths[task["path"]].update(status=task["status"], elapsed=task.get("elapsed"), started=task.get("started") or paths[task["path"]]["started"])
         inbox = Path(self.folders()["inbox"])
-        queued = sorted(p.name for p in inbox.glob("*.sas") if not p.name.startswith("_")) if inbox.exists() else []
+        queued = sorted(p.name for p in inbox.iterdir() if p.is_file() and p.suffix.casefold() == ".sas" and not p.name.startswith("_")) if inbox.exists() else []
         return {"version": VERSION, "workspace": str(self.root), "windows": os.name == "nt",
                 "openpyxl": importlib.util.find_spec("openpyxl") is not None,
                 "files": self.inventory(), "commands": commands[:200], "history": history,
                 "folders": self.folders(), "awake": self.awake.status(),
-                "initialization_files": sorted({str(p.resolve()) for folder in {Path(self.folders()["init"]), inbox} for p in folder.glob("_*.sas") if p.is_file()}),
+                "initialization_files": sorted({str(p.resolve()) for folder in {Path(self.folders()["init"]), inbox} for p in folder.glob("_*") if p.is_file() and p.suffix.casefold() == ".sas"}),
                 "queued": queued, "bundle_settings": self.bundle_settings(), "now": time.time()}
 
     def details(self, relative):

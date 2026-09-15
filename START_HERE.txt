@@ -1,10 +1,10 @@
-PySAS Workbench 0.4.0-preview.6
+PySAS Workbench 0.4.0-preview.7
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
 2. Place your EGP project, SAS programs, Schedule.xlsx, and _*.sas init files
    beside pysas.py in that folder. You can also copy the UI files into your
-   existing workspace, including the updated pysas.py 0.3.4. Keep your SAS,
+   existing workspace, including the updated pysas.py 0.3.5. Keep your SAS,
    EGP and Excel files. The updated engine remains a standalone single file.
 3. Double-click START_PYSAS.bat. PySAS opens in its own app-style window.
 4. Keep the launcher window open while jobs run. Stop the watcher using
@@ -47,9 +47,9 @@ What is included
 - Scheduler task statuses, individual task clocks, and total schedule duration.
 - Run history, searchable statuses, console, SAS logs/code and file downloads.
 - Excel previews (up to 100 data rows, 30 columns and 10 sheets per workbook).
-- Standalone pysas.py 0.3.4; existing CLI commands still work.
+- Standalone pysas.py 0.3.5; existing CLI commands still work.
 - Blue styling and saved code folders for repeated bundle operations.
-- Fixed always-run cleanup after scheduler failures and on continuation.
+- Always-run shared setup is prepended before every scheduled program.
 - Watcher _*.sas files are shared initialization, never queued as jobs.
 - Files & folders: input locations, multi-file uploads and Keep PC awake.
 
@@ -72,9 +72,9 @@ Keep PC awake prevents Windows idle sleep and display timeout while enabled.
 It does not click/type, override manual sleep or closing the lid, or bypass
 organization screen-lock policies. It resets when the server closes.
 
-The scheduler now runs always_run tasks despite stop-on-error and worker
-exceptions. Dependencies must still finish. Explicit skip wins. Continuation
-reruns always_run tasks even when a previous run completed them successfully.
+Scheduler always_run rows define shared setup, prepended in workbook order
+before each normal program in the same submission. Row ranges apply. Explicit
+skip disables a definition. Continuation keeps shared setup enabled.
 
 Bundle folders
 --------------

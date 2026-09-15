@@ -1,7 +1,7 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.6 is a separate browser UI for the standalone PySAS
-0.3.4 command-line engine. Download the Python ZIP from GitHub Releases, extract
+The Workbench 0.4.0-preview.7 is a separate browser UI for the standalone PySAS
+0.3.5 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
 

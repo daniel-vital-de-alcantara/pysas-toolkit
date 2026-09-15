@@ -24,13 +24,19 @@ class EngineTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_excel_boolean_flags_accept_numeric_one(self):
+        for value in (True, 1, 1.0, '1', '1.0', 'TRUE', 'yes', 'x'):
+            self.assertTrue(self.engine.truthy(value), repr(value))
+        for value in (False, 0, 0.0, '0', '0.0', '', None, 'FALSE', 2):
+            self.assertFalse(self.engine.truthy(value), repr(value))
+
     def test_initialization_is_prepended_in_order_and_override_is_preserved(self):
         init = self.root / 'shared'; init.mkdir()
         inbox = self.root / 'queue'; inbox.mkdir()
-        (init / '_20_macros.sas').write_text('macro_code;')
+        (init / '_20_macros.SAS').write_text('macro_code;')
         (init / '_10_libraries.sas').write_text('library_code;')
         (inbox / '_30_extra.sas').write_text('inbox_code;')
-        job = inbox / 'job.sas'; job.write_text('job_code;')
+        job = inbox / 'job.SAS'; job.write_text('job_code;')
         text = self.engine.compose_sas(job, self.root / 'results', init_dir=init, extra_init_dir=inbox)
         self.assertLess(text.index('library_code;'), text.index('macro_code;'))
         self.assertLess(text.index('macro_code;'), text.index('inbox_code;'))
@@ -45,29 +51,36 @@ class EngineTests(unittest.TestCase):
         inbox = self.root / 'queue'; inbox.mkdir()
         init = self.root / 'shared'; init.mkdir()
         (init / '_00_base.sas').write_text('base_code;')
-        shared = inbox / '_10_shared.sas'; shared.write_text('shared_code;')
-        (inbox / 'job.sas').write_text('job_code;')
+        shared = inbox / '_10_shared.SAS'; shared.write_text('shared_code;')
+        (inbox / 'job.SAS').write_text('job_code;')
+        (inbox / 'second.sAs').write_text('second_code;')
+        (inbox / '_20_options.sAs').write_text('options_code;')
         project = self.root / 'project.egp'; project.write_text('fake')
         seen = []
         finished = threading.Event()
-        def fake_job(source, project, tables, lib, notify, runs, name, init_dir, extra_init_dir):
-            self.assertEqual(source.parent.parent, inbox.resolve() / '.pysas-claimed')
-            seen.append((name, self.engine.compose_sas(source, runs, lib, init_dir, extra_init_dir)))
-            finished.set()
-            return {'status': 'SUCCESS', 'run_dir': runs / 'job'}
+        def fake_execute(mode, project, source, name, first, last, run_dir, tables):
+            self.assertEqual(mode, 'RUNFILE')
+            seen.append((name, source.read_text(encoding='utf-8')))
+            if len(seen) == 2:
+                finished.set()
+            return 0, ''
         cycles = 0
         def tick(_):
             nonlocal cycles
             cycles += 1
-            if cycles >= 2:
-                self.assertTrue(finished.wait(2))
+            if finished.wait(.02):
                 raise KeyboardInterrupt()
+            if cycles > 200:
+                self.fail('Watcher did not submit both jobs')
         args = argparse.Namespace(template=str(project), lib=None, workers=1, poll=.5,
                                   no_notify=True, tables=False, inbox=str(inbox), init_dir=str(init))
-        with patch.object(self.engine, 'run_job', fake_job), patch.object(self.engine.time, 'sleep', tick), contextlib.redirect_stdout(io.StringIO()):
+        with patch.object(self.engine, 'execute_eg', fake_execute), patch.object(self.engine.time, 'sleep', tick), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(self.engine.runner_watch(args), 130)
-        self.assertEqual([x[0] for x in seen], ['job.sas'])
-        self.assertIn('base_code;', seen[0][1]); self.assertIn('shared_code;', seen[0][1])
+        self.assertEqual([x[0] for x in seen], ['job.SAS', 'second.sAs'])
+        for _, text in seen:
+            self.assertIn('base_code;', text)
+            self.assertIn('shared_code;', text)
+            self.assertIn('options_code;', text)
         self.assertTrue(shared.exists())
 
     def run_schedule(self, tasks, failure, raises=False):
@@ -76,6 +89,7 @@ class EngineTests(unittest.TestCase):
         observed, summary = [], []
         def execute(task, *_):
             observed.append(task['task_id'])
+            self.assertEqual(task['_always_run'], [t for t in tasks if t['always_run'] and not t['skip']])
             if task['task_id'] == failure and raises:
                 raise OSError('COM startup failed')
             return {**task, 'status': 'FAILED' if task['task_id'] == failure else 'SUCCESS', 'elapsed': .01}
@@ -90,26 +104,79 @@ class EngineTests(unittest.TestCase):
                 'always_run': always, 'stop_process_on_error': stop, 'skip': skip,
                 'max_parallel': 1, 'row_start': None, 'row_end': None}
 
-    def test_cleanup_runs_after_stop_on_error_and_stopped_dependency(self):
-        tasks = [self.task('cleanup', ['B'], always=True), self.task('B', ['A']), self.task('A', stop=True)]
-        rc, observed, statuses = self.run_schedule(tasks, 'A')
-        self.assertEqual(rc, 1)
-        self.assertEqual(observed, ['A', 'cleanup'])
-        self.assertEqual(statuses['B'], 'STOPPED_ON_ERROR')
-        self.assertEqual(statuses['cleanup'], 'SUCCESS')
+    def test_setup_is_applied_to_every_program_but_never_scheduled_alone(self):
+        tasks = [self.task('lib', always=True), self.task('macros', always=True),
+                 self.task('A', ['lib']), self.task('B', ['A'])]
+        rc, observed, statuses = self.run_schedule(tasks, None)
+        self.assertEqual(rc, 0)
+        self.assertEqual(observed, ['A', 'B'])
+        self.assertEqual(statuses['lib'], 'ALWAYS_RUN_DEFINITION')
+        self.assertEqual(statuses['macros'], 'ALWAYS_RUN_DEFINITION')
 
-    def test_cleanup_runs_after_failed_transitive_dependency_in_reverse_order(self):
-        tasks = [self.task('cleanup', ['B'], always=True), self.task('B', ['A']), self.task('A')]
-        _, observed, statuses = self.run_schedule(tasks, 'A')
-        self.assertEqual(observed, ['A', 'cleanup'])
-        self.assertEqual(statuses['B'], 'BLOCKED_DEPENDENCY')
+    def test_setup_does_not_override_stop_or_failed_dependencies(self):
+        for stop, expected in [(True, 'STOPPED_ON_ERROR'), (False, 'BLOCKED_DEPENDENCY')]:
+            tasks = [self.task('lib', always=True), self.task('B', ['A']), self.task('A', stop=stop)]
+            rc, observed, statuses = self.run_schedule(tasks, 'A', raises=True)
+            self.assertEqual(rc, 1)
+            self.assertEqual(observed, ['A'])
+            self.assertEqual(statuses['B'], expected)
+            self.assertEqual(statuses['lib'], 'ALWAYS_RUN_DEFINITION')
 
-    def test_cleanup_runs_after_worker_exception(self):
-        tasks = [self.task('A', stop=True), self.task('cleanup', ['A'], always=True)]
-        _, observed, statuses = self.run_schedule(tasks, 'A', raises=True)
-        self.assertEqual(observed, ['A', 'cleanup'])
-        self.assertEqual(statuses['A'], 'FAILED')
-        self.assertEqual(statuses['cleanup'], 'SUCCESS')
+    def test_scheduler_passes_ordered_setup_and_line_ranges_to_bridge(self):
+        project = self.root / 'project.egp'; project.write_text('fake')
+        task = self.task('A')
+        first = self.task('Libraries & macros', always=True)
+        first.update(row_start=2, row_end=7)
+        task['_always_run'] = [first, self.task('Options', always=True)]
+        def execute(mode, project, setup_path, program, first, last, run_dir, tables):
+            self.assertEqual(mode, 'RUNPROJECT')
+            nodes = self.engine.ET.parse(setup_path).getroot().findall('program')
+            self.assertEqual([dict(n.attrib) for n in nodes], [
+                {'name': 'Libraries & macros', 'first': '2', 'last': '7'},
+                {'name': 'Options', 'first': '0', 'last': '0'}])
+            self.assertEqual(program, 'A')
+            return 0, ''
+        with patch.object(self.engine, 'execute_eg', execute):
+            self.assertEqual(self.engine.scheduler_task(task, project, self.root / 'tasks')['status'], 'SUCCESS')
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows VBScript bridge')
+    def test_vbscript_reads_utf8_and_prepends_sliced_setup_in_same_submission(self):
+        import subprocess
+        source = self.root / 'source.sas'; source.write_text('libname café;\noptions mprint;\ndata result;', encoding='utf-8')
+        helper = self.engine.VBS[self.engine.VBS.index('Function ReadAll'):self.engine.VBS.index('Function CleanName')]
+        harness = r'''
+Class CodeItem
+  Public Name, Text
+End Class
+Class Collection
+  Public Count, Entry
+  Public Function Item(index)
+    Set Item = Entry
+  End Function
+End Class
+Class ProjectStub
+  Public CodeCollection
+End Class
+Dim project, collection, entry, answer
+Set project = New ProjectStub
+Set collection = New Collection
+Set entry = New CodeItem
+entry.Name = "setup"
+entry.Text = ReadAll(WScript.Arguments(0))
+Set collection.Entry = entry
+collection.Count = 1
+Set project.CodeCollection = collection
+answer = ProgramText(project, "SETUP.SAS", 1, 2) & ProgramText(project, "setup", 3, 3)
+If InStr(answer, "caf" & ChrW(233)) = 0 Then WScript.Quit 30
+If answer <> entry.Text & vbCrLf Then
+  If Replace(answer, vbCrLf, vbLf) <> entry.Text & vbLf Then WScript.Quit 31
+End If
+WScript.Echo "PASS"
+'''
+        script = self.root / 'bridge.vbs'; script.write_text(helper + harness, encoding='utf-16')
+        result = subprocess.run(['cscript.exe', '//nologo', str(script), str(source)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('PASS', result.stdout)
 
     def test_explicit_skip_is_still_respected(self):
         tasks = [self.task('A'), self.task('cleanup', ['A'], always=True, skip=True)]

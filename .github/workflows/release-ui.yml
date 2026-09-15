@@ -48,16 +48,16 @@ jobs:
           body: |
             PySAS now opens in a dedicated Windows app-style window, without browser tabs or an address bar.
 
-            **Download PySAS-Workbench-Python-0.4.0-preview.6.zip below**, extract the entire ZIP and double-click START_PYSAS.bat.
+            **Download PySAS-Workbench-Python-0.4.0-preview.7.zip below**, extract the entire ZIP and double-click START_PYSAS.bat.
 
             - START_PYSAS.bat opens an Edge/Chrome app window with its own profile. START_PYSAS_BROWSER.bat keeps normal browser mode available.
             - Still a portable Python ZIP: requires Python plus installed Edge or Chrome. Keep the launcher running while jobs execute.
-            - Always-run tasks execute after stop-on-error, blocked dependencies and worker exceptions; continuation reruns them unless explicitly skipped.
-            - Watcher _*.sas files remain shared initialization and are never queued as jobs. Shared-folder and inbox init files are prepended alphabetically; --lib retains its override behavior.
+            - Fixed always_run: shared setup is prepended before EVERY scheduled program in the same SAS submission, including continuation. Definitions are not separate jobs.
+            - Watcher _*.sas files (including .SAS and mixed-case extensions) remain shared initialization and are never queued as jobs. Shared-folder and inbox init files are prepended alphabetically; --lib retains its override behavior.
             - Files & folders: configure project inputs, shared initialization and watcher inbox. Upload multiple files directly, with progress and no replacement of existing files.
             - Keep PC awake prevents idle sleep/display timeout on Windows without generating clicks. Does not override manual sleep/lid-close or managed lock policies.
             - Live filenames, elapsed time, saved history, bundle folder shortcuts and blue styling remain included.
-            - pysas.py 0.3.4 remains a standalone single-file CLI. Default paths and existing commands still work; optional --inbox and --init-dir select custom folders.
+            - pysas.py 0.3.5 remains a standalone single-file CLI. Default paths and existing commands still work; optional --inbox and --init-dir select custom folders.
 
             Upgrade by copying all application files, including pysas.py and ui_support.py, into your existing workspace. Keep your SAS/EGP/workbook files and .pysas-ui settings.
 
