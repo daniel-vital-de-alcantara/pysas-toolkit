@@ -46,17 +46,17 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'preview') }}
           fail_on_unmatched_files: true
           body: |
-            Stability update for runs that remain active and uneven elapsed counters.
+            Scheduler programs now show their section and selected source rows in Running now, schedule activity and the inspector.
 
-            Download PySAS-Workbench-Python-0.4.0-preview.11.zip and extract the entire ZIP. Stop old stuck runs before closing the old app, then launch START_PYSAS.bat from the new folder.
+            Download PySAS-Workbench-Python-0.4.0-preview.12.zip, extract it fully and open START_PYSAS.bat.
 
-            - Removed the experimental PowerShell live-log polling mode. UI and CLI use the same standard VBScript execution bridge.
-            - Completion no longer waits for output-pipe EOF from lingering child processes. Console output goes straight to disk and is readable while running.
-            - Console stages distinguish SAS execution, saving results and closing Enterprise Guide. Full remote SAS logs are available after EG exports them; this release does not stream them during execution.
-            - Monotonic elapsed counters do not reset on each status poll. Unchanged run lists are not redrawn. Slow folder/history scans run in the background without blocking live status.
-            - Keeps per-file stops, original source recovery, encoding fixes, bundle downloads, taskbar identity and terminal-free startup.
+            - Example: Realised.sas — Section Realised · Rows 20–85.
+            - Open-ended ranges and whole-program runs are labelled explicitly.
+            - This displays the range selected in the workbook, not SAS's current executing line.
+            - Saved for new UI runs. Execution behavior and the standalone pysas.py engine remain unchanged from preview.11.
+            - Includes the previous stability, encoding, per-file stop and bundle download fixes. Experimental live SAS log polling remains removed.
 
-            Windows, Python 3.10+, Enterprise Guide and openpyxl for Excel features are still required. Regression tests cover inherited-output-handle completion, slow-folder isolation, clocks and cancellation. Actual SAS execution must be verified in your environment.
+            Requires Windows, Python 3.10+, configured Enterprise Guide and openpyxl for Excel features.
 
           files: |
             release/PySAS-Workbench-Python-*.zip

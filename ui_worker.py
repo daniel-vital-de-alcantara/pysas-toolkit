@@ -50,7 +50,8 @@ def observe(engine):
         key = definition["task_id"]
         _context.key = key
         path = task_root / engine.safe_name(key)
-        emit("start", key=key, name=definition["program"], kind="task", path=path)
+        emit("start", key=key, name=definition["program"], kind="task", path=path,
+             section=definition.get("section", ""), row_start=definition.get("row_start"), row_end=definition.get("row_end"))
         try:
             result = original_task(definition, project, task_root)
         except BaseException as exc:

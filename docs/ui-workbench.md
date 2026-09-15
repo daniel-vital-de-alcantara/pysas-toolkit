@@ -1,6 +1,6 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.11 is a separate browser UI for the standalone PySAS
+The Workbench 0.4.0-preview.12 is a separate browser UI for the standalone PySAS
 0.3.8 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
@@ -156,3 +156,9 @@ are not rewritten by previewing or downloading them.
 Every runner job saves an original source copy in its run folder under `source/`,
 including jobs stopped before EG can export code. Failed/cancelled runs also
 retain `_submitted.sas` with shared initialization included.
+
+Scheduler task rows show the workbook section and the configured inclusive source
+row range beside the program name in Running now, schedule activity and the
+inspector. Open-ended ranges and whole-program runs are labelled explicitly.
+This is the selected execution range, not a live SAS line counter. The metadata
+is retained for new UI runs; older runs without it do not invent a range.

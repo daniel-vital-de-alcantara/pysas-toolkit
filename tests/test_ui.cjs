@@ -15,7 +15,7 @@ const context = {
   fetch:async()=>({ok:true,json:async()=>snapshot}),setInterval(){},AbortController,Date,console
 };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds};',context);
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope};',context);
 const h = context.helpers;
 test('elapsed formatting supports seconds, hours, and runs longer than a day',()=>{
   assert.equal(h.duration(65.9),'00:01:05');
@@ -58,4 +58,15 @@ test('running clock ignores delayed status-poll timestamps',()=>{
   assert.ok(h.clockSeconds()>=before);
   h.syncClock(120);
   assert.ok(h.clockSeconds()-before<1);
+});
+
+test('scheduler scope displays section and inclusive row bounds without inventing legacy metadata',()=>{
+  assert.equal(h.taskScope({section:'Realised',row_start:20,row_end:85}),'Section Realised · Rows 20–85');
+  assert.equal(h.taskScope({row_start:20,row_end:null}),'From row 20 to end');
+  assert.equal(h.taskScope({row_start:null,row_end:85}),'Rows 1–85');
+  assert.equal(h.taskScope({row_start:20,row_end:20}),'Row 20');
+  assert.equal(h.taskScope({row_start:null,row_end:null}),'Whole program');
+  assert.equal(h.taskScope({}), '');
+  const markup=h.taskTable([{name:'Realised.sas',section:'<setup>',row_start:2,row_end:5,status:'RUNNING'}]);
+  assert.match(markup,/Section &lt;setup&gt; · Rows 2–5/);
 });

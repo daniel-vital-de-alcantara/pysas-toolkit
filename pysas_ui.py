@@ -23,7 +23,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 from pysas import text_encoding
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.11"
+VERSION = "0.4.0-preview.12"
 APP_DIR = Path(__file__).resolve().parent
 PREFIX = "@@PYSAS_UI@@"
 ACTIVE = {"RUNNING", "STOPPING"}
@@ -324,7 +324,8 @@ class Workbench:
                 if key not in item["tasks"]:
                     item["tasks"][key] = {"key": key, "name": task["program"], "kind": "task",
                         "status": "SKIPPED_SUCCESS" if task.get("skip") else ("ALWAYS_RUN_DEFINITION" if task.get("always_run") else "PENDING"),
-                        "depends_on": task.get("depends_on", []), "started": None, "elapsed": 0}
+                        "depends_on": task.get("depends_on", []), "started": None, "elapsed": 0,
+                        "section": task.get("section", ""), "row_start": task.get("row_start"), "row_end": task.get("row_end")}
         elif kind in {"start", "finish"}:
             key = event["key"]
             task = item["tasks"].setdefault(key, {"key": key})
@@ -344,6 +345,7 @@ class Workbench:
             item["path"] = self.relative(event["path"])
             for result in event["tasks"]:
                 task = item["tasks"].setdefault(result["task_id"], {"key": result["task_id"], "name": result["program"]})
+                task.update({field: result[field] for field in ("section", "row_start", "row_end") if field in result})
                 task.update(status=result["status"], elapsed=result.get("elapsed", 0), message=result.get("message", ""))
                 if result.get("task_dir"):
                     task["path"] = self.relative(result["task_dir"])
@@ -523,6 +525,13 @@ class Workbench:
                 break
         summary = path / "run_summary.csv"
         tasks = list(csv.DictReader(io.StringIO(read_text(summary)))) if summary.is_file() else []
+        with self.lock:
+            for command in self.commands.values():
+                if command.get("path") == self.relative(path):
+                    for task in tasks:
+                        saved = command.get("tasks", {}).get(task["task_id"], {})
+                        task.update({field: saved[field] for field in ("section", "row_start", "row_end") if field in saved})
+                    break
         return {"files": files, "tasks": tasks}
 
     def preview(self, relative):
