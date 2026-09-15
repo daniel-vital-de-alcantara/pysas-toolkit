@@ -46,23 +46,19 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'preview') }}
           fail_on_unmatched_files: true
           body: |
-            PySAS now has its own blue Windows taskbar icon and closes the terminal after successful startup.
+            Fixes garbled code previews and adds running-output inspection, individual file stops and bundle downloads.
 
-            **Download PySAS-Workbench-Python-0.4.0-preview.8.zip below**, extract the entire ZIP and double-click START_PYSAS.bat.
+            Download PySAS-Workbench-Python-0.4.0-preview.9.zip, extract the entire ZIP and open START_PYSAS.bat.
 
-            - START_PYSAS.bat opens an Edge/Chrome app window with its own profile. START_PYSAS_BROWSER.bat keeps normal browser mode available.
-            - Separate taskbar identity per workspace: PySAS stays separate from Control Tree, and extracted versions can run side by side. Requires Python plus installed Edge or Chrome.
-            - Closing the app stops new watcher intake and finishes active jobs before exiting. Browser mode has Quit app. START_PYSAS_CONSOLE.bat and .pysas-ui/launcher.log provide troubleshooting.
-            - Fixed always_run: shared setup is prepended before EVERY scheduled program in the same SAS submission, including continuation. Definitions are not separate jobs.
-            - Watcher _*.sas files (including .SAS and mixed-case extensions) remain shared initialization and are never queued as jobs. Shared-folder and inbox init files are prepended alphabetically; --lib retains its override behavior.
-            - Files & folders: configure project inputs, shared initialization and watcher inbox. Upload multiple files directly, with progress and no replacement of existing files.
-            - Keep PC awake prevents idle sleep/display timeout on Windows without generating clicks. Does not override manual sleep/lid-close or managed lock policies.
-            - Live filenames, elapsed time, saved history, bundle folder shortcuts and blue styling remain included.
-            - pysas.py 0.3.5 remains a standalone single-file CLI. Default paths and existing commands still work; optional --inbox and --init-dir select custom folders.
+            - Windows-1252 text is no longer misread as UTF-16. New submitted-code exports use UTF-8.
+            - Inspect refreshes automatically and shows the newest log output and last update time. Execution console output streams during runs.
+            - Optional Live SAS log snapshots (PowerShell) queries EG directly without a shared server folder. Availability depends on what EG exposes while running; some versions buffer until completion. The standard VBScript mode remains available. No execution policy is changed.
+            - Stop file targets only that file's automation process. CANCELLED tasks respect scheduler dependency/stop-on-error rules. Partial outputs may remain; local termination cannot confirm remote SAS cancellation.
+            - Download bundle keeps a separate copy for every completed bundle command, including custom folders.
+            - Includes the blue taskbar identity, automatic terminal closing, elapsed times, watcher initialization and scheduler shared setup from earlier previews.
 
-            Upgrade by copying all application files, including windows_app.py, launch_workbench.py and ui/icon.ico, into your existing workspace. Keep your SAS/EGP/workbook files and .pysas-ui settings.
+            Requires Windows, Python 3.10+, configured Enterprise Guide and openpyxl for Excel features. Tests cover output streaming/cancellation and the PowerShell snapshot helper; real SAS execution and live-log availability require validation in your environment.
 
-            Requires Windows, Python 3.10+, configured SAS Enterprise Guide, and openpyxl for Excel features. No Node.js is needed. Automated tests cover lifecycle/scheduling with fake SAS jobs; real Enterprise Guide execution must be tested in your environment.
           files: |
             release/PySAS-Workbench-Python-*.zip
             release/SHA256SUMS.txt

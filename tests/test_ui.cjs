@@ -15,7 +15,7 @@ const context = {
   fetch:async()=>({ok:true,json:async()=>snapshot}),setInterval(){},AbortController,Date,console
 };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={duration,elapsed,timer,esc,badge};',context);
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={duration,elapsed,timer,esc,badge,taskTable,commandCards};',context);
 const h = context.helpers;
 test('elapsed formatting supports seconds, hours, and runs longer than a day',()=>{
   assert.equal(h.duration(65.9),'00:01:05');
@@ -42,4 +42,11 @@ test('read-only run tool validates input and returns lifecycle data',async()=>{
   const result=await tool.execute({limit:5});
   assert.equal(result.running[0].name,'example.sas');
   assert.equal(result.running[0].elapsed_seconds,8);
+});
+
+test('only running owned files show stop controls and bundle cards show downloads',()=>{
+  const task={key:'A',name:'job.sas',status:'RUNNING',path:'runs/A',elapsed:1};
+  assert.match(h.taskTable([task],'owner'),/data-cancel-command="owner"/);
+  assert.doesNotMatch(h.taskTable([{...task,status:'SUCCESS'}],'owner'),/data-cancel-command/);
+  assert.match(h.commandCards([{id:'bundle1',name:'Bundle',status:'SUCCESS',download:'bundle1/code.txt',tasks:{}}]),/api\/download\?command=bundle1/);
 });

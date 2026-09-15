@@ -8,6 +8,7 @@ import json
 import mimetypes
 import os
 import secrets
+import shutil
 import socketserver
 import subprocess
 import sys
@@ -19,9 +20,10 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
+from pysas import text_encoding
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.8"
+VERSION = "0.4.0-preview.9"
 APP_DIR = Path(__file__).resolve().parent
 PREFIX = "@@PYSAS_UI@@"
 ACTIVE = {"RUNNING", "STOPPING"}
@@ -34,17 +36,32 @@ def read_json(path, default=None):
         return default
 
 
-def read_text(path, limit=400_000):
+def read_text(path, limit=400_000, tail=False):
     with path.open("rb") as handle:
-        raw = handle.read(limit + 1)
-    suffix = "\n[Preview truncated. Download the file for all content.]" if len(raw) > limit else ""
-    raw = raw[:limit]
-    for encoding in ("utf-8-sig", "utf-16", "cp1252"):
+        sample = handle.read(min(limit, 4096))
+        encoding = text_encoding(sample)
+        if encoding == "utf-16":
+            encoding = "utf-16-le" if sample.startswith(b"\xff\xfe") else "utf-16-be"
+        size = handle.seek(0, 2)
+        start = max(0, size - limit) if tail else 0
+        if encoding.startswith("utf-16"):
+            start -= start % 2
+        handle.seek(start)
+        raw = handle.read(limit)
+    note = "[Showing latest output; download the complete file.]\n" if start else ""
+    suffix = "\n[Preview truncated. Download the file for all content.]" if not tail and size > limit else ""
+    if encoding == "utf-8-sig":
+        import codecs
+        if start:
+            while raw and raw[0] & 0xc0 == 0x80:
+                raw = raw[1:]
         try:
-            return raw.decode(encoding) + suffix
-        except UnicodeError:
-            pass
-    return raw.decode("utf-8", errors="replace") + suffix
+            text = codecs.getincrementaldecoder(encoding)().decode(raw, final=False)
+        except UnicodeDecodeError:
+            text = raw.decode("cp1252", errors="replace")
+    else:
+        text = raw.decode(encoding, errors="replace")
+    return note + text.lstrip("\ufeff") + suffix
 
 
 def within(root, value):
@@ -274,8 +291,11 @@ class Workbench:
                     "name": data.get("program") or data.get("workbook") or data.get("run_dir") or action.replace("-", " "),
                     "code_root": str(self.code_root(data.get("code_root"))) if action.startswith("bundle-") else None,
                     "started": time.time(), "finished": None, "status": "RUNNING", "tasks": {}, "message": ""}
+            if action == "bundle-pack":
+                root = self.code_root(data.get("code_root"))
+                item["artifact"] = str(within(root, str(data.get("output") or "codebase.sasbundle.txt")))
             env = os.environ.copy()
-            env.update(PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
+            env.update(PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8", PYSAS_LIVE_LOG="1" if data.get("live_log") else "0")
             isolation = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {"start_new_session": True}
             python = str(Path(sys.executable).with_name("python.exe")) if os.name == "nt" else sys.executable
             process = subprocess.Popen([python, "-u", str(APP_DIR / "ui_worker.py"), str(self.script), *args],
@@ -346,9 +366,18 @@ class Workbench:
             item["finished"] = time.time()
             item["elapsed"] = item["finished"] - item["started"]
             item["exit_code"] = rc
+            if rc == 0 and item["action"] == "bundle-pack" and item.get("artifact"):
+                source = within(Path(item["code_root"]), item["artifact"])
+                target = self.storage / "artifacts" / identifier / source.name
+                try:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, target)
+                    item["download"] = str(target.relative_to(self.storage / "artifacts"))
+                except OSError as exc:
+                    item["message"] = "Bundle created, but download copy failed: " + str(exc)
             item["status"] = "STOPPED" if item["status"] == "STOPPING" and rc in {0, 130} else ("SUCCESS" if rc == 0 else "FAILED")
             for task in item["tasks"].values():
-                if task.get("status") in {"RUNNING", "PENDING"}:
+                if task.get("status") in {"RUNNING", "PENDING", "CANCELLING"}:
                     task["status"] = "UNKNOWN"
                     task["message"] = "No final task status was received; check the console."
             self.save(item)
@@ -367,6 +396,23 @@ class Workbench:
             process.stdin.write("stop\n")
             process.stdin.flush()
             item["status"] = "STOPPING"
+            self.save(item)
+            return {"ok": True}
+
+    def cancel_file(self, identifier, key):
+        with self.lock:
+            item = self.commands.get(identifier)
+            task = item.get("tasks", {}).get(key) if item else None
+            if identifier not in self.processes or not task or task.get("status") not in {"RUNNING", "CANCELLING"}:
+                raise ValueError("This file is no longer running.")
+            if not task.get("path"):
+                raise ValueError("The file is still starting. Try again in a moment.")
+            run_dir = within(self.root, task["path"])
+            if not run_dir.is_dir():
+                raise ValueError("The run folder is not available yet.")
+            (run_dir / "_cancel.request").write_text("Requested by user", encoding="utf-8")
+            task["status"] = "CANCELLING"
+            task["message"] = "Stopping this file's automation process…"
             self.save(item)
             return {"ok": True}
 
@@ -465,7 +511,8 @@ class Workbench:
                 workbook.close()
         if path.suffix.lower() not in {".sas", ".log", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".xml"}:
             raise ValueError("Download this file to open it in its application.")
-        return {"text": read_text(path)}
+        return {"text": read_text(path, tail=path.suffix.lower() == ".log" or path.name == "console.txt"),
+                "modified": path.stat().st_mtime, "size": path.stat().st_size}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -521,7 +568,13 @@ class Handler(BaseHTTPRequestHandler):
                     console = "Waiting for output…"
                 self.respond({"text": console})
             elif url.path == "/api/download":
-                path = self.server.app.input_path(value("path"))
+                if value("command"):
+                    item = self.server.app.commands.get(value("command"), {})
+                    if item.get("action") != "bundle-pack" or item.get("status") != "SUCCESS" or not item.get("download"):
+                        raise ValueError("No completed bundle is available for this command.")
+                    path = within(self.server.app.storage / "artifacts", item["download"])
+                else:
+                    path = self.server.app.input_path(value("path"))
                 if not path.is_file():
                     raise ValueError("File not found.")
                 self.send_response(200)
@@ -574,6 +627,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(self.server.app.awake.set(data.get("enabled")))
             elif self.path == "/api/bundle-paths":
                 self.respond(self.server.app.update_bundle_paths(data))
+            elif self.path == "/api/cancel-file":
+                self.respond(self.server.app.cancel_file(data.get("id"), data.get("key")))
             elif self.path == "/api/stop":
                 self.respond(self.server.app.stop(data.get("id")))
             else:

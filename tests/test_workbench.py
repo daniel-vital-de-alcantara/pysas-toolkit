@@ -317,6 +317,28 @@ class HttpTests(unittest.TestCase):
         connection.close()
         return result
 
+    def test_bundle_download_retains_each_completed_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            code_root = Path(directory)
+            (code_root / 'job.sas').write_text('data first; run;')
+            headers = {'X-PySAS-Token': self.server.token, 'Content-Type': 'application/json'}
+            status, body, _ = self.request('POST', '/api/launch', json.dumps({'action':'bundle-pack','code_root':str(code_root)}), headers)
+            self.assertEqual(status, 200, body)
+            identifier = json.loads(body)['id']
+            deadline = time.monotonic() + 10
+            while identifier in self.server.app.processes and time.monotonic() < deadline:
+                time.sleep(.05)
+            item = self.server.app.commands[identifier]
+            self.assertEqual(item['status'], 'SUCCESS', item)
+            self.assertIn('download', item)
+            original = (code_root / 'codebase.sasbundle.txt').read_bytes()
+            (code_root / 'codebase.sasbundle.txt').write_text('later bundle')
+            status, body, headers = self.request('GET', '/api/download?command=' + identifier)
+            self.assertEqual(status, 200)
+            self.assertEqual(body, original)
+            self.assertIn('attachment', headers['Content-Disposition'])
+            self.assertEqual(self.request('GET','/api/download?command=missing')[0],400)
+
     def test_second_launcher_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "already running"):
             ui.make_server(self.root)
