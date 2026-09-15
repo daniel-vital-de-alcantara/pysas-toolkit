@@ -135,7 +135,7 @@ def launch_app_window(url, profile, candidates=None, popen=None):
     for executable in candidates:
         try:
             return popen([str(executable), '--app=' + url, '--user-data-dir=' + str(profile),
-                          '--no-first-run', '--no-default-browser-check', '--window-size=1360,900'],
+                          '--disable-background-mode', '--no-first-run', '--no-default-browser-check', '--window-size=1360,900'],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except OSError:
             continue

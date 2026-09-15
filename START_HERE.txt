@@ -1,4 +1,4 @@
-PySAS Workbench 0.4.0-preview.7
+PySAS Workbench 0.4.0-preview.8
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
@@ -7,8 +7,8 @@ PySAS Workbench 0.4.0-preview.7
    existing workspace, including the updated pysas.py 0.3.5. Keep your SAS,
    EGP and Excel files. The updated engine remains a standalone single file.
 3. Double-click START_PYSAS.bat. PySAS opens in its own app-style window.
-4. Keep the launcher window open while jobs run. Stop the watcher using
-   "Stop after current files", and let active jobs finish before closing.
+4. The terminal closes after startup. Closing the app stops the watcher
+   from taking new files and lets active jobs finish before the server exits.
 
 Requirements
 ------------
@@ -29,15 +29,18 @@ bar. The app uses its own local profile under .pysas-ui/app-profile and does
 not use your personal browser profile. This is still the portable Python ZIP;
 Python and an installed Edge/Chrome are required, with no new UI installation.
 
-Keep the launcher window open while jobs run. Closing the app window alone
-does not stop the Python server or cancel jobs. Finish jobs and press Ctrl+C
-in the launcher to stop the server, just as before.
+PySAS has its own blue taskbar icon and a separate identity for each workspace.
+Different extracted versions can run side by side in different folders.
+The terminal closes once the window opens. Startup errors are saved in
+.pysas-ui/launcher.log. START_PYSAS_CONSOLE.bat keeps a troubleshooting console.
+Closing the app or choosing Quit app finishes current jobs before exiting.
 
 To use a normal browser instead, double-click START_PYSAS_BROWSER.bat or run:
   py -3 pysas_ui.py --browser
 
-If neither supported browser is available, the launcher prints guidance and
-keeps the local server available. Use the browser launcher in that case.
+In normal browser mode, use Quit app to stop the background server; simply
+closing a browser tab leaves it running. If no supported app browser is found,
+the launcher stays open with an error. Use the browser launcher in that case.
 macOS/Linux keep the previous default-browser behavior.
 
 What is included

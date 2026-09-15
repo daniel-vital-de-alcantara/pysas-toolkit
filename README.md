@@ -31,7 +31,7 @@ Enterprise Guide setup; `openpyxl` is required for Excel features. No Node.js or
 frontend installation is needed.
 
 See [START_HERE.txt](START_HERE.txt) and the [workbench guide](docs/ui-workbench.md).
-The command-line toolkit is version 0.3.5; the UI preview is 0.4.0-preview.7.
+The command-line toolkit is version 0.3.5; the UI preview is 0.4.0-preview.8.
 
 ## Requirements
 

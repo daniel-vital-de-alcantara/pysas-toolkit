@@ -1,6 +1,6 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.7 is a separate browser UI for the standalone PySAS
+The Workbench 0.4.0-preview.8 is a separate browser UI for the standalone PySAS
 0.3.5 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
@@ -14,8 +14,8 @@ parallel task durations. History retains final status and elapsed time.
 
 Runner & watcher starts individual programs or watches `runner/inbox`.
 Stop after current files requests the original watcher's graceful shutdown:
-it stops claiming new files and lets active jobs finish. Closing only the
-browser does not stop the server or its jobs. Keep the launcher open.
+it stops claiming new files and lets active jobs finish. Closing the Windows
+app window requests the same graceful shutdown. Browser mode provides Quit app.
 
 Scheduler selects an Excel workbook and EGP project, previews the workbook,
 launches tasks through the existing dependency engine, and supports continuing
@@ -108,7 +108,11 @@ profile in `.pysas-ui/app-profile`. It needs no added Python UI dependency and
 keeps the existing local-server architecture. Normal browser mode remains
 available through `START_PYSAS_BROWSER.bat` or `--browser`; `--no-browser` remains
 available for manual previews. macOS/Linux retain their previous behavior.
-Closing the app window alone leaves jobs and the launcher running. Stop after
-jobs finish using Ctrl+C in the launcher. The window does not install a PWA or
+The terminal closes once startup succeeds. Each workspace has its own PySAS
+taskbar identity and blue icon. Closing the app requests watcher shutdown and
+waits for current jobs before exiting. In browser mode use Quit app; closing
+a browser tab leaves the server running. START_PYSAS_CONSOLE.bat retains the
+console for troubleshooting, with startup logs in .pysas-ui/launcher.log.
+The window does not install a PWA or
 change the user's default browser. Discovery tries standard Edge/Chrome install
 folders and PATH, preferring Edge. Launch failures try the next available engine.

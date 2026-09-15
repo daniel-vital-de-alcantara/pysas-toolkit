@@ -660,7 +660,8 @@ def execute_eg(mode: str, project: Path, sas_path: Path, program: str, row_start
                program, str(row_start), str(row_end), str(log_path), str(code_path), str(results),
                str(manifest) if tables else "", str(temp_prefix)]
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, errors="replace")
+        completed = subprocess.run(command, capture_output=True, text=True, errors="replace",
+                                   **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}))
         console = (completed.stdout or "") + (completed.stderr or "")
     except OSError as exc:
         completed = subprocess.CompletedProcess(command, 127)

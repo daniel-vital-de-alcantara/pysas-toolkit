@@ -21,7 +21,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.7"
+VERSION = "0.4.0-preview.8"
 APP_DIR = Path(__file__).resolve().parent
 PREFIX = "@@PYSAS_UI@@"
 ACTIVE = {"RUNNING", "STOPPING"}
@@ -265,6 +265,8 @@ class Workbench:
     def launch(self, data):
         action, args = self.arguments(data)
         with self.lock:
+            if getattr(self, "closing", False):
+                raise ValueError("PySAS is closing and finishing its active jobs.")
             if action == "watch" and any(c["action"] == "watch" and c["status"] in ACTIVE for c in self.commands.values()):
                 raise ValueError("The watcher is already running in this workbench.")
             identifier = uuid.uuid4().hex
@@ -274,8 +276,9 @@ class Workbench:
                     "started": time.time(), "finished": None, "status": "RUNNING", "tasks": {}, "message": ""}
             env = os.environ.copy()
             env.update(PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
-            isolation = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
-            process = subprocess.Popen([sys.executable, "-u", str(APP_DIR / "ui_worker.py"), str(self.script), *args],
+            isolation = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {"start_new_session": True}
+            python = str(Path(sys.executable).with_name("python.exe")) if os.name == "nt" else sys.executable
+            process = subprocess.Popen([python, "-u", str(APP_DIR / "ui_worker.py"), str(self.script), *args],
                                        cwd=self.root, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", env=env, **isolation)
             self.commands[identifier] = item
@@ -560,7 +563,10 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
                 raise ValueError("Expected an object.")
-            if self.path == "/api/launch":
+            if self.path == "/api/quit":
+                self.respond({"message": "Closing PySAS after active jobs finish."})
+                threading.Thread(target=self.server.request_close, daemon=True).start()
+            elif self.path == "/api/launch":
                 self.respond(self.server.app.launch(data))
             elif self.path == "/api/folders":
                 self.respond(self.server.app.update_folders(data))
@@ -577,6 +583,21 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class LocalServer(ThreadingHTTPServer):
+    def request_close(self):
+        with self.app.lock:
+            if getattr(self.app, "closing", False):
+                return
+            self.app.closing = True
+            watchers = [key for key in self.app.processes if self.app.commands[key]["action"] == "watch"]
+        for key in watchers:
+            try:
+                self.app.stop(key)
+            except (OSError, ValueError):
+                pass
+        while self.app.processes:
+            time.sleep(.2)
+        self.shutdown()
+
     def server_bind(self):
         # Avoid reverse DNS lookups: this service is explicitly loopback-only.
         socketserver.TCPServer.server_bind(self)
@@ -630,34 +651,73 @@ def main():
     window_options = parser.add_mutually_exclusive_group()
     window_options.add_argument("--no-browser", action="store_true", help="start the server without opening a window")
     window_options.add_argument("--browser", action="store_true", help="open a normal browser tab instead of the Windows app window")
+    parser.add_argument("--ready-file", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if sys.stdout is None or sys.stderr is None:
+        storage = args.workspace.resolve() / ".pysas-ui"
+        storage.mkdir(parents=True, exist_ok=True)
+        output = (storage / "launcher.log").open("a", encoding="utf-8", buffering=1)
+        sys.stdout = sys.stderr = output
     server = make_server(args.workspace, args.port)
     url = f"http://127.0.0.1:{server.server_port}"
-    print(f"PySAS Workbench {VERSION}\nWorkspace: {args.workspace.resolve()}\n{url}\nKeep this window open. Press Ctrl+C to stop after jobs finish.", flush=True)
+    print(f"PySAS Workbench {VERSION}\nWorkspace: {args.workspace.resolve()}\n{url}", flush=True)
+    monitor_stop = threading.Event()
     window_process = None
-    if not args.no_browser:
-        if os.name == "nt" and not args.browser:
-            window_process = launch_app_window(url, server.app.storage / "app-profile")
-            if window_process is None:
-                print("Could not open an app window. Install Microsoft Edge or Google Chrome, "
-                      "or use START_PYSAS_BROWSER.bat for a normal browser tab.", flush=True)
-            else:
-                print("Opened the PySAS app window. Keep this launcher open while jobs run.", flush=True)
-        else:
-            webbrowser.open(url)
+    def ready():
+        if args.ready_file:
+            temp = args.ready_file.with_suffix(".tmp")
+            temp.write_text(url, encoding="utf-8")
+            temp.replace(args.ready_file)
+    def watch_window(process):
+        from windows_app import process_windows, brand_window
+        opened = False
+        deadline = time.monotonic() + 45
+        missing_since = None
+        while not monitor_stop.wait(.5):
+            windows = process_windows(process.pid)
+            if windows:
+                missing_since = None
+                for hwnd in windows:
+                    try:
+                        brand_window(hwnd, args.workspace, APP_DIR / "ui" / "icon.ico")
+                    except OSError as exc:
+                        print(f"Taskbar identity: {exc}", flush=True)
+                if not opened:
+                    opened = True
+                    ready()
+            elif opened:
+                missing_since = missing_since or time.monotonic()
+                if time.monotonic() - missing_since > 2:
+                    server.request_close()
+                    return
+            elif time.monotonic() > deadline or process.poll() is not None:
+                print("The app window could not be opened. Use START_PYSAS_BROWSER.bat or inspect launcher.log.", flush=True)
+                server.request_close()
+                return
     try:
+        if not args.no_browser:
+            if os.name == "nt" and not args.browser:
+                window_process = launch_app_window(url, server.app.storage / "app-profile")
+                if window_process is None:
+                    raise RuntimeError("Install Microsoft Edge or Google Chrome, or use START_PYSAS_BROWSER.bat.")
+                threading.Thread(target=watch_window, args=(window_process,), daemon=True).start()
+            else:
+                if not webbrowser.open(url):
+                    raise RuntimeError("Could not open the browser. Use START_PYSAS_CONSOLE.bat --no-browser.")
+                ready()
+        else:
+            ready()
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
-        print("Stopping watchers and waiting for active jobs to finish…", flush=True)
-        for identifier, process in list(server.app.processes.items()):
-            if server.app.commands[identifier]["action"] == "watch":
-                try:
-                    server.app.stop(identifier)
-                except (OSError, ValueError):
-                    pass
+        # shutdown() must run outside the serve_forever thread.
+        threading.Thread(target=server.request_close, daemon=True).start()
         while server.app.processes:
-            time.sleep(0.2)
+            time.sleep(.2)
     finally:
+        monitor_stop.set()
+        if window_process is not None:
+            from windows_app import close_windows
+            close_windows(window_process.pid)
         server.server_close()
 
 
