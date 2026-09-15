@@ -43,7 +43,7 @@ class LiveControlsTests(unittest.TestCase):
         path=self.root/'current.log'
         path.write_text('old line\n'*60000+'NOTE: latest progress\n',encoding='utf-8')
         text=self.app.preview('current.log')['text']
-        self.assertTrue(text.endswith('NOTE: latest progress\n'))
+        self.assertEqual(text.splitlines()[-1], 'NOTE: latest progress')
         self.assertIn('Showing latest output',text)
 
     def test_cancel_targets_only_active_owned_file(self):
