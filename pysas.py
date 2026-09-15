@@ -29,7 +29,7 @@ from typing import Any, Iterable
 from xml.etree import ElementTree as ET
 
 
-VERSION = "0.3.6"
+VERSION = "0.3.7"
 ROOT_DIR = Path(__file__).resolve().parent
 CODEBASE_FILE = "codebase.sasbundle.txt"
 BACKUP_FOLDER = "_codebase_backups"
@@ -888,6 +888,9 @@ def run_job(source: Path, project: Path, tables: bool, explicit_lib: Path | None
     suffix = 2
     while run_dir.exists(): run_dir = root / f"{now_stamp()}__{base}_{suffix}"; suffix += 1
     run_dir.mkdir(parents=True)
+    source_dir = run_dir / "source"
+    source_dir.mkdir()
+    shutil.copy2(source, source_dir / source.name)
     submitted = run_dir / "_submitted.sas"
     submitted.write_text(compose_sas(source, run_dir / "results", explicit_lib, init_dir, extra_init_dir), encoding="utf-8")
     started = time.time()
@@ -903,8 +906,9 @@ def run_job(source: Path, project: Path, tables: bool, explicit_lib: Path | None
         f"status={status}\nsource={source.name}\nstarted={datetime.fromtimestamp(started).isoformat(timespec='seconds')}\n"
         f"finished={datetime.now().isoformat(timespec='seconds')}\nelapsed_seconds={elapsed:.1f}\n",
         encoding="utf-8")
-    try: submitted.unlink()
-    except OSError: pass
+    if status == "SUCCESS":
+        try: submitted.unlink()
+        except OSError: pass
     if notify_user:
         label = "completed" if status == "SUCCESS" else ("completed with SAS errors" if status == "SAS_ERROR" else "runner failed")
         notify("PySAS", f"{source.name}: {label}", error=status != "SUCCESS")

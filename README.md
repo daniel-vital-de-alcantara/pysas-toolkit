@@ -1,12 +1,12 @@
 # PySAS Toolkit
 
-**PySAS 0.3.6** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
+**PySAS 0.3.7** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
 
 It grew out of day-to-day model-development and consulting work where large SAS processes were difficult to inspect, rerun, parallelise, move between environments and review consistently. The current implementation brings those workflows together in one portable `pysas.py` utility.
 
 ## What it does
 
-| Component | Status in 0.3.6 | Purpose |
+| Component | Status in 0.3.7 | Purpose |
 | --- | --- | --- |
 | SAS bundle utility | Implemented | Pack, verify and safely unpack SAS source trees with SHA-256 integrity metadata and backups |
 | EGP tools | Implemented | Inspect EGP archives, extract embedded SAS programs and conservatively repack them into an EGP template |
@@ -31,11 +31,11 @@ Enterprise Guide setup; `openpyxl` is required for Excel features. No Node.js or
 frontend installation is needed.
 
 See [START_HERE.txt](START_HERE.txt) and the [workbench guide](docs/ui-workbench.md).
-The command-line toolkit is version 0.3.6; the UI preview is 0.4.0-preview.9.
+The command-line toolkit is version 0.3.7; the UI preview is 0.4.0-preview.10.
 
 ## Requirements
 
-PySAS 0.3.6 is designed for controlled Windows environments with:
+PySAS 0.3.7 is designed for controlled Windows environments with:
 
 - Python 3.9+ recommended;
 - SAS Enterprise Guide installed and configured for the target SAS environment;
@@ -282,13 +282,13 @@ Important limitations include:
 - Enterprise Guide COM automation must be available locally;
 - EGP archive structure can vary across Enterprise Guide versions;
 - table export depends on Enterprise Guide exposing output datasets through the automation model;
-- `stop_program_on_error` is part of the scheduler schema in 0.3.6 but is not yet used to alter execution behaviour independently;
+- `stop_program_on_error` is part of the scheduler schema in 0.3.7 but is not yet used to alter execution behaviour independently;
 - scheduler dependency cycles are surfaced as unresolved/blocked tasks during execution rather than by a separate pre-run graph-cycle algorithm;
 - automated Windows/Enterprise Guide integration tests are not yet included in the public repository.
 
 ## Version
 
-Current published implementation: **0.3.6**.
+Current published implementation: **0.3.7**.
 
 ```powershell
 py pysas.py version

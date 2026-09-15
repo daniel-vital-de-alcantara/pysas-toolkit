@@ -23,7 +23,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 from pysas import text_encoding
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.9"
+VERSION = "0.4.0-preview.10"
 APP_DIR = Path(__file__).resolve().parent
 PREFIX = "@@PYSAS_UI@@"
 ACTIVE = {"RUNNING", "STOPPING"}

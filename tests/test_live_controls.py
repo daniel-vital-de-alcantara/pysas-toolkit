@@ -39,6 +39,16 @@ class LiveControlsTests(unittest.TestCase):
         path.write_text('/* 中文 */\n',encoding='utf-8')
         self.assertIn('中文',ui.read_text(path))
 
+    def test_cancel_before_export_preserves_source_and_submission(self):
+        source=self.root/'job.sas'
+        original=b'/* pre\xe7o */\ndata sample; run;'
+        source.write_bytes(original)
+        with patch.object(engine,'execute_eg',return_value=(130,'Stopped by user')), patch.object(engine,'ROOT_DIR',self.root):
+            result=engine.run_job(source,self.root/'project.egp',False,None,False)
+        self.assertEqual(result['status'],'CANCELLED')
+        self.assertEqual((result['run_dir']/'source/job.sas').read_bytes(),original)
+        self.assertTrue((result['run_dir']/'_submitted.sas').is_file())
+
     def test_log_preview_shows_latest_output(self):
         path=self.root/'current.log'
         path.write_text('old line\n'*60000+'NOTE: latest progress\n',encoding='utf-8')

@@ -48,7 +48,7 @@ jobs:
           body: |
             Fixes garbled code previews and adds running-output inspection, individual file stops and bundle downloads.
 
-            Download PySAS-Workbench-Python-0.4.0-preview.9.zip, extract the entire ZIP and open START_PYSAS.bat.
+            Download PySAS-Workbench-Python-0.4.0-preview.10.zip, extract the entire ZIP and open START_PYSAS.bat.
 
             - Windows-1252 text is no longer misread as UTF-16. New submitted-code exports use UTF-8.
             - Inspect refreshes automatically and shows the newest log output and last update time. Execution console output streams during runs.
