@@ -1,4 +1,4 @@
-PySAS Workbench 0.4.0-preview.5
+PySAS Workbench 0.4.0-preview.6
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
@@ -6,7 +6,7 @@ PySAS Workbench 0.4.0-preview.5
    beside pysas.py in that folder. You can also copy the UI files into your
    existing workspace, including the updated pysas.py 0.3.4. Keep your SAS,
    EGP and Excel files. The updated engine remains a standalone single file.
-3. Double-click START_PYSAS.bat. Your browser opens the local workbench.
+3. Double-click START_PYSAS.bat. PySAS opens in its own app-style window.
 4. Keep the launcher window open while jobs run. Stop the watcher using
    "Stop after current files", and let active jobs finish before closing.
 
@@ -17,8 +17,28 @@ Requirements
 - openpyxl is needed for schedules and Excel exports/previews. If it is not
   already installed, use your approved installation process, or run:
       py -3 -m pip install openpyxl
+- Microsoft Edge or Google Chrome supplies the app window (no tabs/address bar).
 - No Node.js, npm, Git, administrator access, or UI dependencies are needed.
   Once existing Python/SAS requirements are met, the workbench works offline.
+
+App window and browser option
+-----------------------------
+START_PYSAS.bat now opens a dedicated PySAS window using Microsoft Edge (or
+Google Chrome if Edge is unavailable). There are no browser tabs or address
+bar. The app uses its own local profile under .pysas-ui/app-profile and does
+not use your personal browser profile. This is still the portable Python ZIP;
+Python and an installed Edge/Chrome are required, with no new UI installation.
+
+Keep the launcher window open while jobs run. Closing the app window alone
+does not stop the Python server or cancel jobs. Finish jobs and press Ctrl+C
+in the launcher to stop the server, just as before.
+
+To use a normal browser instead, double-click START_PYSAS_BROWSER.bat or run:
+  py -3 pysas_ui.py --browser
+
+If neither supported browser is available, the launcher prints guidance and
+keeps the local server available. Use the browser launcher in that case.
+macOS/Linux keep the previous default-browser behavior.
 
 What is included
 ----------------

@@ -1,6 +1,8 @@
 """Local uploads and Windows keep-awake support for the optional UI."""
 from __future__ import annotations
 import os
+import shutil
+import subprocess
 import threading
 import uuid
 from pathlib import Path
@@ -102,3 +104,39 @@ class KeepAwake:
 
     def close(self):
         self.set(False)
+
+
+def app_browser_candidates(environ=None, which=None):
+    """Find stable Edge/Chrome installs without changing the default browser."""
+    environ = os.environ if environ is None else environ
+    which = shutil.which if which is None else which
+    candidates = []
+    for vendor, executable in [('Microsoft/Edge', 'msedge.exe'), ('Google/Chrome', 'chrome.exe')]:
+        for variable in ('ProgramFiles(x86)', 'ProgramFiles', 'LOCALAPPDATA'):
+            directory = environ.get(variable)
+            if directory:
+                candidates.append(Path(directory) / vendor / 'Application' / executable)
+        discovered = which(executable)
+        if discovered:
+            candidates.append(Path(discovered))
+    return list(dict.fromkeys(path for path in candidates if path.is_file()))
+
+
+def launch_app_window(url, profile, candidates=None, popen=None):
+    """Open the local workbench without browser tabs or an address bar."""
+    from urllib.parse import urlsplit
+    address = urlsplit(url)
+    if address.scheme != 'http' or address.hostname != '127.0.0.1' or not address.port:
+        raise ValueError('App windows must open the local workbench address.')
+    profile = Path(profile).resolve()
+    profile.mkdir(parents=True, exist_ok=True)
+    candidates = app_browser_candidates() if candidates is None else candidates
+    popen = subprocess.Popen if popen is None else popen
+    for executable in candidates:
+        try:
+            return popen([str(executable), '--app=' + url, '--user-data-dir=' + str(profile),
+                          '--no-first-run', '--no-default-browser-check', '--window-size=1360,900'],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            continue
+    return None

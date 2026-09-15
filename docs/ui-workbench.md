@@ -1,6 +1,6 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.5 is a separate browser UI for the standalone PySAS
+The Workbench 0.4.0-preview.6 is a separate browser UI for the standalone PySAS
 0.3.4 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
@@ -100,3 +100,15 @@ machine; CI uses fake jobs to verify monitoring and shutdown without SAS.
 Custom watcher inboxes keep their temporary claimed jobs in `.pysas-claimed`
 inside that inbox, so claiming works across local drives and network shares.
 The default inbox retains the existing `runner/claimed` location.
+
+## Windows app window
+
+The default Windows launcher uses Edge/Chrome application mode with an isolated
+profile in `.pysas-ui/app-profile`. It needs no added Python UI dependency and
+keeps the existing local-server architecture. Normal browser mode remains
+available through `START_PYSAS_BROWSER.bat` or `--browser`; `--no-browser` remains
+available for manual previews. macOS/Linux retain their previous behavior.
+Closing the app window alone leaves jobs and the launcher running. Stop after
+jobs finish using Ctrl+C in the launcher. The window does not install a PWA or
+change the user's default browser. Discovery tries standard Edge/Chrome install
+folders and PATH, preferring Edge. Launch failures try the next available engine.

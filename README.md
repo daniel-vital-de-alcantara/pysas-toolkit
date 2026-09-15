@@ -24,12 +24,14 @@ and a log/code/results inspector.
 
 Download the **Python ZIP** from [GitHub Releases](https://github.com/daniel-vital-de-alcantara/pysas-toolkit/releases),
 extract it completely, put your SAS/EGP/workbook files beside `pysas.py`, and
-double-click **START_PYSAS.bat**. Requires Python 3.10+ and your existing Windows /
+double-click **START_PYSAS.bat**. On Windows, PySAS opens in a dedicated app
+window using Edge or Chrome, without tabs or an address bar.
+**START_PYSAS_BROWSER.bat** retains the normal-browser option. Requires Python 3.10+ and your existing Windows /
 Enterprise Guide setup; `openpyxl` is required for Excel features. No Node.js or
 frontend installation is needed.
 
 See [START_HERE.txt](START_HERE.txt) and the [workbench guide](docs/ui-workbench.md).
-The command-line toolkit is version 0.3.4; the UI preview is 0.4.0-preview.5.
+The command-line toolkit is version 0.3.4; the UI preview is 0.4.0-preview.6.
 
 ## Requirements
 

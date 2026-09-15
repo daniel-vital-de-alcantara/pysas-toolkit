@@ -19,9 +19,9 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
-from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT
+from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.5"
+VERSION = "0.4.0-preview.6"
 APP_DIR = Path(__file__).resolve().parent
 PREFIX = "@@PYSAS_UI@@"
 ACTIVE = {"RUNNING", "STOPPING"}
@@ -627,13 +627,24 @@ def main():
     parser = argparse.ArgumentParser(description="Start the local PySAS workbench")
     parser.add_argument("--workspace", type=Path, default=APP_DIR)
     parser.add_argument("--port", type=int, default=0)
-    parser.add_argument("--no-browser", action="store_true")
+    window_options = parser.add_mutually_exclusive_group()
+    window_options.add_argument("--no-browser", action="store_true", help="start the server without opening a window")
+    window_options.add_argument("--browser", action="store_true", help="open a normal browser tab instead of the Windows app window")
     args = parser.parse_args()
     server = make_server(args.workspace, args.port)
     url = f"http://127.0.0.1:{server.server_port}"
     print(f"PySAS Workbench {VERSION}\nWorkspace: {args.workspace.resolve()}\n{url}\nKeep this window open. Press Ctrl+C to stop after jobs finish.", flush=True)
+    window_process = None
     if not args.no_browser:
-        webbrowser.open(url)
+        if os.name == "nt" and not args.browser:
+            window_process = launch_app_window(url, server.app.storage / "app-profile")
+            if window_process is None:
+                print("Could not open an app window. Install Microsoft Edge or Google Chrome, "
+                      "or use START_PYSAS_BROWSER.bat for a normal browser tab.", flush=True)
+            else:
+                print("Opened the PySAS app window. Keep this launcher open while jobs run.", flush=True)
+        else:
+            webbrowser.open(url)
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
