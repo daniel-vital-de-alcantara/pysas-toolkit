@@ -148,7 +148,7 @@ class EngineTests(unittest.TestCase):
 Class CodeItem
   Public Name, Text
 End Class
-Class Collection
+Class FakeCodeCollection
   Public Count, Entry
   Public Function Item(index)
     Set Item = Entry
@@ -159,7 +159,7 @@ Class ProjectStub
 End Class
 Dim project, collection, entry, answer
 Set project = New ProjectStub
-Set collection = New Collection
+Set collection = New FakeCodeCollection
 Set entry = New CodeItem
 entry.Name = "setup"
 entry.Text = ReadAll(WScript.Arguments(0))
