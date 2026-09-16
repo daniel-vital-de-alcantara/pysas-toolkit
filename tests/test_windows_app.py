@@ -77,11 +77,22 @@ class WindowsTests(unittest.TestCase):
             self.skipTest('Edge/Chrome not installed')
         self.run_hidden_server([])
 
-    def run_hidden_server(self, options):
+    def test_hidden_server_launches_sas_worker_and_cscript_in_real_hidden_console(self):
+        self.run_hidden_server(['--no-browser'], worker_probe=True)
+
+    def run_hidden_server(self, options, worker_probe=False):
         pythonw = Path(sys.executable).with_name('pythonw.exe')
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             shutil.copy2(ROOT / 'pysas.py', root / 'pysas.py')
+            if worker_probe:
+                (root / 'job.sas').write_text('data test; run;')
+                (root / 'project.egp').touch()
+                # Exercise the production execute_eg Popen and a real cscript.exe.
+                # Only replace the SAS COM script, unavailable on hosted CI.
+                fixture = ROOT / 'tests' / 'fixtures' / 'console_probe_engine.py'
+                with (root / 'pysas.py').open('a', encoding='utf-8') as output:
+                    output.write("\n" + fixture.read_text(encoding='utf-8'))
             ready = root / 'ready'
             process = subprocess.Popen([str(pythonw), str(ROOT / 'pysas_ui.py'), '--workspace', str(root),
                                         '--ready-file', str(ready), *options], creationflags=subprocess.DETACHED_PROCESS)
@@ -102,6 +113,28 @@ class WindowsTests(unittest.TestCase):
                 url = ready.read_text()
                 with urlopen(url + '/api/state', timeout=5) as response:
                     state = json.load(response)
+                if worker_probe:
+                    headers = {'Content-Type': 'application/json', 'X-PySAS-Token': state['token']}
+                    request = Request(url + '/api/launch', data=json.dumps({'action': 'run', 'program': 'job.sas', 'template': 'project.egp'}).encode(), headers=headers)
+                    with urlopen(request, timeout=10) as response:
+                        identifier = json.load(response)['id']
+                    deadline = time.monotonic() + 25
+                    while time.monotonic() < deadline:
+                        with urlopen(url + '/api/state', timeout=5) as response:
+                            state = json.load(response)
+                        item = next(c for c in state['commands'] if c['id'] == identifier)
+                        if item['status'] != 'RUNNING':
+                            break
+                        time.sleep(.1)
+                    console = (root / '.pysas-ui' / (identifier + '.txt')).read_text(encoding='utf-8')
+                    self.assertEqual(item['status'], 'SUCCESS', console)
+                    self.assertTrue(item['runtime']['console'])
+                    probe = json.loads((root / 'console-probe.json').read_text())
+                    self.assertTrue(probe['console_window'])
+                    self.assertFalse(probe['visible'])
+                    self.assertTrue(probe['console_input'])
+                    self.assertGreaterEqual(probe['console_processes'], 2, probe)
+                    self.assertTrue(any('cscript.exe' in name.lower() for name in probe['process_images']), probe)
                 req = Request(url + '/api/quit', data=b'{}', headers={'Content-Type': 'application/json', 'X-PySAS-Token': state['token']})
                 with urlopen(req, timeout=5) as response:
                     self.assertEqual(response.status, 200)

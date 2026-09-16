@@ -1,6 +1,6 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.13 is a separate browser UI for the standalone PySAS
+The Workbench 0.4.0-preview.14 is a separate browser UI for the standalone PySAS
 0.3.8 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
@@ -163,6 +163,8 @@ inspector. Open-ended ranges and whole-program runs are labelled explicitly.
 This is the selected execution range, not a live SAS line counter. The metadata
 is retained for new UI runs; older runs without it do not invent a range.
 
-### Original 0.3.2 scheduler comparison
+### Scheduler execution
 
-Scheduler and Continue offer an **Original 0.3.2 · terminal comparison** engine. This uses the exact published engine, including its separate-task always_run behavior. Per-file stops and live console capture are unavailable in this mode. The default current engine keeps shared setup. A maximum parallel task value of 0 uses workbook settings, matching the terminal default. See [the execution investigation](execution-investigation.md) for the verified differences and limitations.
+Scheduler and Continue offer an **Original 0.3.2 · terminal behavior** engine (the default). This uses the exact published engine, including its separate-task always_run behavior. Per-file stops and live console capture are unavailable in this mode. The optional modified engine keeps shared setup. A maximum parallel task value of 0 uses workbook settings, matching the terminal default. See [the execution investigation](execution-investigation.md) for the verified differences and limitations.
+
+SAS workers now have a real Windows console, kept hidden, with normal console input. cscript inherits that console as it does in a terminal launch. The watcher receives stop requests through a separate control file. The app still opens without persistent visible terminals; closing the startup terminal does not remove the worker console. The command console records the actual engine version and whether its console was attached.

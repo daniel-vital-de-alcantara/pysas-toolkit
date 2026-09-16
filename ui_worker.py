@@ -94,18 +94,60 @@ def observe(engine):
     engine.write_summary = summary
 
 
+def prepare_console():
+    """Restore real console input before cscript inherits it; UI controls use a file."""
+    if os.name != "nt" or os.environ.get("PYSAS_UI_CONSOLE") != "1":
+        return False
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetConsoleWindow.restype = wintypes.HWND
+    kernel.SetStdHandle.argtypes = [wintypes.DWORD, wintypes.HANDLE]
+    kernel.GetConsoleMode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel.SetConsoleMode.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    if not kernel.GetConsoleWindow():
+        raise RuntimeError("The SAS worker has no Windows console; execution was not started.")
+    fd = os.open("CONIN$", os.O_RDWR)
+    try:
+        os.dup2(fd, 0)
+    finally:
+        if fd != 0:
+            os.close(fd)
+    handle = msvcrt.get_osfhandle(0)
+    if not kernel.SetStdHandle(-10 & 0xffffffff, handle):
+        raise ctypes.WinError(ctypes.get_last_error())
+    mode = wintypes.DWORD()
+    if not kernel.GetConsoleMode(handle, ctypes.byref(mode)):
+        raise RuntimeError("The SAS worker's input is not a Windows console.")
+    # Selection in a console must not suspend a long-running job.
+    kernel.SetConsoleMode(handle, (mode.value | 0x80) & ~0x40)
+    return True
+
+
 def main():
     script, *arguments = sys.argv[1:]
+    console = prepare_console()
     engine = load_engine(Path(script))
     if getattr(engine, "VERSION", "") == "0.3.2" and os.environ.get("PYSAS_UI_LEGACY_ROOT"):
         engine.ROOT_DIR = Path(os.environ["PYSAS_UI_LEGACY_ROOT"])
+    emit("worker", engine_version=getattr(engine, "VERSION", "unknown"),
+         script=str(Path(script).resolve()), python=sys.executable, pid=os.getpid(),
+         console=console, arguments=arguments)
+    print(f"PySAS engine {getattr(engine, 'VERSION', 'unknown')} | console={'attached' if console else 'inherited'}", flush=True)
     observe(engine)
     if arguments[:2] == ["runner", "watch"]:
         def control():
-            for line in sys.stdin:
-                if line.strip() == "stop":
-                    _thread.interrupt_main()
-                    return
+            control_path = os.environ.get("PYSAS_UI_CONTROL_FILE")
+            if control_path:
+                while not Path(control_path).exists():
+                    time.sleep(.1)
+                _thread.interrupt_main()
+            else:
+                for line in sys.stdin:
+                    if line.strip() == "stop":
+                        _thread.interrupt_main()
+                        return
         threading.Thread(target=control, daemon=True).start()
     return engine.main(arguments)
 

@@ -23,7 +23,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 from pysas import text_encoding
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.13"
+VERSION = "0.4.0-preview.14"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 
@@ -285,7 +285,7 @@ class Workbench:
 
     def launch(self, data):
         action, args = self.arguments(data)
-        legacy = data.get("engine") == "0.3.2"
+        legacy = data.get("engine", "0.3.2" if action in {"schedule", "continue"} else "current") == "0.3.2"
         if legacy and action not in {"schedule", "continue"}:
             raise ValueError("The 0.3.2 comparison is available for scheduler runs only.")
         script = APP_DIR / "pysas_0_3_2.py" if legacy else self.script
@@ -307,6 +307,18 @@ class Workbench:
             env.update(PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
             env.pop("PYSAS_LIVE_LOG", None)
             isolation = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {"start_new_session": True}
+            if os.name == "nt" and action in {"run", "watch", "schedule", "continue"}:
+                # Keep the same console semantics as terminal Python, without a visible window.
+                startup = subprocess.STARTUPINFO()
+                startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startup.wShowWindow = subprocess.SW_HIDE
+                isolation = {"creationflags": subprocess.CREATE_NEW_CONSOLE, "startupinfo": startup}
+                env["PYSAS_UI_CONSOLE"] = "1"
+            else:
+                env.pop("PYSAS_UI_CONSOLE", None)
+            control_path = self.storage / (identifier + ".stop")
+            env["PYSAS_UI_CONTROL_FILE"] = str(control_path)
+            item["control_file"] = str(control_path)
             python = str(Path(sys.executable).with_name("python.exe")) if os.name == "nt" else sys.executable
             event_path = self.storage / (identifier + ".events.jsonl")
             event_path.touch()
@@ -318,7 +330,7 @@ class Workbench:
             # Neither normal output nor events depend on the HTTP/history reader.
             with (self.storage / (identifier + ".txt")).open("wb", buffering=0) as output:
                 process = subprocess.Popen([python, "-u", str(APP_DIR / "ui_worker.py"), str(script), *args],
-                                           cwd=self.root, stdin=subprocess.PIPE, stdout=output,
+                                           cwd=self.root, stdin=None, stdout=output,
                                            stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", env=env, **isolation)
             self.commands[identifier] = item
             self.processes[identifier] = process
@@ -338,7 +350,9 @@ class Workbench:
 
     def event(self, item, event):
         kind = event.get("event")
-        if kind == "plan":
+        if kind == "worker":
+            item["runtime"] = {k: v for k, v in event.items() if k != "event"}
+        elif kind == "plan":
             for task in event["tasks"]:
                 key = task["task_id"]
                 if key not in item["tasks"]:
@@ -429,7 +443,8 @@ class Workbench:
                 item["message"] = "Run ended, but history could not be saved: " + str(exc)
             finally:
                 self.processes.pop(identifier, None)
-        process.stdin.close()
+        if process.stdin is not None:
+            process.stdin.close()
 
     def stop(self, identifier):
         with self.lock:
@@ -439,8 +454,7 @@ class Workbench:
                 raise ValueError("Only an active watcher can be stopped here.")
             if item["status"] == "STOPPING":
                 return {"ok": True}
-            process.stdin.write("stop\n")
-            process.stdin.flush()
+            Path(item["control_file"]).write_text("stop", encoding="utf-8")
             item["status"] = "STOPPING"
             self.save(item)
             return {"ok": True}

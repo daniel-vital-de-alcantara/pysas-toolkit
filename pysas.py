@@ -694,8 +694,8 @@ def execute_eg(mode: str, project: Path, sas_path: Path, program: str, row_start
     try:
         # A file cannot keep the parent waiting for EOF when EG leaves a child alive.
         with console_path.open("wb", buffering=0) as output:
-            process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT,
-                                       **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}))
+            # Inherit the worker/terminal console and stdin, just as 0.3.2 did.
+            process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT)
             cancelled = False
             while process.poll() is None:
                 if (run_dir / "_cancel.request").exists():

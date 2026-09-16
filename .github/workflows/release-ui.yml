@@ -46,18 +46,18 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'preview') }}
           fail_on_unmatched_files: true
           body: |
-            Execution investigation and original 0.3.2 scheduler comparison. The reported wait inside EG code.Run is not yet verified as resolved on a real SAS server.
+            Restore terminal execution behavior for UI-launched SAS jobs.
 
-            Download PySAS-Workbench-Python-0.4.0-preview.13.zip and extract fully. Open START_PYSAS.bat.
+            Download PySAS-Workbench-Python-0.4.0-preview.14.zip, extract fully and open START_PYSAS.bat.
 
-            - Scheduler offers Original 0.3.2 · terminal comparison: byte-identical published engine, original scheduler and EG bridge.
-            - Use Maximum parallel tasks = 0 to honor workbook settings. The UI previously forced two workers.
-            - Original 0.3.2 runs always_run rows as separate tasks; current mode prepends them to each program. Original mode has no per-file stop or live console capture.
-            - Worker output/events no longer depend on the UI draining a pipe. History-write failures cannot strand worker completion.
-            - Current console identifies prepended setup ranges and the saved submitted-code file.
-            - Includes docs/execution-investigation.md with evidence, remaining differences and a controlled comparison procedure.
+            - Scheduler now defaults to the exact original 0.3.2 engine. Preview.13 still defaulted to the modified engine unless selected manually.
+            - SAS workers use a real Windows console kept hidden. cscript inherits that console and normal console input. Removed CREATE_NO_WINDOW from the SAS automation path.
+            - Watcher stop controls use a separate file instead of occupying standard input.
+            - Workbook concurrency remains the default. Current shared-setup behavior is an explicit alternative; original 0.3.2 retains its original limitations, including no per-file cancellation or live console capture.
+            - Local command history records the actual engine, Python executable and console attachment.
+            - Windows integration tests exercise hidden pythonw server -> UI launch -> worker -> real cscript, console inheritance and completed UI status. They substitute SAS COM because CI has no licensed SAS server.
 
-            Requires Windows, Python 3.10+, configured Enterprise Guide and openpyxl for Excel features. SAS-server execution is not covered by CI.
+            This removes confirmed engine-selection and launch discrepancies. The user's actual SAS workload still requires verification; server-side completion is not certified by CI. See docs/execution-investigation.md.
 
           files: |
             release/PySAS-Workbench-Python-*.zip

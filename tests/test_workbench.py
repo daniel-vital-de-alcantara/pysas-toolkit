@@ -284,7 +284,10 @@ def main(args):
 """)
             process = subprocess.Popen([sys.executable, "-u", str(ROOT / "ui_worker.py"), str(engine), "runner", "watch"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
             try:
-                first = process.stdout.readline()
+                while True:
+                    first = process.stdout.readline()
+                    if not first or '"event": "start"' in first:
+                        break
                 self.assertIn('"event": "start"', first)
                 output, errors = process.communicate("stop\n", timeout=10)
                 self.assertEqual(process.returncode, 130, errors)
