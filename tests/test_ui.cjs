@@ -67,11 +67,19 @@ test('scheduler scope displays section and inclusive row bounds without inventin
   assert.equal(h.taskScope({row_start:20,row_end:20}),'Row 20');
   assert.equal(h.taskScope({row_start:null,row_end:null}),'Whole program');
   assert.equal(h.taskScope({}), '');
+  assert.equal(h.taskScope({section:'Realised',row_start:null,row_end:null}), 'Section Realised');
   const markup=h.taskTable([{name:'Realised.sas',section:'<setup>',row_start:2,row_end:5,status:'RUNNING'}]);
   assert.match(markup,/Section &lt;setup&gt; · Rows 2–5/);
 });
 
- test('original 0.3.2 never offers unsupported per-file cancellation', () => {
+ test('historical runs without cancellation support never offer a stop button', () => {
    const html = h.taskTable([{name:'job',key:'A',status:'RUNNING',path:'runs/A',can_cancel_file:false}], 'command');
    assert.ok(!html.includes('data-cancel-command'));
  });
+
+test('running scheduler task shows setup and stage without extra running rows',()=>{
+  const html=h.taskTable([{name:'Realised',key:'job',status:'RUNNING',section:'A',row_start:2,row_end:5,setup:[{program:'Libraries',row_start:1,row_end:4},{program:'Macros'}],progress:'Appending shared setup: <Libraries>'}]);
+  assert.match(html,/Shared setup: Libraries/);
+  assert.match(html,/Appending shared setup: &lt;Libraries&gt;/);
+  assert.equal((html.match(/<tr>/g)||[]).length,2); // one header and one task
+});

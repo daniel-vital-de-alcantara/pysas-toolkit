@@ -1,0 +1,6 @@
+{
+  "source": "User-supplied pysas_v0_3_2.py (Rich terminal version)",
+  "source_sha256": "224284ee2013803997bffa736b31ea4488bf9d779b91993cdb9ea253b3f408df",
+  "source_lines": 2757,
+  "fixture": "Unmodified VBS_EGP_RUNNER string extracted with ast.literal_eval; test only, not packaged."
+}

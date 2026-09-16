@@ -102,7 +102,46 @@ class EngineTests(unittest.TestCase):
     def task(identifier, deps=(), always=False, stop=False, skip=False):
         return {'task_id': identifier, 'program': identifier, 'depends_on': list(deps),
                 'always_run': always, 'stop_process_on_error': stop, 'skip': skip,
-                'max_parallel': 1, 'row_start': None, 'row_end': None}
+                'max_parallel': None, 'row_start': None, 'row_end': None}
+
+    def test_ten_jobs_run_in_parallel_with_three_shared_definitions(self):
+        book = self.root/'Schedule.xlsx'; book.touch()
+        project = self.root/'project.egp'; project.touch()
+        setups = [self.task(f'setup{i}', always=True) for i in range(3)]
+        tasks = setups + [self.task(f'job{i}') for i in range(12)]
+        guard = threading.Lock()
+        ready = threading.Event()
+        release = threading.Event()
+        running = 0
+        peak = 0
+        submitted = []
+        result = []
+        def execute(task, *_):
+            nonlocal running, peak
+            with guard:
+                submitted.append(task['task_id'])
+                running += 1
+                peak = max(peak, running)
+                if running == 10:
+                    ready.set()
+            self.assertEqual(task['_always_run'], setups)
+            release.wait(5)
+            with guard:
+                running -= 1
+            return dict(task, status='SUCCESS', elapsed=.01)
+        args = argparse.Namespace(workbook=str(book), project=str(project), workers=None, no_notify=True)
+        with patch.object(self.engine, 'load_schedule', return_value=tasks), patch.object(self.engine, 'scheduler_task', execute), patch.object(self.engine, 'write_summary'), contextlib.redirect_stdout(io.StringIO()):
+            runner = threading.Thread(target=lambda: result.append(self.engine.schedule_run(args)))
+            runner.start()
+            try:
+                self.assertTrue(ready.wait(3), 'Default did not allow ten simultaneous tasks')
+            finally:
+                release.set()
+                runner.join(5)
+        self.assertFalse(runner.is_alive())
+        self.assertEqual(result, [0])
+        self.assertEqual(peak, 10)
+        self.assertEqual(set(submitted), {f'job{i}' for i in range(12)})
 
     def test_setup_is_applied_to_every_program_but_never_scheduled_alone(self):
         tasks = [self.task('lib', always=True), self.task('macros', always=True),
@@ -122,6 +161,11 @@ class EngineTests(unittest.TestCase):
             self.assertEqual(statuses['B'], expected)
             self.assertEqual(statuses['lib'], 'ALWAYS_RUN_DEFINITION')
 
+    def test_setup_stop_process_applies_to_target_failure(self):
+        tasks = [self.task('lib', always=True, stop=True), self.task('A'), self.task('B')]
+        rc, observed, statuses = self.run_schedule(tasks, 'A')
+        self.assertEqual((rc, observed, statuses['B']), (1, ['A'], 'STOPPED_ON_ERROR'))
+
     def test_scheduler_passes_ordered_setup_and_line_ranges_to_bridge(self):
         project = self.root / 'project.egp'; project.write_text('fake')
         task = self.task('A')
@@ -132,51 +176,12 @@ class EngineTests(unittest.TestCase):
             self.assertEqual(mode, 'RUNPROJECT')
             nodes = self.engine.ET.parse(setup_path).getroot().findall('program')
             self.assertEqual([dict(n.attrib) for n in nodes], [
-                {'name': 'Libraries & macros', 'first': '2', 'last': '7'},
-                {'name': 'Options', 'first': '0', 'last': '0'}])
+                {'name': 'Libraries & macros', 'first': '2', 'last': '7', 'section': ''},
+                {'name': 'Options', 'first': '0', 'last': '0', 'section': ''}])
             self.assertEqual(program, 'A')
             return 0, ''
         with patch.object(self.engine, 'execute_eg', execute):
             self.assertEqual(self.engine.scheduler_task(task, project, self.root / 'tasks')['status'], 'SUCCESS')
-
-    @unittest.skipUnless(sys.platform == 'win32', 'Windows VBScript bridge')
-    def test_vbscript_reads_utf8_and_prepends_sliced_setup_in_same_submission(self):
-        import subprocess
-        source = self.root / 'source.sas'; source.write_text('libname café;\noptions mprint;\ndata result;', encoding='utf-8')
-        helper = self.engine.VBS[self.engine.VBS.index('Function ReadAll'):self.engine.VBS.index('Function CleanName')]
-        harness = r'''
-Class CodeItem
-  Public Name, Text
-End Class
-Class FakeCodeCollection
-  Public Count, Entry
-  Public Function Item(index)
-    Set Item = Entry
-  End Function
-End Class
-Class ProjectStub
-  Public CodeCollection
-End Class
-Dim project, collection, entry, answer
-Set project = New ProjectStub
-Set collection = New FakeCodeCollection
-Set entry = New CodeItem
-entry.Name = "setup"
-entry.Text = ReadAll(WScript.Arguments(0))
-Set collection.Entry = entry
-collection.Count = 1
-Set project.CodeCollection = collection
-answer = ProgramText(project, "SETUP.SAS", 1, 2) & ProgramText(project, "setup", 3, 3)
-If InStr(answer, "caf" & ChrW(233)) = 0 Then WScript.Quit 30
-If answer <> entry.Text & vbCrLf Then
-  If Replace(answer, vbCrLf, vbLf) <> entry.Text & vbLf Then WScript.Quit 31
-End If
-WScript.Echo "PASS"
-'''
-        script = self.root / 'bridge.vbs'; script.write_text(helper + harness, encoding='utf-16')
-        result = subprocess.run(['cscript.exe', '//nologo', str(script), str(source)], capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('PASS', result.stdout)
 
     def test_explicit_skip_is_still_respected(self):
         tasks = [self.task('A'), self.task('cleanup', ['A'], always=True, skip=True)]

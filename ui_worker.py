@@ -39,7 +39,7 @@ def load_engine(script):
 
 
 def observe(engine):
-    """Wrap entry/exit only: the original engine owns execution and scheduling."""
+    """Observe tasks and progress: the standalone engine owns execution and scheduling."""
     original_job = engine.run_job
     @functools.wraps(original_job)
     def job(source, *args, **kwargs):
@@ -62,7 +62,8 @@ def observe(engine):
         _context.key = key
         path = task_root / engine.safe_name(key)
         emit("start", key=key, name=definition["program"], kind="task", path=path,
-             section=definition.get("section", ""), row_start=definition.get("row_start"), row_end=definition.get("row_end"))
+             section=definition.get("section", ""), row_start=definition.get("row_start"), row_end=definition.get("row_end"),
+             setup=[{k: row.get(k) for k in ("task_id", "program", "section", "row_start", "row_end")} for row in definition.get("_always_run", [])])
         try:
             result = original_task(definition, project, task_root)
         except BaseException as exc:
@@ -86,6 +87,14 @@ def observe(engine):
             emit("location", key=_context.key, path=run_dir)
         return original_execute(mode, project, sas_path, program, row_start, row_end, run_dir, tables)
     engine.execute_eg = execute
+    if hasattr(engine, "report_progress"):
+        original_progress = engine.report_progress
+        @functools.wraps(original_progress)
+        def progress(run_dir, phase, message):
+            original_progress(run_dir, phase, message)
+            if getattr(_context, "key", None):
+                emit("progress", key=_context.key, phase=phase, progress=message, path=run_dir)
+        engine.report_progress = progress
     original_summary = engine.write_summary
     @functools.wraps(original_summary)
     def summary(path, results):
@@ -129,8 +138,6 @@ def main():
     script, *arguments = sys.argv[1:]
     console = prepare_console()
     engine = load_engine(Path(script))
-    if getattr(engine, "VERSION", "") == "0.3.2" and os.environ.get("PYSAS_UI_LEGACY_ROOT"):
-        engine.ROOT_DIR = Path(os.environ["PYSAS_UI_LEGACY_ROOT"])
     emit("worker", engine_version=getattr(engine, "VERSION", "unknown"),
          script=str(Path(script).resolve()), python=sys.executable, pid=os.getpid(),
          console=console, arguments=arguments)

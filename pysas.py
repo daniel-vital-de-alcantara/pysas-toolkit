@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PySAS 0.3.2 — portable SAS Enterprise Guide command-line utilities.
+"""PySAS 0.3.9 — portable SAS Enterprise Guide command-line utilities.
 
 Keep this file beside the EGP, scheduler workbook and any top-level _*.sas
 initialisation files it should use.  Python 3.9+ is recommended.  ``rich`` is
@@ -29,7 +29,7 @@ from typing import Any, Iterable
 from xml.etree import ElementTree as ET
 
 
-VERSION = "0.3.8"
+VERSION = "0.3.9"
 ROOT_DIR = Path(__file__).resolve().parent
 CODEBASE_FILE = "codebase.sasbundle.txt"
 BACKUP_FOLDER = "_codebase_backups"
@@ -68,6 +68,8 @@ def utc_now() -> str:
 
 def text_encoding(raw: bytes) -> str:
     """Only treat text as UTF-16 when its BOM or NUL layout supports it."""
+    if raw.startswith(b"\x00MSMAMARPCRYPT"):
+        raise ValueError("This file is encrypted/protected (MSMAMARPCRYPT), not readable source text. Use a readable copy from an application authorized to open it.")
     if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
         return "utf-16"
     sample = raw[:4096]
@@ -433,7 +435,8 @@ def egp_pack(args: argparse.Namespace) -> int:
 
 VBS = r'''Option Explicit
 Dim mode, projectPath, sasPath, programName, rowStart, rowEnd, logPath, codePath
-Dim resultDir, tableManifest, tempPrefix, app, project, code, fso, stream, text
+Dim resultDir, tableManifest, tempPrefix, app, project, code, fso, stream, text, exitCode, sourceCode, selection
+exitCode = 0
 mode = WScript.Arguments(0)
 projectPath = WScript.Arguments(1)
 sasPath = WScript.Arguments(2)
@@ -458,34 +461,128 @@ Function ReadAll(path)
   s.Close
 End Function
 
-Function SliceLines(value, firstLine, lastLine)
-  Dim a, i, firstIndex, lastIndex, answer
-  a = Split(Replace(value, vbCrLf, vbLf), vbLf)
-  firstIndex = 0
-  lastIndex = UBound(a)
-  If firstLine > 0 Then firstIndex = firstLine - 1
-  If lastLine > 0 And lastLine - 1 < lastIndex Then lastIndex = lastLine - 1
-  If firstIndex < 0 Then firstIndex = 0
-  answer = ""
-  For i = firstIndex To lastIndex
-    answer = answer & a(i) & vbCrLf
-  Next
-  SliceLines = answer
+Function RangeText(firstLine, lastLine)
+  Dim first, last
+  first = ""
+  last = ""
+  If firstLine > 0 Then first = CStr(firstLine)
+  If lastLine > 0 Then last = CStr(lastLine)
+  RangeText = ""
+  If first <> "" Or last <> "" Then RangeText = first & ":" & last
 End Function
 
-Function ProgramText(theProject, name, firstLine, lastLine)
-  Dim j, candidate
-  For j = 0 To theProject.CodeCollection.Count - 1
-    Set candidate = theProject.CodeCollection.Item(j)
-    If LCase(candidate.Name) = LCase(name) Or LCase(candidate.Name & ".sas") = LCase(name) Then
-      ProgramText = SliceLines(candidate.Text, firstLine, lastLine)
-      Exit Function
-    End If
-  Next
-  WScript.Echo "ERROR: EGP program not found: " & name
-  theProject.Close
+Function SelectionLabel(ByVal firstLine, ByVal lastLine, ByVal section)
+  SelectionLabel = "whole program"
+  If section <> "" Then
+    SelectionLabel = "section " & section
+  ElseIf firstLine > 0 Or lastLine > 0 Then
+    If firstLine = 0 Then firstLine = 1
+    If lastLine = 0 Then lastLine = "end"
+    SelectionLabel = "rows " & firstLine & " to " & lastLine
+  End If
+End Function
+
+Sub CleanExit(message, status)
+  WScript.Echo message
+  On Error Resume Next
+  project.Close
   app.Quit
-  WScript.Quit 21
+  On Error GoTo 0
+  WScript.Quit status
+End Sub
+
+Function FindProgram(requestedName)
+    Dim item, matchCount, matchedItem
+    matchCount = 0
+    For Each item In project.CodeCollection
+        If LCase(Trim(item.Name)) = LCase(Trim(requestedName)) Then
+            matchCount = matchCount + 1
+            Set matchedItem = item
+        End If
+    Next
+    If matchCount = 0 Then CleanExit "ERROR: Program not found: " & requestedName, 14
+    If matchCount > 1 Then CleanExit "ERROR: Program name is duplicated: " & requestedName, 29
+    Set FindProgram = matchedItem
+End Function
+
+Function GetSelectedText(requestedName, requestedRange, requestedSection)
+    Dim item, textValue
+    Set item = FindProgram(requestedName)
+    textValue = item.Text
+    If requestedSection <> "" And requestedRange <> "" Then CleanExit "ERROR: Specify either section or row range, not both.", 23
+    If requestedSection <> "" Then
+        textValue = ExtractSection(textValue, requestedSection)
+        WScript.Echo "Always/target section selected: " & requestedSection
+    ElseIf requestedRange <> "" Then
+        textValue = ExtractRange(textValue, requestedRange)
+        WScript.Echo "Always/target range selected: " & requestedRange
+    End If
+    GetSelectedText = textValue
+End Function
+
+Function ExtractSection(textValue, requestedSection)
+    Dim normalized, lines, i, startIndex, endIndex, startCount, endCount
+    Dim startMarker, endMarker, selected
+    normalized = Replace(textValue, vbCrLf, vbLf)
+    normalized = Replace(normalized, vbCr, vbLf)
+    lines = Split(normalized, vbLf)
+    startMarker = LCase("* (please do not delete) section_start: " & requestedSection & ";")
+    endMarker = LCase("* (please do not delete) section_end: " & requestedSection & ";")
+    startIndex = -1
+    endIndex = -1
+    startCount = 0
+    endCount = 0
+    For i = 0 To UBound(lines)
+        If LCase(Trim(lines(i))) = startMarker Then
+            startCount = startCount + 1
+            startIndex = i
+        End If
+        If LCase(Trim(lines(i))) = endMarker Then
+            endCount = endCount + 1
+            endIndex = i
+        End If
+    Next
+    If startCount <> 1 Then CleanExit "ERROR: Expected exactly one section_start marker for: " & requestedSection, 24
+    If endCount <> 1 Then CleanExit "ERROR: Expected exactly one section_end marker for: " & requestedSection, 25
+    If endIndex <= startIndex Then CleanExit "ERROR: Section end must appear after section start: " & requestedSection, 26
+    selected = ""
+    For i = startIndex + 1 To endIndex - 1
+        selected = selected & lines(i)
+        If i < endIndex - 1 Then selected = selected & vbCrLf
+    Next
+    ExtractSection = selected
+End Function
+
+Function ExtractRange(textValue, requestedRange)
+    Dim parts, normalized, lines, startLine, endLine, totalLines, i, selected
+    parts = Split(requestedRange, ":")
+    If UBound(parts) <> 1 Then CleanExit "ERROR: Invalid range. Expected 20:45, 20:, or :45", 15
+    normalized = Replace(textValue, vbCrLf, vbLf)
+    normalized = Replace(normalized, vbCr, vbLf)
+    lines = Split(normalized, vbLf)
+    totalLines = UBound(lines) + 1
+    If Trim(parts(0)) = "" Then
+        startLine = 1
+    ElseIf IsNumeric(Trim(parts(0))) Then
+        startLine = CLng(Trim(parts(0)))
+    Else
+        CleanExit "ERROR: Start line must be numeric.", 16
+    End If
+    If Trim(parts(1)) = "" Then
+        endLine = totalLines
+    ElseIf IsNumeric(Trim(parts(1))) Then
+        endLine = CLng(Trim(parts(1)))
+    Else
+        CleanExit "ERROR: End line must be numeric.", 16
+    End If
+    If startLine < 1 Or endLine < startLine Then CleanExit "ERROR: Invalid line range: " & requestedRange, 17
+    If endLine > totalLines Then CleanExit "ERROR: End line exceeds program length. Program lines: " & totalLines, 18
+    selected = ""
+    For i = startLine To endLine
+        selected = selected & lines(i - 1)
+        If i < endLine Then selected = selected & vbCrLf
+    Next
+    ExtractRange = selected
 End Function
 
 Function CleanName(value)
@@ -503,9 +600,19 @@ End Function
 Sub SaveOutputs(theCode)
   Dim i, item, outPath, manifest, itemName
   On Error Resume Next
-  theCode.Log.SaveAs logPath
-  If Err.Number <> 0 Then WScript.Echo "WARNING: log save failed: " & Err.Description
   Err.Clear
+  theCode.Log.SaveAs logPath
+  If Err.Number <> 0 Then
+    WScript.Echo "ERROR: log save failed: " & Err.Description
+    If exitCode = 0 Then exitCode = 21
+  Else
+    WScript.Echo "Log saved: " & logPath
+  End If
+  Err.Clear
+  If UCase(mode) <> "RUNFILE" Then
+    On Error GoTo 0
+    Exit Sub
+  End If
   For i = 0 To theCode.Results.Count - 1
     Set item = theCode.Results.Item(i)
     itemName = CleanName(item.Name)
@@ -530,7 +637,7 @@ Sub SaveOutputs(theCode)
 End Sub
 
 On Error Resume Next
-WScript.Echo "Starting Enterprise Guide automation..."
+WScript.Echo "PYSAS_STAGE|opening|Starting Enterprise Guide automation"
 Set app = CreateObject("SASEGObjectModel.Application.8.1")
 If Err.Number <> 0 Then
   Err.Clear
@@ -540,42 +647,54 @@ If Err.Number <> 0 Then
   WScript.Echo "ERROR: Could not start SAS Enterprise Guide automation: " & Err.Description
   WScript.Quit 20
 End If
-On Error GoTo 0
-WScript.Echo "Opening Enterprise Guide project..."
+WScript.Echo "PYSAS_STAGE|opening|Opening Enterprise Guide project"
+Err.Clear
 Set project = app.Open(projectPath, "")
+If Err.Number <> 0 Then CleanExit "ERROR: Could not open project: " & Err.Description, 13
+On Error GoTo 0
 
 If UCase(mode) = "RUNFILE" Then
+  If project.CodeCollection.Count = 0 Then CleanExit "ERROR: Template EGP needs a code object with a SAS server connection.", 33
+  For Each sourceCode In project.CodeCollection
+    Exit For
+  Next
   text = ReadAll(sasPath)
-  Set code = project.CodeCollection.Add
-  code.Name = fso.GetBaseName(sasPath)
-  code.Text = text
+  selection = "whole file"
 Else
-  Dim setupDoc, setupNode
-  text = ""
-  If fso.FileExists(sasPath) Then
-    Set setupDoc = CreateObject("MSXML2.DOMDocument.6.0")
-    setupDoc.async = False
-    If Not setupDoc.Load(sasPath) Then
-      WScript.Echo "ERROR: Cannot read shared setup definitions"
-      project.Close
-      app.Quit
-      WScript.Quit 22
-    End If
-    For Each setupNode In setupDoc.selectNodes("/setup/program")
-      WScript.Echo "Prepending setup: " & setupNode.getAttribute("name") & " (rows " & setupNode.getAttribute("first") & " to " & setupNode.getAttribute("last") & "; 0 means boundary)"
-      text = text & ProgramText(project, setupNode.getAttribute("name"), CLng(setupNode.getAttribute("first")), CLng(setupNode.getAttribute("last"))) & vbCrLf
-    Next
-  End If
-  WScript.Echo "Selected program: " & programName & " (rows " & rowStart & " to " & rowEnd & "; 0 means boundary)"
-  text = text & ProgramText(project, programName, rowStart, rowEnd)
-  Set code = project.CodeCollection.Add
-  code.Name = programName & "_PySAS"
-  code.Text = text
+  Dim setupDoc, setupNode, initText, piece, section, stopProgram
+  If Not fso.FileExists(sasPath) Then CleanExit "ERROR: Shared setup manifest not found: " & sasPath, 27
+  Set setupDoc = CreateObject("MSXML2.DOMDocument.6.0")
+  setupDoc.async = False
+  If Not setupDoc.Load(sasPath) Then CleanExit "ERROR: Cannot read shared setup definitions", 28
+  section = setupDoc.documentElement.getAttribute("section")
+  stopProgram = setupDoc.documentElement.getAttribute("stop_program")
+  If IsNull(section) Then section = ""
+  initText = ""
+  For Each setupNode In setupDoc.selectNodes("/setup/program")
+    WScript.Echo "PYSAS_STAGE|preparing|Appending shared setup: " & setupNode.getAttribute("name") & " (" & SelectionLabel(CLng(setupNode.getAttribute("first")), CLng(setupNode.getAttribute("last")), setupNode.getAttribute("section")) & ")"
+    piece = GetSelectedText(setupNode.getAttribute("name"), RangeText(CLng(setupNode.getAttribute("first")), CLng(setupNode.getAttribute("last"))), setupNode.getAttribute("section"))
+    If initText <> "" Then initText = initText & vbCrLf
+    initText = initText & "/* ALWAYS_RUN_ITEM: " & setupNode.getAttribute("name") & " */" & vbCrLf & piece
+  Next
+  selection = SelectionLabel(rowStart, rowEnd, section)
+  WScript.Echo "PYSAS_STAGE|preparing|Appending task program: " & programName & " (" & selection & ")"
+  piece = GetSelectedText(programName, RangeText(rowStart, rowEnd), section)
+  text = "options iomlogautoflush;" & vbCrLf
+  If stopProgram = "1" Then text = "options iomlogautoflush errorabend errorcheck=strict;" & vbCrLf
+  If initText <> "" Then text = text & "/* ALWAYS_RUN_INITIALIZATION_START */" & vbCrLf & initText & vbCrLf & "/* ALWAYS_RUN_INITIALIZATION_END */" & vbCrLf
+  text = text & "/* SCHEDULED_TARGET_START */" & vbCrLf & piece & vbCrLf & "/* SCHEDULED_TARGET_END */"
+  Set sourceCode = FindProgram(programName)
 End If
 
-On Error Resume Next
-code.UseApplicationOptions = True
-On Error GoTo 0
+Set code = project.CodeCollection.Add
+code.Text = text
+' Preserve the source program's server, as in the working Rich-terminal 0.3.2.
+code.Server = sourceCode.Server
+If UCase(mode) = "RUNFILE" Then
+  On Error Resume Next
+  code.UseApplicationOptions = True
+  On Error GoTo 0
+End If
 Dim saved
 Set saved = CreateObject("ADODB.Stream")
 saved.Type = 2
@@ -584,18 +703,25 @@ saved.Open
 saved.WriteText code.Text
 saved.SaveToFile codePath, 2
 saved.Close
-WScript.Echo "Submitted code saved: " & codePath
-WScript.Echo "Running: " & code.Name
+WScript.Echo "PYSAS_STAGE|prepared|Submitted code saved: " & codePath
+WScript.Echo "PYSAS_STAGE|executing|Running: " & programName & " (" & selection & ")"
+On Error Resume Next
+Err.Clear
 code.Run
-WScript.Echo "SAS execution returned. Saving logs and results..."
+If Err.Number <> 0 Then
+  WScript.Echo "ERROR: Enterprise Guide reported an execution failure: " & Err.Description
+  exitCode = 20
+End If
+On Error GoTo 0
+WScript.Echo "PYSAS_STAGE|exporting|SAS returned; saving logs and results"
 SaveOutputs code
-WScript.Echo "EG Results detected: " & code.Results.Count
-WScript.Echo "Closing project..."
+If UCase(mode) = "RUNFILE" Then WScript.Echo "EG Results detected: " & code.Results.Count
+WScript.Echo "PYSAS_STAGE|closing|Closing project"
 project.Close
-WScript.Echo "Closing Enterprise Guide..."
+WScript.Echo "PYSAS_STAGE|closing|Closing Enterprise Guide"
 app.Quit
-WScript.Echo "Automation completed."
-WScript.Quit 0
+WScript.Echo "PYSAS_STAGE|complete|Automation completed"
+WScript.Quit exitCode
 '''
 
 
@@ -675,8 +801,33 @@ def detect_sas_error(log_path: Path) -> bool:
     return bool(re.search(r"(?mi)^\s*ERROR(?:\s+\d+-\d+)?:", read_text(log_path)))
 
 
+def report_progress(run_dir: Path, phase: str, message: str) -> None:
+    """The CLI and UI observe the same execution milestones."""
+    with PRINT_LOCK:
+        print(f"[{run_dir.name}] {message}", flush=True)
+
+
+def forward_bridge_progress(path: Path, offset: int, pending: bytes, run_dir: Path):
+    try:
+        with path.open("rb") as source:
+            source.seek(offset)
+            chunk = source.read()
+            offset = source.tell()
+    except OSError:
+        return offset, pending  # Observation must not interrupt an executing SAS process.
+    lines = (pending + chunk).split(b"\n")
+    pending = lines.pop()
+    for raw in lines:
+        line = raw.decode(text_encoding(raw), errors="replace").strip()
+        if line.startswith("PYSAS_STAGE|") and line.count("|") >= 2:
+            _, phase, message = line.split("|", 2)
+            report_progress(run_dir, phase, message)
+    return offset, pending
+
+
 def execute_eg(mode: str, project: Path, sas_path: Path, program: str, row_start: int,
                row_end: int, run_dir: Path, tables: bool) -> tuple[int, str]:
+    project, sas_path, run_dir = project.resolve(), sas_path.resolve(), run_dir.resolve()
     logs = run_dir / "logs"; code_dir = run_dir / "code"; results = run_dir / "results"
     for folder in (logs, code_dir, results): folder.mkdir(parents=True, exist_ok=True)
     stem = safe_name(Path(program or sas_path.name).stem)
@@ -695,9 +846,12 @@ def execute_eg(mode: str, project: Path, sas_path: Path, program: str, row_start
         # A file cannot keep the parent waiting for EOF when EG leaves a child alive.
         with console_path.open("wb", buffering=0) as output:
             # Inherit the worker/terminal console and stdin, just as 0.3.2 did.
-            process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT)
+            process = subprocess.Popen(command, cwd=run_dir, stdout=output, stderr=subprocess.STDOUT,
+                                       creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0)
             cancelled = False
+            offset, pending_output = 0, b""
             while process.poll() is None:
+                offset, pending_output = forward_bridge_progress(console_path, offset, pending_output, run_dir)
                 if (run_dir / "_cancel.request").exists():
                     # Target only the automation process owned by this file, never all SAS/EG processes.
                     try:
@@ -717,6 +871,7 @@ def execute_eg(mode: str, project: Path, sas_path: Path, program: str, row_start
                     break
                 time.sleep(.2)
             rc = process.wait()
+            forward_bridge_progress(console_path, offset, pending_output, run_dir)
             if cancelled:
                 rc = 130
                 output.write(b"Stopped by user. The local automation process was terminated; verify remote SAS session state if needed.\n")
@@ -726,7 +881,7 @@ def execute_eg(mode: str, project: Path, sas_path: Path, program: str, row_start
     finally:
         try: vbs_path.unlink()
         except OSError: pass
-    console = read_text(console_path)
+    console = re.sub(r"(?m)^PYSAS_STAGE\|[^|]+\|", "", read_text(console_path))
     if tables:
         combine_workbooks(manifest, results / f"{stem}_tables.xlsx")
         try: manifest.unlink()
@@ -887,7 +1042,9 @@ def load_schedule(path: Path) -> list[dict[str, Any]]:
     try:
         ws = wb["Schedule"] if "Schedule" in wb.sheetnames else wb[wb.sheetnames[0]]
         rows = ws.iter_rows(values_only=True)
-        headers = [str(v or "").strip().casefold() for v in next(rows)]
+        headers = [str(v or "").strip().casefold() for v in next(rows, [])]
+        named_headers = [h for h in headers if h]
+        if len(set(named_headers)) != len(named_headers): raise ValueError("Scheduler contains duplicate column headers")
         missing = REQUIRED_COLUMNS.difference(headers)
         if missing: raise ValueError("Missing scheduler columns: " + ", ".join(sorted(missing)))
         col = {name: headers.index(name) for name in REQUIRED_COLUMNS}; tasks = []; ids: set[str] = set()
@@ -908,32 +1065,64 @@ def load_schedule(path: Path) -> list[dict[str, Any]]:
                 "max_parallel": clean_int(value("max_parallel"), "max_parallel", excel_row),
                 "always_run": truthy(value("always_run")), "excel_row": excel_row,
             })
+        if not tasks: raise ValueError("Scheduler contains no tasks")
         known = {t["task_id"].casefold() for t in tasks}
         for task in tasks:
+            if not task["program"]: raise ValueError(f"{task['task_id']}: program is required")
+            for field in ("row_start", "row_end"):
+                if task[field] == 0: task[field] = None
+                if task[field] is not None and task[field] < 1:
+                    raise ValueError(f"{task['task_id']}: {field} must be blank, 0, or >= 1")
+            if task["section"] and (task["row_start"] or task["row_end"]):
+                raise ValueError(f"{task['task_id']}: specify either section or row range, not both")
+            if task["max_parallel"] is not None and task["max_parallel"] < 1:
+                raise ValueError(f"{task['task_id']}: max_parallel must be blank or at least 1")
+            dependencies = [d.casefold() for d in task["depends_on"]]
+            if len(dependencies) != len(set(dependencies)):
+                raise ValueError(f"{task['task_id']}: depends_on contains duplicates")
             absent = [d for d in task["depends_on"] if d.casefold() not in known]
             if absent: raise ValueError(f"{task['task_id']}: unknown dependencies: {', '.join(absent)}")
             if task["row_start"] and task["row_end"] and task["row_start"] > task["row_end"]:
                 raise ValueError(f"{task['task_id']}: row_start must not exceed row_end")
+        dependencies = {t["task_id"].casefold(): {d.casefold() for d in t["depends_on"]} for t in tasks}
+        waiting = set(dependencies)
+        while waiting:
+            ready = {key for key in waiting if not dependencies[key] & waiting}
+            if not ready: raise ValueError("Circular dependency detected: " + ", ".join(sorted(waiting)))
+            waiting -= ready
         return tasks
     finally:
         wb.close()
 
 
+def describe_selection(task: dict[str, Any]) -> str:
+    if task.get("section"):
+        return f"section {task['section']}"
+    if task.get("row_start") or task.get("row_end"):
+        return f"rows {task.get('row_start') or 1} to {task.get('row_end') or 'end'}"
+    return "whole program"
+
+
 def scheduler_task(task: dict[str, Any], project: Path, task_root: Path) -> dict[str, Any]:
     task_dir = task_root / safe_name(task["task_id"]); task_dir.mkdir(parents=True, exist_ok=True)
+    report_progress(task_dir, "preparing", f"Preparing {task['program']} ({describe_selection(task)})")
     task_project = task_dir / project.name; shutil.copy2(project, task_project)
-    setup = ET.Element("setup")
+    stop_program = task.get("stop_program_on_error", False) or any(t.get("stop_program_on_error") for t in task.get("_always_run", []))
+    setup = ET.Element("setup", section=task.get("section", ""), stop_program="1" if stop_program else "0")
     for definition in task.get("_always_run", []):
         ET.SubElement(setup, "program", name=definition["program"],
-                      first=str(definition["row_start"] or 0), last=str(definition["row_end"] or 0))
+                      first=str(definition["row_start"] or 0), last=str(definition["row_end"] or 0),
+                      section=definition.get("section", ""))
     setup_path = task_dir / "shared_setup.xml"
     ET.ElementTree(setup).write(setup_path, encoding="utf-8", xml_declaration=True)
+    report_progress(task_dir, "preparing", f"Shared setup: {len(task.get('_always_run', []))} definition(s) will be prepended")
     began = time.time()
     rc, console = execute_eg("RUNPROJECT", task_project, setup_path, task["program"],
                              task["row_start"] or 0, task["row_end"] or 0, task_dir, False)
     logs = list((task_dir / "logs").glob("*.log")); sas_error = any(detect_sas_error(p) for p in logs)
-    status = "CANCELLED" if rc == 130 else ("FAILED" if rc else ("SAS_ERROR" if sas_error else "SUCCESS"))
-    if any(pattern in console.casefold() for pattern in CONNECTION_PATTERNS): status = "CONNECTION_LOST"
+    status = "CANCELLED" if rc == 130 else ("SAS_ERROR" if sas_error else ("FAILED" if rc else "SUCCESS"))
+    evidence = console + "\n" + "\n".join(read_text(p) for p in logs)
+    if any(pattern in evidence.casefold() for pattern in CONNECTION_PATTERNS): status = "CONNECTION_LOST"
     return {**task, "status": status, "elapsed": time.time() - began, "task_dir": task_dir,
             "message": console.strip().splitlines()[-1] if console.strip() else ""}
 
@@ -967,7 +1156,8 @@ def schedule_run(args: argparse.Namespace) -> int:
                for t in tasks if t["always_run"]]
     satisfied = {t["task_id"].casefold() for t in tasks if t["always_run"]}
     failed: set[str] = set(); stop = False
-    max_workers = max(1, args.workers or max((t["max_parallel"] or 1 for t in tasks), default=1))
+    max_workers = args.workers if args.workers is not None else max((t["max_parallel"] for t in tasks if t["max_parallel"] is not None), default=10)
+    if max_workers < 1: raise ValueError("Parallel runs must be at least 1")
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers); active: dict[Any, dict[str, Any]] = {}
     submitted_at: dict[str, float] = {}
     try:
@@ -986,6 +1176,7 @@ def schedule_run(args: argparse.Namespace) -> int:
                     results.append(result); failed.add(key); pending.pop(key); continue
                 if not deps.issubset(satisfied | failed) or len(active) >= max_workers: continue
                 submitted_at[key] = time.time()
+                print(f"Launching {task['task_id']}: {task['program']} ({describe_selection(task)})", flush=True)
                 future = executor.submit(scheduler_task, task, project, run_dir / "tasks")
                 active[future] = task; pending.pop(key)
             if not active:
@@ -1008,7 +1199,7 @@ def schedule_run(args: argparse.Namespace) -> int:
                 if result["status"] == "SUCCESS": satisfied.add(key)
                 else:
                     failed.add(key)
-                    if task["stop_process_on_error"]: stop = True
+                    if result["status"] == "CONNECTION_LOST" or task["stop_process_on_error"] or any(t.get("stop_process_on_error") for t in definitions): stop = True
                 print(f"{task['task_id']}: {result['status']}")
     finally: executor.shutdown(wait=True)
     order = {t["task_id"].casefold(): i for i, t in enumerate(tasks)}; results.sort(key=lambda r: order[r["task_id"].casefold()])
@@ -1086,7 +1277,7 @@ def parser() -> argparse.ArgumentParser:
     schedule = subs.add_parser("schedule", help="run an Excel dependency schedule")
     schedule.add_argument("action", nargs="?", choices=["run", "continue"], default="run")
     schedule.add_argument("run_dir", nargs="?"); schedule.add_argument("--workbook"); schedule.add_argument("--project")
-    schedule.add_argument("--workers", type=int); schedule.add_argument("--no-notify", action="store_true")
+    schedule.add_argument("--workers", "--max-parallel", type=int, default=None, help="Maximum parallel runs (workbook max_parallel, otherwise 10)"); schedule.add_argument("--no-notify", action="store_true")
     schedule.set_defaults(func=lambda a: schedule_continue(a) if a.action == "continue" else schedule_run(a))
     return p
 

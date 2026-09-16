@@ -1,10 +1,10 @@
-PySAS Workbench 0.4.0-preview.14
+PySAS Workbench 0.4.0-preview.15
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
 2. Place your EGP project, SAS programs, Schedule.xlsx, and _*.sas init files
    beside pysas.py in that folder. You can also copy the UI files into your
-   existing workspace, including the updated pysas.py 0.3.8. Keep your SAS,
+   existing workspace, including the updated pysas.py 0.3.9. Keep your SAS,
    EGP and Excel files. The updated engine remains a standalone single file.
 3. Double-click START_PYSAS.bat. PySAS opens in its own app-style window.
 4. The terminal closes after startup. Closing the app stops the watcher
@@ -50,7 +50,7 @@ What is included
 - Scheduler task statuses, individual task clocks, and total schedule duration.
 - Run history, searchable statuses, console, SAS logs/code and file downloads.
 - Excel previews (up to 100 data rows, 30 columns and 10 sheets per workbook).
-- Standalone pysas.py 0.3.8; existing CLI commands still work.
+- Standalone pysas.py 0.3.9; existing CLI commands still work.
 - Blue styling and saved code folders for repeated bundle operations.
 - Always-run shared setup is prepended before every scheduled program.
 - Watcher _*.sas files are shared initialization, never queued as jobs.
@@ -76,7 +76,7 @@ It does not click/type, override manual sleep or closing the lid, or bypass
 organization screen-lock policies. It resets when the server closes.
 
 Scheduler always_run rows define shared setup, prepended in workbook order
-before each normal program in the same submission. Row ranges apply. Explicit
+before each normal program in the same submission. Sections or row ranges apply. Explicit
 skip disables a definition. Continuation keeps shared setup enabled.
 
 Bundle folders
@@ -111,8 +111,8 @@ History lists up to 500 run folders and 200 commands. Run inspectors list up
 to 1,000 files. Very large workspaces may take longer to refresh.
 
 Schedule dependencies remain managed in Excel. There is no calendar-based
-scheduler, dependency graph editor, or force-cancel button in this preview.
-The original engine's documented scheduler limitations still apply.
+scheduler or dependency graph editor. Stop file is available for each active
+file; it ends the owned local automation process.
 
 The interface and adapter are tested automatically on Windows, macOS and
 Linux. Actual SAS execution needs testing on your Windows/Enterprise Guide
@@ -132,8 +132,8 @@ SAS execution is only available on Windows.
 
 Project: https://github.com/daniel-vital-de-alcantara/pysas-toolkit
 
-Preview.11 changes
------------------
+Earlier preview improvements
+--------------------------
 - Fixed garbled Windows-encoded code previews; new code exports use UTF-8.
 - Inspect refreshes running files/logs automatically and shows latest output.
 - The experimental live-log mode was removed after reports of hanging runs.
@@ -145,3 +145,16 @@ Preview.11 changes
   is not guaranteed; partial outputs may remain. Other files keep running,
   subject to the scheduler's existing dependencies and stop-on-error rules.
 - Download bundle appears on each successful bundle command.
+
+Preview.15 scheduler repair
+--------------------------
+- One scheduler, with 10 parallel tasks by default in the UI.
+- Uses the actual supplied Rich-terminal 0.3.2 as the execution reference.
+- Restores the original program's SAS server assignment and named-section
+  extraction; previous UI versions could submit the entire program instead.
+- Always-run sections/ranges are prepended in workbook order to each target.
+  They appear as Shared setup, never as separate running tasks.
+- Restores SAS stop-on-error options and the isolated task working directory.
+- Running rows show section/rows, setup and execution stage beside the clock.
+- Tests compare real Windows VBScript submissions with the supplied reference.
+  Actual Enterprise Guide/SAS server execution still needs your environment.

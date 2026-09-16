@@ -29,34 +29,27 @@ class ExecutionComparisonTests(unittest.TestCase):
         self.app.awake.close()
         self.temp.cleanup()
 
-    def test_original_engine_is_byte_identical_to_published_032(self):
-        self.assertEqual(hashlib.sha256((ROOT / 'pysas_0_3_2.py').read_bytes()).hexdigest(),
-                         '27a21be8e39a87823b481e00d8f1e0e4bfba7add9995c9a70ea4310fa668dd33')
-
-    def test_schedule_default_does_not_override_workbook_parallelism(self):
+    def test_schedule_defaults_to_ten_workers(self):
         from types import SimpleNamespace
         with patch.object(ui, 'os', SimpleNamespace(name='nt')):
             _, args = self.app.arguments({'action': 'schedule'})
-            self.assertNotIn('--workers', args)
-            _, args = self.app.arguments({'action': 'schedule', 'workers': '0'})
-            self.assertNotIn('--workers', args)
+            self.assertEqual(args[args.index('--workers') + 1], '10')
+            with self.assertRaises(ValueError):
+                self.app.arguments({'action': 'schedule', 'workers': '0'})
             _, args = self.app.arguments({'action': 'schedule', 'workers': '3'})
             self.assertEqual(args[args.index('--workers') + 1], '3')
 
-    def test_scheduler_defaults_to_original_engine_and_current_is_explicit(self):
+    def test_scheduler_has_one_engine_even_if_old_browser_sends_engine_selection(self):
         from unittest.mock import Mock
-        for engine, filename in [(None, 'pysas_0_3_2.py'), ('current', 'pysas.py')]:
-            data = {'action': 'schedule'}
-            if engine:
-                data['engine'] = engine
+        for old_value in [None, '0.3.2', 'current']:
+            data = {'action': 'schedule', 'engine': old_value}
             with patch.object(self.app, 'arguments', return_value=('schedule', ['schedule'])), patch.object(ui.subprocess, 'Popen', return_value=Mock()) as launch, patch.object(ui.threading, 'Thread'):
                 identifier = self.app.launch(data)['id']
-            self.assertEqual(Path(launch.call_args.args[0][3]).name, filename)
+            self.assertEqual(Path(launch.call_args.args[0][3]).name, 'pysas.py')
             self.assertIsNone(launch.call_args.kwargs['stdin'])
             item = self.app.commands[identifier]
-            self.assertEqual(item['engine'], engine or '0.3.2')
             self.app.event(item, dict(event='plan', tasks=[dict(task_id='setup', program='setup', always_run=True)]))
-            self.assertEqual(item['tasks']['setup']['status'], 'PENDING' if engine is None else 'ALWAYS_RUN_DEFINITION')
+            self.assertEqual(item['tasks']['setup']['status'], 'ALWAYS_RUN_DEFINITION')
         self.app.processes.clear()
 
     def test_ui_watcher_stop_uses_control_file_and_finishes_active_job(self):
@@ -100,27 +93,45 @@ def main(args):
             if process.poll() is None:
                 process.kill(); process.wait()
 
-    def test_original_and_current_schedule_have_explicitly_different_setup_semantics(self):
-        (self.root / 'book.xlsx').touch()
-        (self.root / 'project.egp').touch()
-        import argparse
-        for filename, expected in [('pysas_0_3_2.py', ['setup', 'job']), ('pysas.py', ['job'])]:
-            engine = load_engine(ROOT / filename)
-            engine.ROOT_DIR = self.root
-            tasks = [dict(task_id=name, program=name, always_run=name == 'setup', skip=False,
-                          depends_on=[] if name == 'setup' else ['setup'], max_parallel=1,
-                          row_start=1, row_end=3, stop_process_on_error=False) for name in ['setup', 'job']]
-            calls = []
-            def execute(task, *_):
-                calls.append(task['task_id'])
-                if filename == 'pysas.py':
-                    self.assertEqual([t['task_id'] for t in task['_always_run']], ['setup'])
-                else:
-                    self.assertNotIn('_always_run', task)
-                return dict(task, status='SUCCESS', elapsed=0)
-            with patch.object(engine, 'load_schedule', return_value=tasks), patch.object(engine, 'scheduler_task', execute), patch.object(engine, 'write_summary'), contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(engine.schedule_run(argparse.Namespace(workbook=str(self.root/'book.xlsx'), project=str(self.root/'project.egp'), workers=None, no_notify=True)), 0)
-            self.assertEqual(calls, expected)
+    def test_cli_can_use_workbook_workers_and_explicit_ui_default(self):
+        engine = load_engine(ROOT / 'pysas.py')
+        self.assertIsNone(engine.parser().parse_args(['schedule']).workers)
+        self.assertEqual(engine.parser().parse_args(['schedule', '--workers', '10']).workers, 10)
+
+    def test_progress_records_stage_on_running_task_without_creating_setup_jobs(self):
+        item = dict(id='progress', tasks={})
+        self.app.event(item, dict(event='start', key='job', name='Realised', time=100))
+        self.app.event(item, dict(event='progress', key='job', time=105, phase='preparing', progress='Appending shared setup: Libraries'))
+        self.app.event(item, dict(event='progress', key='job', time=107, phase='executing', progress='Running: Realised'))
+        self.assertEqual(list(item['tasks']), ['job'])
+        task = item['tasks']['job']
+        self.assertEqual(task['phase'], 'executing')
+        self.assertEqual(task['started'], 100)
+        self.assertEqual(task['phase_started'], 107)
+
+    def test_bridge_progress_waits_for_complete_lines_and_ignores_normal_output(self):
+        engine = load_engine(ROOT / 'pysas.py')
+        log = self.root / 'console.txt'
+        log.write_bytes(b'ordinary output\nPYSAS_STAGE|preparing|Appending lib\nPYSAS_STAGE|execut')
+        with patch.object(engine, 'report_progress') as report:
+            offset, pending = engine.forward_bridge_progress(log, 0, b'', self.root)
+            report.assert_called_once_with(self.root, 'preparing', 'Appending lib')
+            with log.open('ab') as output:
+                output.write(b'ing|Running Realised\r\n')
+            engine.forward_bridge_progress(log, offset, pending, self.root)
+            self.assertEqual(report.call_args.args, (self.root, 'executing', 'Running Realised'))
+
+    def test_protected_source_is_rejected_before_eg_launch(self):
+        engine = load_engine(ROOT / 'pysas.py')
+        engine.ROOT_DIR = self.root
+        source = self.root / 'protected.sas'
+        source.write_bytes(b'\x00MSMAMARPCRYPT' + bytes(100))
+        with patch.object(engine, 'execute_eg') as execute:
+            with self.assertRaisesRegex(ValueError, 'encrypted/protected'):
+                engine.run_job(source, self.root/'p.egp', False, None, False)
+        execute.assert_not_called()
+        with self.assertRaisesRegex(ValueError, 'encrypted/protected'):
+            self.app.preview('protected.sas')
 
     def test_worker_finishes_even_when_ui_reader_is_blocked(self):
         # Enough output and events to fill Windows/POSIX pipes; hold the UI lock.

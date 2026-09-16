@@ -7,6 +7,7 @@ import io
 import json
 import mimetypes
 import os
+import re
 import secrets
 import shutil
 import socketserver
@@ -23,7 +24,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 from pysas import text_encoding
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.14"
+VERSION = "0.4.0-preview.15"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 
@@ -60,6 +61,8 @@ def read_text(path, limit=400_000, tail=False):
             text = raw.decode("cp1252", errors="replace")
     else:
         text = raw.decode(encoding, errors="replace")
+    if path.name == "console.txt":
+        text = re.sub(r"(?m)^PYSAS_STAGE\|[^|]+\|", "", text)
     return note + text.lstrip("\ufeff") + suffix
 
 
@@ -265,11 +268,10 @@ class Workbench:
                         raise ValueError("Choose an output path outside application files.")
                 args.extend(["--" + field, str(path)])
         if action in {"watch", "schedule", "continue"}:
-            workers = int(data.get("workers") or (2 if action == "watch" else 0))
-            if not (1 <= workers <= 32 or (workers == 0 and action != "watch")):
-                raise ValueError("Workers must be between 1 and 32; schedules can use 0 for workbook settings.")
-            if workers:
-                args.extend(["--workers", str(workers)])
+            workers = int(data.get("workers") or (2 if action == "watch" else 10))
+            if not 1 <= workers <= 32:
+                raise ValueError("Workers must be between 1 and 32.")
+            args.extend(["--workers", str(workers)])
         if action == "watch":
             poll = float(data.get("poll") or 2)
             if not 0.5 <= poll <= 60:
@@ -285,10 +287,7 @@ class Workbench:
 
     def launch(self, data):
         action, args = self.arguments(data)
-        legacy = data.get("engine", "0.3.2" if action in {"schedule", "continue"} else "current") == "0.3.2"
-        if legacy and action not in {"schedule", "continue"}:
-            raise ValueError("The 0.3.2 comparison is available for scheduler runs only.")
-        script = APP_DIR / "pysas_0_3_2.py" if legacy else self.script
+        script = self.script
         with self.lock:
             if getattr(self, "closing", False):
                 raise ValueError("PySAS is closing and finishing its active jobs.")
@@ -299,7 +298,7 @@ class Workbench:
                     "name": data.get("program") or data.get("workbook") or data.get("run_dir") or action.replace("-", " "),
                     "code_root": str(self.code_root(data.get("code_root"))) if action.startswith("bundle-") else None,
                     "started": time.time(), "finished": None, "status": "RUNNING", "tasks": {}, "message": "",
-                    "engine": "0.3.2" if legacy else "current", "can_cancel_file": not legacy}
+                    "can_cancel_file": True}
             if action == "bundle-pack":
                 root = self.code_root(data.get("code_root"))
                 item["artifact"] = str(within(root, str(data.get("output") or "codebase.sasbundle.txt")))
@@ -323,10 +322,7 @@ class Workbench:
             event_path = self.storage / (identifier + ".events.jsonl")
             event_path.touch()
             env["PYSAS_UI_EVENTS"] = str(event_path)
-            if legacy:
-                env["PYSAS_UI_LEGACY_ROOT"] = str(self.root)
-            else:
-                env.pop("PYSAS_UI_LEGACY_ROOT", None)
+            env.pop("PYSAS_UI_LEGACY_ROOT", None)
             # Neither normal output nor events depend on the HTTP/history reader.
             with (self.storage / (identifier + ".txt")).open("wb", buffering=0) as output:
                 process = subprocess.Popen([python, "-u", str(APP_DIR / "ui_worker.py"), str(script), *args],
@@ -357,7 +353,7 @@ class Workbench:
                 key = task["task_id"]
                 if key not in item["tasks"]:
                     item["tasks"][key] = {"key": key, "name": task["program"], "kind": "task",
-                        "status": "SKIPPED_SUCCESS" if task.get("skip") else ("ALWAYS_RUN_DEFINITION" if task.get("always_run") and item.get("engine") != "0.3.2" else "PENDING"),
+                        "status": "SKIPPED_SUCCESS" if task.get("skip") else ("ALWAYS_RUN_DEFINITION" if task.get("always_run") else "PENDING"),
                         "depends_on": task.get("depends_on", []), "started": None, "elapsed": 0,
                         "section": task.get("section", ""), "row_start": task.get("row_start"), "row_end": task.get("row_end")}
         elif kind in {"start", "finish"}:
@@ -372,6 +368,12 @@ class Workbench:
             else:
                 task["finished"] = event["time"]
                 task["elapsed"] = event.get("elapsed", max(0, event["time"] - (task.get("started") or event["time"])))
+        elif kind == "progress":
+            task = item["tasks"].get(event["key"])
+            if task is not None:
+                task.update(phase=event["phase"], progress=event["progress"], phase_started=event["time"])
+                if event.get("path"):
+                    task["path"] = self.relative(event["path"])
         elif kind == "location":
             task = item["tasks"].get(event["key"])
             if task is not None:
@@ -466,7 +468,7 @@ class Workbench:
             if identifier not in self.processes or not task or task.get("status") not in {"RUNNING", "CANCELLING"}:
                 raise ValueError("This file is no longer running.")
             if item.get("can_cancel_file") is False:
-                raise ValueError("Original 0.3.2 has no per-file cancellation support.")
+                raise ValueError("This historical run does not support per-file cancellation.")
             if not task.get("path"):
                 raise ValueError("The file is still starting. Try again in a moment.")
             run_dir = within(self.root, task["path"])

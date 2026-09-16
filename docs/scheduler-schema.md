@@ -1,6 +1,6 @@
 # Scheduler schema
 
-PySAS 0.3.8 reads an Excel workbook and uses the worksheet named `Schedule` when it exists; otherwise it reads the first worksheet.
+PySAS 0.3.9 reads an Excel workbook and uses the worksheet named `Schedule` when it exists; otherwise it reads the first worksheet.
 
 The public repository includes [`examples/schedule_example.csv`](../examples/schedule_example.csv) as a sanitized example. To use it as a workbook template, open it in Excel, save it as `Schedule.xlsx`, and name the worksheet `Schedule`.
 
@@ -14,16 +14,16 @@ The public repository includes [`examples/schedule_example.csv`](../examples/sch
 | `skip` | Boolean-like value | Mark the task as skipped successfully. Useful for temporarily bypassing completed or intentionally omitted work. |
 | `row_start` | Integer or blank | Optional first source line to execute. |
 | `row_end` | Integer or blank | Optional last source line to execute. Row bounds are inclusive. |
-| `section` | Text | Free-form grouping or documentation field. |
+| `section` | Text | Execute only the named section between its start/end markers. Mutually exclusive with nonzero row bounds. |
 | `stop_process_on_error` | Boolean-like value | If enabled and the task fails, PySAS stops launching additional normal tasks. |
-| `stop_program_on_error` | Boolean-like value | Reserved scheduler control field in 0.3.8; retained in task metadata but not currently used to alter execution independently. |
+| `stop_program_on_error` | Boolean-like value | Enables SAS `errorabend errorcheck=strict` for the submission; enabled flags on shared setup also apply to every target. |
 | `max_parallel` | Positive integer | Concurrency value used when deriving the scheduler worker limit. |
 | `always_run` | Boolean-like value | Shared setup definition, prepended before every normal program in the same SAS submission. Not a separate job. Explicit skip disables it. |
 
 ## Shared setup and dependencies
 
 Enabled `always_run` rows supply EGP program text in workbook order, with their
-own inclusive row ranges. They initialize libraries, macros and options in every
+own named sections or inclusive row ranges. They initialize libraries, macros and options in every
 program's SAS session, including parallel tasks and continuation runs.
 The UI and summary label these rows `ALWAYS_RUN_DEFINITION` (Shared setup).
 Their dependencies do not schedule them; dependencies on definition IDs are
@@ -35,11 +35,12 @@ then quality checks and publication run in sequence. All include setup.
 
 ## Validation behaviour
 
-Before execution PySAS 0.3.8 checks key structural conditions including:
+Before execution PySAS 0.3.9 checks key structural conditions including:
 
 - duplicate `task_id` values;
 - dependencies that reference unknown tasks;
-- invalid row ranges.
+- invalid row ranges, negative bounds and section/range conflicts;
+- empty program names, duplicate columns and dependency cycles.
 
 Tasks whose dependency conditions cannot be resolved remain blocked rather than being launched incorrectly.
 
@@ -61,3 +62,28 @@ against that program. Setup definitions do not run as cleanup tasks.
 
 Continuation skips previous successful normal tasks and keeps enabled setup
 definitions available for every remaining program. Explicit skip disables setup.
+
+## Named sections and execution settings
+
+Section markers match the working Rich-terminal 0.3.2 syntax (case insensitive):
+
+```sas
+* (please do not delete) section_start: Realised;
+/* Only the code between these markers is selected. */
+* (please do not delete) section_end: Realised;
+```
+
+Exactly one start and one end are required, in that order. Marker lines are
+excluded. Blank/zero row bounds mean unbounded; nonzero bounds cannot accompany
+a section. Out-of-bounds rows fail before execution.
+
+Each target inherits its original EGP code item's SAS server. All enabled setup
+is prepended once, with initialization and target boundary comments, and
+`options iomlogautoflush;`. If any included setup or the target enables
+`stop_program_on_error`, `errorabend errorcheck=strict` is added. If an included
+setup enables `stop_process_on_error`, a failure of a submitted target stops
+new launches. Connection loss also stops new launches. Active tasks finish.
+
+UI Scheduler and Continue default to 10 parallel tasks. CLI `schedule` uses the
+largest workbook `max_parallel`, or 10 when all are blank. An explicit
+`--workers N` (also accepted as `--max-parallel N`) overrides it.

@@ -1,7 +1,7 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.14 is a separate browser UI for the standalone PySAS
-0.3.8 command-line engine. Download the Python ZIP from GitHub Releases, extract
+The Workbench 0.4.0-preview.15 is a separate browser UI for the standalone PySAS
+0.3.9 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
 
@@ -76,7 +76,7 @@ times but no trustworthy wall-clock total, so that total is left blank.
 Unknown/incomplete folders are never labeled successful just because they
 exist. After an interrupted server session, unresolved commands display Unknown.
 
-The existing engine captures Enterprise Guide output until completion. The
+Bridge progress is visible during execution; full SAS logs are saved after EG returns. The
 adapter adds live start/finish observations; it does not change that output
 behavior or add calendar scheduling. The engine's documented limitations apply.
 
@@ -165,6 +165,11 @@ is retained for new UI runs; older runs without it do not invent a range.
 
 ### Scheduler execution
 
-Scheduler and Continue offer an **Original 0.3.2 · terminal behavior** engine (the default). This uses the exact published engine, including its separate-task always_run behavior. Per-file stops and live console capture are unavailable in this mode. The optional modified engine keeps shared setup. A maximum parallel task value of 0 uses workbook settings, matching the terminal default. See [the execution investigation](execution-investigation.md) for the verified differences and limitations.
+Scheduler and Continue use the same standalone engine, with a default of **10**
+parallel tasks and no engine selector. Shared setup is prepended before each
+target in workbook order. Both setup and targets support actual named-section
+selection or inclusive row ranges. Task rows show scope, setup and execution
+stage as well as elapsed time. See [the execution investigation](execution-investigation.md)
+for the comparison against the user's supplied Rich-terminal source.
 
 SAS workers now have a real Windows console, kept hidden, with normal console input. cscript inherits that console as it does in a terminal launch. The watcher receives stop requests through a separate control file. The app still opens without persistent visible terminals; closing the startup terminal does not remove the worker console. The command console records the actual engine version and whether its console was attached.
