@@ -183,7 +183,7 @@ class SchedulerParityTests(unittest.TestCase):
     def test_ui_schedule_completes_with_real_bridge_and_three_setup_sections(self):
         import openpyxl
         # The real UI worker imports this single engine; only EG COM is replaced.
-        (self.root/'pysas.py').write_text((ROOT/'pysas.py').read_text() + '\nVBS = ' + repr(self.current), encoding='utf-8')
+        (self.root/'pysas.py').write_text((ROOT/'pysas.py').read_text(encoding='utf-8') + '\nVBS = ' + repr(self.current), encoding='utf-8')
         project = self.project()
         book = openpyxl.Workbook(); ws = book.active; ws.title = 'Schedule'
         headers = sorted(engine.REQUIRED_COLUMNS); ws.append(headers)

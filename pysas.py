@@ -1038,61 +1038,63 @@ def find_scheduler(value: str | None) -> Path:
 
 def load_schedule(path: Path) -> list[dict[str, Any]]:
     _, load_workbook, _, _, _ = require_openpyxl()
-    wb = load_workbook(path, data_only=True, read_only=True)
-    try:
-        ws = wb["Schedule"] if "Schedule" in wb.sheetnames else wb[wb.sheetnames[0]]
-        rows = ws.iter_rows(values_only=True)
-        headers = [str(v or "").strip().casefold() for v in next(rows, [])]
-        named_headers = [h for h in headers if h]
-        if len(set(named_headers)) != len(named_headers): raise ValueError("Scheduler contains duplicate column headers")
-        missing = REQUIRED_COLUMNS.difference(headers)
-        if missing: raise ValueError("Missing scheduler columns: " + ", ".join(sorted(missing)))
-        col = {name: headers.index(name) for name in REQUIRED_COLUMNS}; tasks = []; ids: set[str] = set()
-        for excel_row, values in enumerate(rows, 2):
-            if not any(v is not None and str(v).strip() for v in values): continue
-            def value(name: str): return values[col[name]] if col[name] < len(values) else None
-            task_id = str(value("task_id") or "").strip()
-            if not task_id: raise ValueError(f"Excel row {excel_row}: task_id is required")
-            if task_id.casefold() in ids: raise ValueError(f"Excel row {excel_row}: duplicate task_id: {task_id}")
-            ids.add(task_id.casefold())
-            dependencies = [x.strip() for x in str(value("depends_on") or "").split(",") if x.strip()]
-            tasks.append({
-                "task_id": task_id, "program": str(value("program") or "").strip(), "depends_on": dependencies,
-                "skip": truthy(value("skip")), "row_start": clean_int(value("row_start"), "row_start", excel_row),
-                "row_end": clean_int(value("row_end"), "row_end", excel_row), "section": str(value("section") or "").strip(),
-                "stop_process_on_error": truthy(value("stop_process_on_error")),
-                "stop_program_on_error": truthy(value("stop_program_on_error")),
-                "max_parallel": clean_int(value("max_parallel"), "max_parallel", excel_row),
-                "always_run": truthy(value("always_run")), "excel_row": excel_row,
-            })
-        if not tasks: raise ValueError("Scheduler contains no tasks")
-        known = {t["task_id"].casefold() for t in tasks}
-        for task in tasks:
-            if not task["program"]: raise ValueError(f"{task['task_id']}: program is required")
-            for field in ("row_start", "row_end"):
-                if task[field] == 0: task[field] = None
-                if task[field] is not None and task[field] < 1:
-                    raise ValueError(f"{task['task_id']}: {field} must be blank, 0, or >= 1")
-            if task["section"] and (task["row_start"] or task["row_end"]):
-                raise ValueError(f"{task['task_id']}: specify either section or row range, not both")
-            if task["max_parallel"] is not None and task["max_parallel"] < 1:
-                raise ValueError(f"{task['task_id']}: max_parallel must be blank or at least 1")
-            dependencies = [d.casefold() for d in task["depends_on"]]
-            if len(dependencies) != len(set(dependencies)):
-                raise ValueError(f"{task['task_id']}: depends_on contains duplicates")
-            absent = [d for d in task["depends_on"] if d.casefold() not in known]
-            if absent: raise ValueError(f"{task['task_id']}: unknown dependencies: {', '.join(absent)}")
-            if task["row_start"] and task["row_end"] and task["row_start"] > task["row_end"]:
-                raise ValueError(f"{task['task_id']}: row_start must not exceed row_end")
-        dependencies = {t["task_id"].casefold(): {d.casefold() for d in t["depends_on"]} for t in tasks}
-        waiting = set(dependencies)
-        while waiting:
-            ready = {key for key in waiting if not dependencies[key] & waiting}
-            if not ready: raise ValueError("Circular dependency detected: " + ", ".join(sorted(waiting)))
-            waiting -= ready
-        return tasks
-    finally:
-        wb.close()
+    # Own the input handle: openpyxl row iterators can outlive early validation.
+    with path.open("rb") as source:
+        wb = load_workbook(source, data_only=True, read_only=True)
+        try:
+            ws = wb["Schedule"] if "Schedule" in wb.sheetnames else wb[wb.sheetnames[0]]
+            rows = ws.iter_rows(values_only=True)
+            headers = [str(v or "").strip().casefold() for v in next(rows, [])]
+            named_headers = [h for h in headers if h]
+            if len(set(named_headers)) != len(named_headers): raise ValueError("Scheduler contains duplicate column headers")
+            missing = REQUIRED_COLUMNS.difference(headers)
+            if missing: raise ValueError("Missing scheduler columns: " + ", ".join(sorted(missing)))
+            col = {name: headers.index(name) for name in REQUIRED_COLUMNS}; tasks = []; ids: set[str] = set()
+            for excel_row, values in enumerate(rows, 2):
+                if not any(v is not None and str(v).strip() for v in values): continue
+                def value(name: str): return values[col[name]] if col[name] < len(values) else None
+                task_id = str(value("task_id") or "").strip()
+                if not task_id: raise ValueError(f"Excel row {excel_row}: task_id is required")
+                if task_id.casefold() in ids: raise ValueError(f"Excel row {excel_row}: duplicate task_id: {task_id}")
+                ids.add(task_id.casefold())
+                dependencies = [x.strip() for x in str(value("depends_on") or "").split(",") if x.strip()]
+                tasks.append({
+                    "task_id": task_id, "program": str(value("program") or "").strip(), "depends_on": dependencies,
+                    "skip": truthy(value("skip")), "row_start": clean_int(value("row_start"), "row_start", excel_row),
+                    "row_end": clean_int(value("row_end"), "row_end", excel_row), "section": str(value("section") or "").strip(),
+                    "stop_process_on_error": truthy(value("stop_process_on_error")),
+                    "stop_program_on_error": truthy(value("stop_program_on_error")),
+                    "max_parallel": clean_int(value("max_parallel"), "max_parallel", excel_row),
+                    "always_run": truthy(value("always_run")), "excel_row": excel_row,
+                })
+            if not tasks: raise ValueError("Scheduler contains no tasks")
+            known = {t["task_id"].casefold() for t in tasks}
+            for task in tasks:
+                if not task["program"]: raise ValueError(f"{task['task_id']}: program is required")
+                for field in ("row_start", "row_end"):
+                    if task[field] == 0: task[field] = None
+                    if task[field] is not None and task[field] < 1:
+                        raise ValueError(f"{task['task_id']}: {field} must be blank, 0, or >= 1")
+                if task["section"] and (task["row_start"] or task["row_end"]):
+                    raise ValueError(f"{task['task_id']}: specify either section or row range, not both")
+                if task["max_parallel"] is not None and task["max_parallel"] < 1:
+                    raise ValueError(f"{task['task_id']}: max_parallel must be blank or at least 1")
+                dependencies = [d.casefold() for d in task["depends_on"]]
+                if len(dependencies) != len(set(dependencies)):
+                    raise ValueError(f"{task['task_id']}: depends_on contains duplicates")
+                absent = [d for d in task["depends_on"] if d.casefold() not in known]
+                if absent: raise ValueError(f"{task['task_id']}: unknown dependencies: {', '.join(absent)}")
+                if task["row_start"] and task["row_end"] and task["row_start"] > task["row_end"]:
+                    raise ValueError(f"{task['task_id']}: row_start must not exceed row_end")
+            dependencies = {t["task_id"].casefold(): {d.casefold() for d in t["depends_on"]} for t in tasks}
+            waiting = set(dependencies)
+            while waiting:
+                ready = {key for key in waiting if not dependencies[key] & waiting}
+                if not ready: raise ValueError("Circular dependency detected: " + ", ".join(sorted(waiting)))
+                waiting -= ready
+            return tasks
+        finally:
+            wb.close()
 
 
 def describe_selection(task: dict[str, Any]) -> str:

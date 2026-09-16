@@ -31,7 +31,9 @@ satisfied because setup is included in each program. Leave definition dependenci
 
 In the example, `01_setup` is shared setup. The two extraction programs run in
 parallel, each with setup prepended. `04_build_features` waits for both extracts,
-then quality checks and publication run in sequence. All include setup.
+then quality checks and publication run in sequence. All include setup. The
+example leaves `section` blank to select whole programs; fill it only when the
+matching markers exist in that EGP program.
 
 ## Validation behaviour
 
