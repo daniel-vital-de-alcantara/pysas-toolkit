@@ -172,7 +172,7 @@ class EngineTests(unittest.TestCase):
         first = self.task('Libraries & macros', always=True)
         first.update(row_start=2, row_end=7)
         task['_always_run'] = [first, self.task('Options', always=True)]
-        def execute(mode, project, setup_path, program, first, last, run_dir, tables):
+        def execute(mode, project, setup_path, program, first, last, run_dir, tables, **kwargs):
             self.assertEqual(mode, 'RUNPROJECT')
             nodes = self.engine.ET.parse(setup_path).getroot().findall('program')
             self.assertEqual([dict(n.attrib) for n in nodes], [

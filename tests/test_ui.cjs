@@ -15,7 +15,7 @@ const context = {
   fetch:async()=>({ok:true,json:async()=>snapshot}),setInterval(){},AbortController,Date,console
 };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope};',context);
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl};',context);
 const h = context.helpers;
 test('elapsed formatting supports seconds, hours, and runs longer than a day',()=>{
   assert.equal(h.duration(65.9),'00:01:05');
@@ -82,4 +82,17 @@ test('running scheduler task shows setup and stage without extra running rows',(
   assert.match(html,/Shared setup: Libraries/);
   assert.match(html,/Appending shared setup: &lt;Libraries&gt;/);
   assert.equal((html.match(/<tr>/g)||[]).length,2); // one header and one task
+});
+
+
+test('whole-schedule stop is available for schedule and continuation and disabled while stopping',()=>{
+  for(const action of ['schedule','continue']) {
+    const command={id:'selected',action,status:'RUNNING',name:'Schedule',tasks:{}};
+    assert.match(h.commandCards([command]), /data-stop-schedule="selected"/);
+    assert.match(h.scheduleStopControl({...command,status:'STOPPING'}), /disabled/);
+    assert.match(h.commandCards([{...command,status:'STOPPING'}]), /Stopping schedule/);
+    assert.equal(h.scheduleStopControl({...command,status:'SUCCESS'}), '');
+  }
+  assert.equal(h.scheduleStopControl({id:'watcher',action:'watch',status:'RUNNING'}), '');
+  assert.equal(h.scheduleStopControl(undefined), '');
 });

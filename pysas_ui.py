@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 from pysas import text_encoding
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.15"
+VERSION = "0.4.0-preview.16"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 
@@ -294,7 +294,7 @@ class Workbench:
             if action == "watch" and any(c["action"] == "watch" and c["status"] in ACTIVE for c in self.commands.values()):
                 raise ValueError("The watcher is already running in this workbench.")
             identifier = uuid.uuid4().hex
-            item = {"id": identifier, "action": action, "args": args,
+            item = {"id": identifier, "action": action, "args": list(args),
                     "name": data.get("program") or data.get("workbook") or data.get("run_dir") or action.replace("-", " "),
                     "code_root": str(self.code_root(data.get("code_root"))) if action.startswith("bundle-") else None,
                     "started": time.time(), "finished": None, "status": "RUNNING", "tasks": {}, "message": "",
@@ -318,6 +318,8 @@ class Workbench:
             control_path = self.storage / (identifier + ".stop")
             env["PYSAS_UI_CONTROL_FILE"] = str(control_path)
             item["control_file"] = str(control_path)
+            if action in {"schedule", "continue"}:
+                args.extend(["--cancel-file", str(control_path)])
             python = str(Path(sys.executable).with_name("python.exe")) if os.name == "nt" else sys.executable
             event_path = self.storage / (identifier + ".events.jsonl")
             event_path.touch()
@@ -353,7 +355,8 @@ class Workbench:
                 key = task["task_id"]
                 if key not in item["tasks"]:
                     item["tasks"][key] = {"key": key, "name": task["program"], "kind": "task",
-                        "status": "SKIPPED_SUCCESS" if task.get("skip") else ("ALWAYS_RUN_DEFINITION" if task.get("always_run") else "PENDING"),
+                        "status": ("SKIPPED_SUCCESS" if task.get("skip") else "ALWAYS_RUN_DEFINITION") if task.get("always_run") else "PENDING",
+                        "message": "Will be skipped after dependencies complete" if task.get("skip") and not task.get("always_run") else "",
                         "depends_on": task.get("depends_on", []), "started": None, "elapsed": 0,
                         "section": task.get("section", ""), "row_start": task.get("row_start"), "row_end": task.get("row_end")}
         elif kind in {"start", "finish"}:
@@ -364,7 +367,8 @@ class Workbench:
             if event.get("path"):
                 task["path"] = self.relative(event["path"])
             if kind == "start":
-                task.update(status="RUNNING", started=event["time"])
+                task.update(status="CANCELLING" if item.get("status") == "STOPPING" and item.get("action") in {"schedule", "continue"} else "RUNNING", started=event["time"])
+                task["message"] = "Stopping schedule…" if task["status"] == "CANCELLING" else ""
             else:
                 task["finished"] = event["time"]
                 task["elapsed"] = event.get("elapsed", max(0, event["time"] - (task.get("started") or event["time"])))
@@ -435,6 +439,8 @@ class Workbench:
                 except OSError as exc:
                     item["message"] = "Bundle created, but download copy failed: " + str(exc)
             item["status"] = "STOPPED" if item["status"] == "STOPPING" and rc in {0, 130} else ("SUCCESS" if rc == 0 else "FAILED")
+            if item["status"] == "STOPPED" and item["action"] in {"schedule", "continue"}:
+                item["message"] = "Schedule stopped. No further tasks will launch."
             for task in item["tasks"].values():
                 if task.get("status") in {"RUNNING", "PENDING", "CANCELLING"}:
                     task["status"] = "UNKNOWN"
@@ -452,12 +458,18 @@ class Workbench:
         with self.lock:
             item = self.commands.get(identifier)
             process = self.processes.get(identifier)
-            if not item or not process or item["action"] != "watch":
-                raise ValueError("Only an active watcher can be stopped here.")
+            if not item or not process or item["action"] not in {"watch", "schedule", "continue"} or item["status"] not in ACTIVE:
+                raise ValueError("Only an active watcher or schedule can be stopped here.")
             if item["status"] == "STOPPING":
                 return {"ok": True}
             Path(item["control_file"]).write_text("stop", encoding="utf-8")
             item["status"] = "STOPPING"
+            if item["action"] in {"schedule", "continue"}:
+                item["message"] = "Stopping this schedule: no new tasks; cancelling its active files…"
+                for task in item["tasks"].values():
+                    if task.get("status") == "RUNNING":
+                        task["status"] = "CANCELLING"
+                        task["message"] = "Stopping schedule…"
             self.save(item)
             return {"ok": True}
 
@@ -544,7 +556,7 @@ class Workbench:
                 if summary.is_file():
                     tasks = list(csv.DictReader(io.StringIO(read_text(summary))))
                     row["tasks"] = len(tasks)
-                    row["status"] = "SUCCESS" if all(t["status"] in {"SUCCESS", "SKIPPED_SUCCESS", "SKIPPED_PREVIOUS", "ALWAYS_RUN_DEFINITION"} for t in tasks) else "FAILED"
+                    if row["status"] == "UNKNOWN": row["status"] = "SUCCESS" if all(t["status"] in {"SUCCESS", "SKIPPED_SUCCESS", "SKIPPED_PREVIOUS", "ALWAYS_RUN_DEFINITION"} for t in tasks) else "FAILED"
                 records.append(row)
         return sorted(records, key=lambda x: x["started"], reverse=True)[:500]
 

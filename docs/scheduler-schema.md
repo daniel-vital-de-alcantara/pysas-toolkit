@@ -1,6 +1,6 @@
 # Scheduler schema
 
-PySAS 0.3.9 reads an Excel workbook and uses the worksheet named `Schedule` when it exists; otherwise it reads the first worksheet.
+PySAS 0.3.10 reads an Excel workbook and uses the worksheet named `Schedule` when it exists; otherwise it reads the first worksheet.
 
 The public repository includes [`examples/schedule_example.csv`](../examples/schedule_example.csv) as a sanitized example. To use it as a workbook template, open it in Excel, save it as `Schedule.xlsx`, and name the worksheet `Schedule`.
 
@@ -11,7 +11,7 @@ The public repository includes [`examples/schedule_example.csv`](../examples/sch
 | `task_id` | Text / number-like ID | Unique identifier for the task. Dependency references use this value. |
 | `program` | Text | SAS program or Enterprise Guide code item to run. |
 | `depends_on` | Comma-separated IDs | Tasks that must complete before this task becomes eligible. Leave blank for root tasks. |
-| `skip` | Boolean-like value | Mark the task as skipped successfully. Useful for temporarily bypassing completed or intentionally omitted work. |
+| `skip` | Boolean-like value | Omit this program after its dependencies succeed. Downstream tasks still wait for all ancestors, including through other skipped rows. |
 | `row_start` | Integer or blank | Optional first source line to execute. |
 | `row_end` | Integer or blank | Optional last source line to execute. Row bounds are inclusive. |
 | `section` | Text | Execute only the named section between its start/end markers. Mutually exclusive with nonzero row bounds. |
@@ -37,7 +37,7 @@ matching markers exist in that EGP program.
 
 ## Validation behaviour
 
-Before execution PySAS 0.3.9 checks key structural conditions including:
+Before execution PySAS 0.3.10 checks key structural conditions including:
 
 - duplicate `task_id` values;
 - dependencies that reference unknown tasks;
@@ -89,3 +89,25 @@ new launches. Connection loss also stops new launches. Active tasks finish.
 UI Scheduler and Continue default to 10 parallel tasks. CLI `schedule` uses the
 largest workbook `max_parallel`, or 10 when all are blank. An explicit
 `--workers N` (also accepted as `--max-parallel N`) overrides it.
+
+## Skipped dependency chains
+
+A skipped normal task stays pending until its dependencies are satisfied. It
+then becomes `SKIPPED_SUCCESS` without starting Enterprise Guide. Consequently,
+`A → B (skipped) → C` runs A first and starts C only after A succeeds. The same
+rule applies through multiple skipped rows and branches with multiple parents,
+regardless of workbook row order. Failed/cancelled ancestors block the skipped
+row and its descendants. The rule also applies to rows skipped by continuation.
+
+## Stopping a whole schedule
+
+Use **Stop schedule** on its activity card or in its Console view. This stops
+new submissions and requests cancellation of every active file in that one
+schedule, including files still starting. Other schedules and watchers continue.
+The button also works for a continuation run. Completed results remain saved;
+remaining tasks are recorded as `CANCELLED`, and the run becomes `STOPPED` once
+its workers exit. Per-file Stop still affects only that file.
+
+Cancellation terminates each owned local automation process; as with per-file
+Stop, server-side SAS termination depends on the existing EG/server connection.
+Partial outputs may remain. A stopped run can be continued using its summary.

@@ -82,10 +82,10 @@ def observe(engine):
     engine.load_schedule = load
     original_execute = engine.execute_eg
     @functools.wraps(original_execute)
-    def execute(mode, project, sas_path, program, row_start, row_end, run_dir, tables):
+    def execute(mode, project, sas_path, program, row_start, row_end, run_dir, tables, **kwargs):
         if getattr(_context, "key", None):
             emit("location", key=_context.key, path=run_dir)
-        return original_execute(mode, project, sas_path, program, row_start, row_end, run_dir, tables)
+        return original_execute(mode, project, sas_path, program, row_start, row_end, run_dir, tables, **kwargs)
     engine.execute_eg = execute
     if hasattr(engine, "report_progress"):
         original_progress = engine.report_progress
@@ -95,6 +95,14 @@ def observe(engine):
             if getattr(_context, "key", None):
                 emit("progress", key=_context.key, phase=phase, progress=message, path=run_dir)
         engine.report_progress = progress
+    if hasattr(engine, "report_task_result"):
+        original_result = engine.report_task_result
+        @functools.wraps(original_result)
+        def task_result(result):
+            original_result(result)
+            emit("finish", key=result["task_id"], name=result["program"], kind="task",
+                 status=result["status"], elapsed=result["elapsed"], message=result["message"])
+        engine.report_task_result = task_result
     original_summary = engine.write_summary
     @functools.wraps(original_summary)
     def summary(path, results):

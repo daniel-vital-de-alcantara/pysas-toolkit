@@ -1,7 +1,7 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.15 is a separate browser UI for the standalone PySAS
-0.3.9 command-line engine. Download the Python ZIP from GitHub Releases, extract
+The Workbench 0.4.0-preview.16 is a separate browser UI for the standalone PySAS
+0.3.10 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
 
@@ -173,3 +173,15 @@ stage as well as elapsed time. See [the execution investigation](execution-inves
 for the comparison against the user's supplied Rich-terminal source.
 
 SAS workers now have a real Windows console, kept hidden, with normal console input. cscript inherits that console as it does in a terminal launch. The watcher receives stop requests through a separate control file. The app still opens without persistent visible terminals; closing the startup terminal does not remove the worker console. The command console records the actual engine version and whether its console was attached.
+
+## Preview.16: schedule stop and skipped prerequisites
+
+Each active Scheduler/Continue card and its Console view has **Stop schedule**.
+It prevents further launches, cancels that schedule's active local automation
+processes, then saves a stopped summary and final elapsed time. Other commands
+are independent. The control shows **Stopping schedule…** until completion.
+
+Skipped normal rows show Pending while their prerequisites are unfinished, with
+a note that they will be skipped. They become Skipped only after those parents
+succeed. Descendants therefore wait for the entire dependency chain. Failures
+propagate through skipped rows as Blocked. Setup definitions remain Shared setup.

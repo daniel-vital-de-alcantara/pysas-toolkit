@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PySAS 0.3.9 — portable SAS Enterprise Guide command-line utilities.
+"""PySAS 0.3.10 — portable SAS Enterprise Guide command-line utilities.
 
 Keep this file beside the EGP, scheduler workbook and any top-level _*.sas
 initialisation files it should use.  Python 3.9+ is recommended.  ``rich`` is
@@ -29,7 +29,7 @@ from typing import Any, Iterable
 from xml.etree import ElementTree as ET
 
 
-VERSION = "0.3.9"
+VERSION = "0.3.10"
 ROOT_DIR = Path(__file__).resolve().parent
 CODEBASE_FILE = "codebase.sasbundle.txt"
 BACKUP_FOLDER = "_codebase_backups"
@@ -826,10 +826,16 @@ def forward_bridge_progress(path: Path, offset: int, pending: bytes, run_dir: Pa
 
 
 def execute_eg(mode: str, project: Path, sas_path: Path, program: str, row_start: int,
-               row_end: int, run_dir: Path, tables: bool) -> tuple[int, str]:
+               row_end: int, run_dir: Path, tables: bool, cancel_file: str | Path | None = None) -> tuple[int, str]:
     project, sas_path, run_dir = project.resolve(), sas_path.resolve(), run_dir.resolve()
     logs = run_dir / "logs"; code_dir = run_dir / "code"; results = run_dir / "results"
     for folder in (logs, code_dir, results): folder.mkdir(parents=True, exist_ok=True)
+    def cancellation_requested():
+        return (run_dir / "_cancel.request").exists() or bool(cancel_file and Path(cancel_file).exists())
+    if cancellation_requested():
+        message = "Stopped by user before Enterprise Guide was started.\n"
+        (run_dir / "console.txt").write_text(message, encoding="utf-8")
+        return 130, message
     stem = safe_name(Path(program or sas_path.name).stem)
     log_path = logs / f"{stem}.log"; code_path = code_dir / f"{stem}.sas"
     manifest = run_dir / "_table_manifest.tsv" if tables else Path("")
@@ -852,7 +858,7 @@ def execute_eg(mode: str, project: Path, sas_path: Path, program: str, row_start
             offset, pending_output = 0, b""
             while process.poll() is None:
                 offset, pending_output = forward_bridge_progress(console_path, offset, pending_output, run_dir)
-                if (run_dir / "_cancel.request").exists():
+                if cancellation_requested():
                     # Target only the automation process owned by this file, never all SAS/EG processes.
                     try:
                         if os.name == "nt":
@@ -1120,13 +1126,20 @@ def scheduler_task(task: dict[str, Any], project: Path, task_root: Path) -> dict
     report_progress(task_dir, "preparing", f"Shared setup: {len(task.get('_always_run', []))} definition(s) will be prepended")
     began = time.time()
     rc, console = execute_eg("RUNPROJECT", task_project, setup_path, task["program"],
-                             task["row_start"] or 0, task["row_end"] or 0, task_dir, False)
+                             task["row_start"] or 0, task["row_end"] or 0, task_dir, False,
+                             cancel_file=task.get("_cancel_file"))
     logs = list((task_dir / "logs").glob("*.log")); sas_error = any(detect_sas_error(p) for p in logs)
     status = "CANCELLED" if rc == 130 else ("SAS_ERROR" if sas_error else ("FAILED" if rc else "SUCCESS"))
     evidence = console + "\n" + "\n".join(read_text(p) for p in logs)
     if any(pattern in evidence.casefold() for pattern in CONNECTION_PATTERNS): status = "CONNECTION_LOST"
     return {**task, "status": status, "elapsed": time.time() - began, "task_dir": task_dir,
             "message": console.strip().splitlines()[-1] if console.strip() else ""}
+
+
+def report_task_result(result: dict[str, Any]) -> None:
+    """Publish completion of a task that did not need an EG session."""
+    with PRINT_LOCK:
+        print(f"{result['task_id']}: {result['status']} · {result['message']}", flush=True)
 
 
 def write_summary(run_dir: Path, results: list[dict[str, Any]]) -> None:
@@ -1151,32 +1164,49 @@ def schedule_run(args: argparse.Namespace) -> int:
     suffix = 2
     while run_dir.exists(): run_dir = base_runs / f"{now_stamp()}__schedule_{suffix}"; suffix += 1
     run_dir.mkdir(); shutil.copy2(workbook, run_dir / workbook.name); shutil.copy2(project, run_dir / project.name)
+    began = time.time()
+    cancel_file = Path(args.cancel_file).resolve() if getattr(args, "cancel_file", None) else run_dir / "_cancel.request"
     definitions = [t for t in tasks if t["always_run"] and not t["skip"]]
-    pending = {t["task_id"].casefold(): {**t, "_always_run": definitions} for t in tasks if not t["always_run"]}
+    pending = {t["task_id"].casefold(): {**t, "_always_run": definitions, "_cancel_file": str(cancel_file)} for t in tasks if not t["always_run"]}
     results = [{**t, "status": "SKIPPED_SUCCESS" if t["skip"] else "ALWAYS_RUN_DEFINITION",
                 "elapsed": 0.0, "message": "Marked skip" if t["skip"] else "Prepended before each program in workbook order"}
                for t in tasks if t["always_run"]]
     satisfied = {t["task_id"].casefold() for t in tasks if t["always_run"]}
-    failed: set[str] = set(); stop = False
+    failed: set[str] = set(); stop = False; cancelled = False
     max_workers = args.workers if args.workers is not None else max((t["max_parallel"] for t in tasks if t["max_parallel"] is not None), default=10)
     if max_workers < 1: raise ValueError("Parallel runs must be at least 1")
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers); active: dict[Any, dict[str, Any]] = {}
     submitted_at: dict[str, float] = {}
+    def resolve_pending(key, task, status, message):
+        result = {**task, "status": status, "elapsed": 0.0, "message": message}
+        results.append(result)
+        (satisfied if status in FINAL_OK else failed).add(key)
+        pending.pop(key)
+        report_task_result(result)
     try:
         while pending or active:
+            cancelled = cancelled or cancel_file.exists()
             pending_before = len(pending)
             for key, task in list(pending.items()):
+                # Check the run-wide request before every launch, including skipped rows.
+                cancelled = cancelled or cancel_file.exists()
+                if cancelled:
+                    resolve_pending(key, task, "CANCELLED", "Schedule stopped before this task started")
+                    continue
                 deps = {d.casefold() for d in task["depends_on"]}
-                if task["skip"]:
-                    result = {**task, "status": "SKIPPED_SUCCESS", "elapsed": 0.0, "message": "Marked skip"}
-                    results.append(result); satisfied.add(key); pending.pop(key); continue
                 if stop:
-                    result = {**task, "status": "STOPPED_ON_ERROR", "elapsed": 0.0, "message": "Not started after stop-on-error"}
-                    results.append(result); failed.add(key); pending.pop(key); continue
+                    resolve_pending(key, task, "STOPPED_ON_ERROR", "Not started after stop-on-error")
+                    continue
                 if deps & failed:
-                    result = {**task, "status": "BLOCKED_DEPENDENCY", "elapsed": 0.0, "message": "Dependency failed"}
-                    results.append(result); failed.add(key); pending.pop(key); continue
-                if not deps.issubset(satisfied | failed) or len(active) >= max_workers: continue
+                    resolve_pending(key, task, "BLOCKED_DEPENDENCY", "Dependency failed")
+                    continue
+                # A skipped program is a dependency barrier, not an already completed job.
+                # Resolving each barrier after its parents preserves arbitrary skipped chains.
+                if not deps.issubset(satisfied): continue
+                if task["skip"]:
+                    resolve_pending(key, task, "SKIPPED_SUCCESS", "Skipped after dependencies completed")
+                    continue
+                if len(active) >= max_workers: continue
                 submitted_at[key] = time.time()
                 print(f"Launching {task['task_id']}: {task['program']} ({describe_selection(task)})", flush=True)
                 future = executor.submit(scheduler_task, task, project, run_dir / "tasks")
@@ -1205,12 +1235,16 @@ def schedule_run(args: argparse.Namespace) -> int:
                 print(f"{task['task_id']}: {result['status']}")
     finally: executor.shutdown(wait=True)
     order = {t["task_id"].casefold(): i for i, t in enumerate(tasks)}; results.sort(key=lambda r: order[r["task_id"].casefold()])
+    cancelled = cancelled or cancel_file.exists()
+    if cancelled:
+        (run_dir / "status.txt").write_text(
+            f"status=STOPPED\nstarted={datetime.fromtimestamp(began).isoformat()}\nelapsed_seconds={time.time() - began:.1f}\n", encoding="utf-8")
     write_summary(run_dir, results)
     errors = [r for r in results if r["status"] not in FINAL_OK]
-    if not args.no_notify: notify("PySAS schedule", "Completed successfully" if not errors else f"Completed with {len(errors)} error(s)",
-                                  error=bool(errors), flash=bool(errors))
-    print(f"Schedule complete: {run_dir}")
-    return 1 if errors else 0
+    if not args.no_notify: notify("PySAS schedule", "Stopped by user" if cancelled else ("Completed successfully" if not errors else f"Completed with {len(errors)} error(s)"),
+                                  error=bool(errors) and not cancelled, flash=bool(errors) and not cancelled)
+    print(f"Schedule {'stopped' if cancelled else 'complete'}: {run_dir}")
+    return 130 if cancelled else (1 if errors else 0)
 
 
 def schedule_continue(args: argparse.Namespace) -> int:
@@ -1230,7 +1264,8 @@ def schedule_continue(args: argparse.Namespace) -> int:
     for task in tasks:
         if not task["always_run"] and prior.get(task["task_id"].casefold()) in FINAL_OK: ws.cell(task["excel_row"], skip_col).value = 1
     temp = ROOT_DIR / f"{workbook.stem}__next.xlsx"; wb.save(temp); wb.close()
-    forwarded = argparse.Namespace(workbook=str(temp), project=str(project), workers=args.workers, no_notify=args.no_notify)
+    forwarded = argparse.Namespace(workbook=str(temp), project=str(project), workers=args.workers, no_notify=args.no_notify,
+                                   cancel_file=getattr(args, "cancel_file", None))
     try: return schedule_run(forwarded)
     finally:
         try: temp.unlink()
@@ -1280,6 +1315,7 @@ def parser() -> argparse.ArgumentParser:
     schedule.add_argument("action", nargs="?", choices=["run", "continue"], default="run")
     schedule.add_argument("run_dir", nargs="?"); schedule.add_argument("--workbook"); schedule.add_argument("--project")
     schedule.add_argument("--workers", "--max-parallel", type=int, default=None, help="Maximum parallel runs (workbook max_parallel, otherwise 10)"); schedule.add_argument("--no-notify", action="store_true")
+    schedule.add_argument("--cancel-file", help=argparse.SUPPRESS)
     schedule.set_defaults(func=lambda a: schedule_continue(a) if a.action == "continue" else schedule_run(a))
     return p
 

@@ -33,6 +33,7 @@ Class CodeStub
     Set output = filesystem.CreateTextFile(folder & "\executed.txt", False)
     output.Write Server
     output.Close
+    If config.documentElement.getAttribute("delay") <> "" Then WScript.Sleep CLng(config.documentElement.getAttribute("delay"))
     If config.documentElement.getAttribute("run_error") = "1" Then Err.Raise 7004, , "Simulated execution failure"
   End Sub
 End Class

@@ -210,5 +210,59 @@ class SchedulerParityTests(unittest.TestCase):
                 if process.poll() is None: process.kill(); process.wait()
             app.awake.close()
 
+    def test_ui_stops_whole_schedule_and_preserves_other_schedule(self):
+        import openpyxl
+        (self.root/'pysas.py').write_text((ROOT/'pysas.py').read_text(encoding='utf-8') + '\nVBS = ' + repr(self.current), encoding='utf-8')
+        project = self.project(delay='30000')
+        def workbook(name, identifiers):
+            book = openpyxl.Workbook(); ws = book.active; ws.title = 'Schedule'
+            headers = sorted(engine.REQUIRED_COLUMNS); ws.append(headers)
+            for identifier in identifiers:
+                row = definition(task_id=identifier, section='Realised')
+                ws.append([','.join(row[h]) if h=='depends_on' else row[h] for h in headers])
+            path = self.root/name; book.save(path); book.close()
+            return path
+        main_book = workbook('Schedule.xlsx', ['A', 'B', 'C', 'D'])
+        other_book = workbook('Other.xlsx', ['Other'])
+        other_project = self.root/'other.egp'
+        document = ET.parse(project); document.getroot().set('delay', '1500'); document.write(other_project, encoding='utf-8')
+        app = ui.Workbench(self.root)
+        def await_started(identifier, keys):
+            deadline = time.monotonic()+15
+            while time.monotonic()<deadline:
+                tasks = app.commands[identifier]['tasks']
+                if all(key in tasks and tasks[key].get('path') and (self.root/tasks[key]['path']/'executed.txt').exists() for key in keys): return
+                time.sleep(.05)
+            self.fail('Automation did not reach Run: ' + (self.root/'.pysas-ui'/(identifier+'.txt')).read_text(encoding='utf-8'))
+        try:
+            chosen = app.launch(dict(action='schedule', workbook=str(main_book), project=str(project), workers=2))['id']
+            chosen_process = app.processes[chosen]
+            await_started(chosen, ['A', 'B'])
+            other = app.launch(dict(action='schedule', workbook=str(other_book), project=str(other_project)))['id']
+            other_process = app.processes[other]
+            await_started(other, ['Other'])
+            app.stop(chosen)
+            self.assertEqual(app.commands[chosen]['status'], 'STOPPING')
+            self.assertFalse(Path(app.commands[other]['control_file']).exists())
+            self.assertEqual(chosen_process.wait(timeout=20), 130)
+            self.assertEqual(other_process.wait(timeout=15), 0)
+            deadline = time.monotonic()+10
+            while app.processes and time.monotonic()<deadline: time.sleep(.05)
+            item = app.commands[chosen]
+            self.assertEqual(item['status'], 'STOPPED')
+            self.assertEqual({t['status'] for t in item['tasks'].values()}, {'CANCELLED'})
+            self.assertFalse(any((self.root/item['path']/'tasks'/key/'executed.txt').exists() for key in ['C', 'D']))
+            self.assertEqual(app.commands[other]['status'], 'SUCCESS')
+            self.assertEqual(app.commands[other]['tasks']['Other']['status'], 'SUCCESS')
+            self.assertEqual(next(row for row in app.history() if row['path']==item['path'])['status'], 'STOPPED')
+        finally:
+            for identifier in list(app.processes):
+                try: app.stop(identifier)
+                except ValueError: pass
+            for process in list(app.processes.values()):
+                try: process.wait(timeout=20)
+                except subprocess.TimeoutExpired: process.kill(); process.wait()
+            app.awake.close()
+
 
 if __name__ == '__main__': unittest.main()

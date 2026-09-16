@@ -1,12 +1,12 @@
 # PySAS Toolkit
 
-**PySAS 0.3.9** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
+**PySAS 0.3.10** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
 
 It grew out of day-to-day model-development and consulting work where large SAS processes were difficult to inspect, rerun, parallelise, move between environments and review consistently. The current implementation brings those workflows together in one portable `pysas.py` utility.
 
 ## What it does
 
-| Component | Status in 0.3.9 | Purpose |
+| Component | Status in 0.3.10 | Purpose |
 | --- | --- | --- |
 | SAS bundle utility | Implemented | Pack, verify and safely unpack SAS source trees with SHA-256 integrity metadata and backups |
 | EGP tools | Implemented | Inspect EGP archives, extract embedded SAS programs and conservatively repack them into an EGP template |
@@ -31,11 +31,11 @@ Enterprise Guide setup; `openpyxl` is required for Excel features. No Node.js or
 frontend installation is needed.
 
 See [START_HERE.txt](START_HERE.txt) and the [workbench guide](docs/ui-workbench.md).
-The command-line toolkit is version 0.3.9; the UI preview is 0.4.0-preview.15.
+The command-line toolkit is version 0.3.10; the UI preview is 0.4.0-preview.16.
 
 ## Requirements
 
-PySAS 0.3.9 is designed for controlled Windows environments with:
+PySAS 0.3.10 is designed for controlled Windows environments with:
 
 - Python 3.9+ recommended;
 - SAS Enterprise Guide installed and configured for the target SAS environment;
@@ -200,11 +200,12 @@ The scheduler supports:
 
 - explicit task dependencies;
 - parallel execution of eligible tasks;
-- skip flags;
+- skip flags that preserve all prerequisite dependencies;
 - named section selection or inclusive source row ranges;
 - process-level stop-on-error behaviour;
 - always-run shared setup prepended before every scheduled program in the same SAS session;
-- schedule continuation from a previous run.
+- schedule continuation from a previous run;
+- Stop schedule in the UI to cancel its active files and prevent new launches.
 
 Run a schedule with:
 
@@ -219,6 +220,11 @@ py pysas.py schedule --workbook Schedule.xlsx --project project.egp --workers 4
 ```
 
 The scheduler validates IDs, dependencies, cycles, section/range conflicts and row bounds before execution. Named sections are extracted using the same markers as the Rich-terminal 0.3.2. Each submission inherits the target program’s SAS server. UI parallelism defaults to 10; the CLI honors workbook settings or defaults to 10. Shared setup error flags apply to the complete submission. Each task receives an isolated copy of the EGP project and its own output directory.
+
+A skipped task waits for its parents before releasing downstream tasks. For
+`A → B (skipped) → C`, C waits for A to succeed. This applies through any number
+of skipped rows. **Stop schedule**, available on the schedule card and in its
+Console view, stops that entire run; other schedules and watchers continue.
 
 Every schedule run produces a timestamped `runs/...__schedule` folder with summaries in:
 
@@ -286,7 +292,7 @@ Important limitations include:
 
 ## Version
 
-Current published implementation: **0.3.9**.
+Current published implementation: **0.3.10**.
 
 ```powershell
 py pysas.py version
