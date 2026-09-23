@@ -3,3 +3,5 @@
 #upload-progress{width:100%;height:10px;margin-top:20px;accent-color:var(--accent)}#upload-status{white-space:pre-line;overflow-wrap:anywhere}
 
 .expected-time{display:block;color:var(--muted);font-size:12px;font-weight:400;margin-top:5px;max-width:300px}#download-folder{display:inline-block;margin:0 24px 16px}#download-folder[hidden]{display:none}#restore-form{margin-top:24px}
+
+.parameters-panel{border:1px solid var(--line);border-radius:8px;padding:16px;margin:20px 0}.parameters-panel textarea{box-sizing:border-box;width:100%;resize:vertical;min-height:160px;padding:12px;border:1px solid var(--line);border-radius:5px;font:13px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;background:var(--panel,#fff);color:var(--ink,#172f40)}.parameters-panel textarea:focus{outline:2px solid var(--accent,#0075b7);outline-offset:2px}.parameter-import{cursor:pointer;margin:0!important;display:inline-flex!important;align-items:center}.parameter-import:focus-within{outline:2px solid var(--accent,#0075b7)}

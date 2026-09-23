@@ -13,6 +13,7 @@ import statistics
 import tempfile
 import uuid
 import zipfile
+import ui_parameters
 
 LIMIT = 10 * 1024**3
 FORMAT = 'pysas-workbench-backup-1'
@@ -53,9 +54,10 @@ def export_backup(app):
     try:
         with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
             manifest = dict(format=FORMAT, workspace=str(app.root), folders=app.folders(),
-                            bundle_settings=app.bundle_settings(), commands=list(app.commands.values()))
+                            bundle_settings=app.bundle_settings(), commands=list(app.commands.values()),
+                            parameters_settings=ui_parameters.settings(app.storage))
             z.writestr('manifest.json', json.dumps(manifest, ensure_ascii=False))
-            for base in (app.root / 'runs', app.root / 'runner/runs', app.storage / 'artifacts'):
+            for base in (app.root / 'runs', app.root / 'runner/runs', app.storage / 'artifacts', app.storage / 'parameters'):
                 for p in safe_files(base):
                     z.write(p, p.relative_to(app.root).as_posix())
             for identifier in app.commands:
@@ -104,6 +106,11 @@ def restore_backup(app, stream, length):
                     raise ValueError('Backup contains an unsafe or duplicate path.')
                 seen.add(name.casefold())
                 allowed = name == 'manifest.json' or (len(parts) >= 3 and parts[0] == 'runs') or (len(parts) >= 4 and parts[:2] == ('runner', 'runs')) or (len(parts) >= 4 and parts[:2] == ('.pysas-ui', 'artifacts')) or (len(parts) == 2 and parts[0] == '.pysas-ui' and re.fullmatch(r'[a-zA-Z0-9_-]+\.txt', parts[1]))
+                if len(parts) == 3 and parts[:2] == ('.pysas-ui', 'parameters'):
+                    ui_parameters.parameter_name(parts[2])
+                    if i.file_size > ui_parameters.PARAMETER_LIMIT:
+                        raise ValueError('Saved parameter file exceeds 128 KB.')
+                    allowed = True
                 if not allowed or i.is_dir():
                     raise ValueError('Backup contains an unsupported entry.')
             if 'manifest.json' not in seen or z.getinfo('manifest.json').file_size > 32 * 1024**2:
@@ -144,6 +151,30 @@ def restore_backup(app, stream, length):
                         destination = destination.with_name(folder.name + '_import_' + uuid.uuid4().hex[:8])
                     mappings[prefix + '/' + folder.name] = destination.relative_to(app.root).as_posix()
                     moves.append((folder, destination))
+        parameter_settings = manifest.get('parameters_settings')
+        parameter_moves = {}
+        if parameter_settings is not None:
+            if not isinstance(parameter_settings, dict) or not isinstance(parameter_settings.get('enabled'), bool):
+                raise ValueError('Backup parameter settings are invalid.')
+            if parameter_settings.get('last'):
+                ui_parameters.parameter_name(parameter_settings['last'])
+        parameter_folder = unpacked / '.pysas-ui/parameters'
+        if parameter_folder.exists():
+            for file in parameter_folder.iterdir():
+                ui_parameters.parameter_text(file.read_text(encoding='utf-8'))
+                destination = ui_parameters.parameter_path(app.storage, file.name)
+                if destination.exists():
+                    if destination.read_bytes() == file.read_bytes():
+                        parameter_moves[file.name] = file.name
+                        continue
+                    # Keep both versions of a saved list rather than replace either.
+                    destination = destination.with_name(file.stem[:65] + '_import_' + uuid.uuid4().hex[:8] + '.sas')
+                parameter_moves[file.name] = destination.name
+                moves.append((file, destination))
+        if parameter_settings is not None:
+            parameter_settings = dict(parameter_settings)
+            parameter_settings['last'] = parameter_moves.get(parameter_settings.get('last'), '')
+            if not parameter_settings['last']: parameter_settings['enabled'] = False
         ids = {}
         for item in manifest['commands']:
             if not isinstance(item, dict) or not isinstance(item.get('tasks', {}), dict) or not isinstance(item.get('args', []), list) or not isinstance(item.get('started'), (int, float)):
@@ -154,6 +185,7 @@ def restore_backup(app, stream, length):
             if not isinstance(identifier, str) or not re.fullmatch(r'[a-zA-Z0-9_-]+', identifier) or identifier in ids:
                 raise ValueError('Backup has invalid command records.')
             ids[identifier] = uuid.uuid4().hex
+            mappings['.pysas-ui/artifacts/' + identifier] = '.pysas-ui/artifacts/' + ids[identifier]
         def remap(value):
             if isinstance(value, list): return [remap(v) for v in value]
             if isinstance(value, dict): return {k: remap(v) for k, v in value.items()}
@@ -190,6 +222,8 @@ def restore_backup(app, stream, length):
                 missing.append(key)
                 folders[key] = defaults[key]
         settings = {'folders.json': folders, 'bundle-paths.json': remap(manifest.get('bundle_settings', {}))}
+        if parameter_settings is not None:
+            settings['parameters-settings.json'] = parameter_settings
         previous = {name: (app.storage / name).read_bytes() if (app.storage / name).exists() else None for name in settings}
         completed = []
         try:
@@ -216,7 +250,7 @@ def restore_backup(app, stream, length):
             raise
         app.commands.update({c['id']: c for c in commands})
         app.invalidate_lists()
-        return {'runs': len(mappings), 'commands': len(commands), 'missing_folders': missing}
+        return {'runs': sum(not p.startswith('.pysas-ui/') for p in mappings), 'commands': len(commands), 'parameters': len(parameter_moves), 'missing_folders': missing}
 
 
 def signature(task):

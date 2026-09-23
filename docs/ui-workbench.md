@@ -1,7 +1,7 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.18 is a separate browser UI for the standalone PySAS
-0.3.11 command-line engine. Download the Python ZIP from GitHub Releases, extract
+The Workbench 0.4.0-preview.19 is a separate browser UI for the standalone PySAS
+0.3.12 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
 
@@ -33,6 +33,44 @@ will replace source files. It does not expose the CLI's `--no-backup` option.
 Run history opens logs (with error/warning highlighting), submitted code,
 console files, result files, and Excel previews. Previewed HTML is shown as
 source text. Download generated reports to open them in their normal app.
+
+## Parameters and reusable case lists
+
+**Runner & watcher → Run a SAS program → Use parameters for this run** opens
+an editor for normal SAS code, such as `%let` macro definitions. Initialization
+files run first, followed by this code and then the selected program, in one
+SAS submission. Use the variable names and value format your program expects.
+
+Type/paste code or **Load a .sas file** (UTF-8, UTF-16 and Windows-1252 supported,
+up to 128 KB). Imported files are copied into the editor; originals are not
+changed. **Save parameter file** saves a reusable list, e.g. `_cases.sas`, under
+`.pysas-ui/parameters`, outside shared initialization. Choose a saved file and
+click **Load saved file** to replace the editor contents. The last saved
+selection is remembered across restarts. Saves detect conflicting edits from
+another window and require reloading or choosing a new name.
+
+**Run program always uses the current editor contents, including unsaved
+edits.** Turning off the checkbox omits the optional parameters entirely.
+Each launch freezes a separate copy; later edits cannot change another job's
+parameters. Inspect the completed run's `parameters/<filename>.sas` to see
+what was submitted. Copies remain after successes, failures and cancellations.
+Named lists, the last selection and run snapshots are included in backups;
+restore preserves conflicting lists under new names.
+
+If an old `_cases.sas` is already in a shared initialization folder, importing
+it into the editor leaves that original in place. Move the old original out
+of shared initialization when you want it to apply only to selected runs.
+
+The standalone equivalent is:
+
+```bat
+py pysas.py runner run extract.sas --parameters cases.sas
+```
+
+When the CLI parameters file itself is a shared `_*.sas` file, that selected
+file is excluded from the shared initialization pass and inserted once after
+all other initialization. It must be separate from the main program and an
+explicit `--lib` override. Watcher and scheduler execution are unchanged.
 
 ## Saved-data backups and run ZIPs
 
@@ -88,6 +126,7 @@ unknown. Server contention, changed inputs and errors can change actual times.
 
 ## Architecture
 
+- `ui_parameters.py`: named SAS parameter files, validation and edit conflict checks.
 - `ui_data.py`: portable backup/restore, full run ZIPs and historical estimates.
 - `pysas_ui.py`: standard-library HTTP server bound to loopback, constrained
   command arguments, subprocess management, history/files and previews.

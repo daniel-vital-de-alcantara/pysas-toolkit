@@ -24,9 +24,10 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 from pysas import text_encoding
 from ui_data import archive_folder, export_backup, restore_backup, duration_history, estimate_task, estimate_schedule, index_samples
+import ui_parameters
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.18"
+VERSION = "0.4.0-preview.19"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 
@@ -175,6 +176,21 @@ class Workbench:
             finally:
                 self.uploading = False
 
+    def parameter_settings(self):
+        return {**ui_parameters.settings(self.storage), "files": ui_parameters.list_parameters(self.storage)}
+
+    def save_parameters(self, data):
+        with self.lock:
+            result = ui_parameters.save_parameters(self.storage, data)
+            atomic_json(self.storage / "parameters-settings.json", {"last": result["name"], "enabled": True})
+            return result
+
+    def select_parameters(self, name):
+        with self.lock:
+            result = ui_parameters.load_parameters(self.storage, name)
+            atomic_json(self.storage / "parameters-settings.json", {"last": result["name"], "enabled": True})
+            return result
+
     def bundle_settings(self):
         settings = read_json(self.storage / "bundle-paths.json", {})
         return {"paths": settings.get("paths", []), "last": settings.get("last", "")}
@@ -301,6 +317,23 @@ class Workbench:
                     "code_root": str(self.code_root(data.get("code_root"))) if action.startswith("bundle-") else None,
                     "started": time.time(), "finished": None, "status": "RUNNING", "tasks": {}, "message": "",
                     "can_cancel_file": True}
+            if action == "run":
+                enabled = data.get("use_parameters") is True
+                if enabled:
+                    name = ui_parameters.parameter_name(data.get("parameters_name") or "_cases.sas")
+                    text = ui_parameters.parameter_text(data.get("parameters_text"))
+                    if not text.strip():
+                        raise ValueError("Enter parameter code, or turn off parameters for this run.")
+                    snapshot = self.storage / "artifacts" / identifier / name
+                    snapshot.parent.mkdir(parents=True, exist_ok=True)
+                    snapshot.write_text(text, encoding="utf-8")
+                    args.extend(["--parameters", str(snapshot)])
+                    item["args"] = list(args)
+                    item["parameters"] = {"name": name, "path": self.relative(snapshot)}
+                    last = next((saved for saved in ui_parameters.list_parameters(self.storage) if saved.casefold() == name.casefold()), "")
+                else:
+                    last = ui_parameters.settings(self.storage)["last"]
+                atomic_json(self.storage / "parameters-settings.json", {"last": last, "enabled": enabled and bool(last)})
             if action == "bundle-pack":
                 root = self.code_root(data.get("code_root"))
                 item["artifact"] = str(within(root, str(data.get("output") or "codebase.sasbundle.txt")))
@@ -597,6 +630,7 @@ class Workbench:
                 "folders": self.folders(), "awake": self.awake.status(),
                 "initialization_files": self.cached_listing("init", lambda: sorted({str(p.resolve()) for folder in {Path(self.folders()["init"]), inbox} for p in folder.glob("_*") if p.is_file() and p.suffix.casefold() == ".sas"}), 5),
                 "queued_estimates": {name: estimate_task({"name": name}, samples) for name in queued},
+                "parameters_settings": self.parameter_settings(),
                 "queued": queued, "bundle_settings": self.bundle_settings(), "now": time.time()}
 
     def timing_samples(self):
@@ -720,6 +754,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_archive(archive_folder(self.server.app.root, value("path")))
             elif url.path == "/api/backup":
                 self.send_archive(self.server.app.backup())
+            elif url.path == "/api/parameters":
+                self.respond(ui_parameters.load_parameters(self.server.app.storage, value("name")))
             elif url.path == "/api/details":
                 self.respond(self.server.app.details(value("path")))
             elif url.path == "/api/preview":
@@ -782,6 +818,16 @@ class Handler(BaseHTTPRequestHandler):
             self.server.app.invalidate_lists()
             length = int(self.headers.get("Content-Length", "0"))
             url = urlsplit(self.path)
+            if url.path == "/api/parameters/import":
+                if not 0 <= length <= ui_parameters.PARAMETER_LIMIT:
+                    raise ValueError("Parameter files must be 128 KB or smaller.")
+                name = ui_parameters.parameter_name(parse_qs(url.query).get("name", [""])[0])
+                self.connection.settimeout(60)
+                raw = self.rfile.read(length)
+                if len(raw) != length:
+                    raise ValueError("Parameter file upload was interrupted.")
+                self.respond({"name": name, "text": ui_parameters.parameter_text(raw.decode(text_encoding(raw)))})
+                return
             if url.path == "/api/restore":
                 self.connection.settimeout(60)
                 self.respond(self.server.app.backup(self.rfile, length))
@@ -792,7 +838,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.connection.settimeout(60)
                 self.respond(self.server.app.upload(parse_qs(url.query), self.rfile, length))
                 return
-            if length < 0 or length > 64_000:
+            if length < 0 or length > 1024 * 1024:
                 raise ValueError("Request is too large.")
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
@@ -800,6 +846,10 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/quit":
                 self.respond({"message": "Closing PySAS after active jobs finish."})
                 threading.Thread(target=self.server.request_close, daemon=True).start()
+            elif self.path == "/api/parameters/select":
+                self.respond(self.server.app.select_parameters(data.get("name")))
+            elif self.path == "/api/parameters/save":
+                self.respond(self.server.app.save_parameters(data))
             elif self.path == "/api/estimate":
                 self.respond(self.server.app.estimate(data))
             elif self.path == "/api/launch":

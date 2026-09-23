@@ -15,7 +15,7 @@ const context = {
   fetch:async()=>({ok:true,json:async()=>snapshot}),setInterval(){},AbortController,Date,console
 };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText};',context);
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
 const h = context.helpers;
 test('elapsed formatting supports seconds, hours, and runs longer than a day',()=>{
   assert.equal(h.duration(65.9),'00:01:05');
@@ -113,4 +113,19 @@ test('timing labels distinguish partial history, unknown and skipped work',()=>{
   assert.match(h.expectedText({seconds:120,samples:4}), /~2m.*4 previous/);
   assert.match(h.expectedText({seconds:0}), /skipped/);
   assert.match(h.taskTable([{name:'file',status:'RUNNING',estimate:{seconds:18000,samples:2}}]), /Expected: ~5h/);
+});
+
+
+test('parameters load into the editor as text and can be disabled without discarding edits',()=>{
+  h.putParameters({name:'_cases.sas',text:'%let case_ids=1,2;\n/* <code> */',revision:'abc'},true);
+  assert.equal(node('parameter-text').value,'%let case_ids=1,2;\n/* <code> */');
+  assert.equal(node('parameter-name').value,'_cases.sas');
+  assert.equal(node('parameter-files').value,'_cases.sas');
+  assert.equal(node('use-parameters').checked,true);
+  node('use-parameters').checked=false;h.parameterFields();
+  assert.equal(node('parameters-editor').hidden,true);
+  assert.match(node('parameter-text').value,/case_ids/);
+  h.putParameters({name:'import.sas',text:'%let name=café;'},false);
+  assert.equal(node('parameter-files').value,'');
+  assert.match(node('parameters-status').textContent,/original file is unchanged/);
 });

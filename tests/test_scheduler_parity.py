@@ -180,6 +180,31 @@ class SchedulerParityTests(unittest.TestCase):
         self.assertEqual(rc, 0, console)
         self.assertEqual((self.root/'executed.txt').read_text(), 'TARGET_SERVER')
 
+    def test_ui_file_parameters_execute_after_init_and_survive_success(self):
+        (self.root/'pysas.py').write_text((ROOT/'pysas.py').read_text(encoding='utf-8') + '\nVBS = ' + repr(self.current), encoding='utf-8')
+        self.programs = [('Seed', 'seed;', 'TARGET_SERVER')]
+        project = self.project()
+        (self.root/'_libs.sas').write_text('library_token;', encoding='utf-8')
+        source = self.root/'extract.sas'; source.write_text('job_token;', encoding='utf-8')
+        app = ui.Workbench(self.root)
+        try:
+            identifier = app.launch(dict(action='run', program=str(source), template=str(project), use_parameters=True, parameters_name='_cases.sas', parameters_text='%let city=café;'))['id']
+            self.assertEqual(app.processes[identifier].wait(timeout=30), 0)
+            deadline = time.monotonic()+10
+            while identifier in app.processes and time.monotonic()<deadline: time.sleep(.05)
+            item = app.commands[identifier]
+            self.assertEqual(item['status'], 'SUCCESS', (app.storage/(identifier+'.txt')).read_text(encoding='utf-8'))
+            task = next(iter(item['tasks'].values()))
+            folder = self.root/task['path']
+            code = engine.read_text(next((folder/'code').glob('*.sas')))
+            self.assertLess(code.index('library_token;'), code.index('%let city=café;'))
+            self.assertLess(code.index('%let city=café;'), code.index('job_token;'))
+            self.assertEqual((folder/'parameters/_cases.sas').read_text(encoding='utf-8'), '%let city=café;')
+        finally:
+            for process in list(app.processes.values()):
+                if process.poll() is None: process.kill(); process.wait()
+            app.awake.close()
+
     def test_ui_schedule_completes_with_real_bridge_and_three_setup_sections(self):
         import openpyxl
         # The real UI worker imports this single engine; only EG COM is replaced.

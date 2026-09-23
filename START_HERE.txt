@@ -1,10 +1,10 @@
-PySAS Workbench 0.4.0-preview.18
+PySAS Workbench 0.4.0-preview.19
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
 2. Place your EGP project, SAS programs, Schedule.xlsx, and _*.sas init files
    beside pysas.py in that folder. You can also copy the UI files into your
-   existing workspace, including the updated pysas.py 0.3.11. Keep your SAS,
+   existing workspace, including the updated pysas.py 0.3.12. Keep your SAS,
    EGP and Excel files. The updated engine remains a standalone single file.
 3. Double-click START_PYSAS.bat. PySAS opens in its own app-style window.
 4. The terminal closes after startup. Closing the app stops the watcher
@@ -50,7 +50,7 @@ What is included
 - Scheduler task statuses, individual task clocks, and total schedule duration.
 - Run history, searchable statuses, console, SAS logs/code and file downloads.
 - Excel previews (up to 100 data rows, 30 columns and 10 sheets per workbook).
-- Standalone pysas.py 0.3.11; existing CLI commands still work.
+- Standalone pysas.py 0.3.12; existing CLI commands still work.
 - Blue styling and saved code folders for repeated bundle operations.
 - Always-run shared setup is prepended before every scheduled program.
 - Watcher _*.sas files are shared initialization, never queued as jobs.
@@ -190,4 +190,27 @@ Estimate time reads successful past runs by program and section/row selection.
 Schedule totals account for dependencies and parallelism. A + means some work
 has unknown timing. Estimates are approximate total durations, not a guarantee.
 Inspect any saved run to download its entire folder as a ZIP.
-The standalone SAS execution engine remains unchanged at 0.3.11.
+Existing execution behavior is retained; the single-file engine is now 0.3.12.
+
+Parameters editor (preview.19)
+------------------------------
+In Runner & watcher > Run a SAS program, enable "Use parameters for this run".
+Type or paste your SAS macro definitions, or load a .sas file into the editor.
+The order is shared initialization, then the editor contents, then your program.
+Run program uses the current editor text, including unsaved edits.
+
+Save parameter file stores a reusable named list separately from shared _*.sas
+initialization. Load saved file replaces the editor with that saved list. The
+last saved selection is remembered. Turning off parameters runs the usual way.
+Saved lists are included in saved-data backups; existing lists are preserved
+under separate names when a restored list has conflicting content.
+
+Each launched job receives its own snapshot. Later edits cannot change that
+job. Inspect its run folder to see parameters/<filename>.sas, even after a
+successful run. Loading a local .sas file copies it into the editor and does
+not edit, move or remove the original file. If migrating an old _cases.sas
+from shared initialization, move the original out of that folder yourself so
+it no longer applies globally to other jobs.
+
+CLI equivalent: py pysas.py runner run extract.sas --parameters cases.sas
+The watcher and scheduler keep their existing setup and execution behavior.

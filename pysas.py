@@ -29,7 +29,7 @@ from typing import Any, Iterable
 from xml.etree import ElementTree as ET
 
 
-VERSION = "0.3.11"
+VERSION = "0.3.12"
 ROOT_DIR = Path(__file__).resolve().parent
 CODEBASE_FILE = "codebase.sasbundle.txt"
 BACKUP_FOLDER = "_codebase_backups"
@@ -754,14 +754,21 @@ def notify(title: str, message: str, error: bool = False, flash: bool = False) -
 
 
 def compose_sas(source: Path, result_dir: Path, explicit_lib: Path | None = None,
-                init_dir: Path | None = None, extra_init_dir: Path | None = None) -> str:
+                init_dir: Path | None = None, extra_init_dir: Path | None = None,
+                parameters: Path | None = None, parameter_source: Path | None = None) -> str:
     parts = ["options iomlogautoflush;\n",
              f"%let PYSAS_RESULT_DIR=\"{result_dir.as_posix()}\";\n",
              "/* PYSAS_LIB_START */\n"]
+    selected_parameters = (parameter_source or parameters).resolve() if parameters is not None else None
     for path in init_files(explicit_lib, init_dir, extra_init_dir):
+        if selected_parameters is not None and path.resolve() == selected_parameters:
+            continue  # A selected _*.sas parameter file belongs after initialization.
         parts += [f"/* PYSAS_INIT_FILE_START: {path.name} */\n", normalized(read_text(path)),
                   f"/* PYSAS_INIT_FILE_END: {path.name} */\n"]
-    parts += ["/* PYSAS_LIB_END */\n", f"/* PYSAS_JOB_START: {source.name} */\n",
+    parts += ["/* PYSAS_LIB_END */\n"]
+    if parameters is not None:
+        parts += ["/* PYSAS_PARAMETERS_START */\n", normalized(read_text(parameters)), "/* PYSAS_PARAMETERS_END */\n"]
+    parts += [f"/* PYSAS_JOB_START: {source.name} */\n",
               normalized(read_text(source)), f"/* PYSAS_JOB_END: {source.name} */\n"]
     return "".join(parts)
 
@@ -897,7 +904,13 @@ def execute_eg(mode: str, project: Path, sas_path: Path, program: str, row_start
 
 def run_job(source: Path, project: Path, tables: bool, explicit_lib: Path | None,
             notify_user: bool, runs_dir: Path | None = None, display_name: str | None = None,
-            init_dir: Path | None = None, extra_init_dir: Path | None = None) -> dict[str, Any]:
+            init_dir: Path | None = None, extra_init_dir: Path | None = None,
+            parameters: Path | None = None) -> dict[str, Any]:
+    if parameters is not None:
+        parameters = Path(parameters).resolve()
+        if parameters == source.resolve() or explicit_lib is not None and parameters == explicit_lib.resolve():
+            raise ValueError("Choose a parameters file separate from the program and initialization override.")
+        parameter_code = read_text(parameters)  # Read once; the archived copy is what will execute.
     logical_stem = re.sub(r"(?i)\.tables$", "", source.stem)
     base = safe_name(logical_stem)
     root = runs_dir or (ROOT_DIR / "runner" / "runs")
@@ -909,8 +922,16 @@ def run_job(source: Path, project: Path, tables: bool, explicit_lib: Path | None
     source_dir = run_dir / "source"
     source_dir.mkdir()
     shutil.copy2(source, source_dir / source.name)
+    parameter_copy = None
+    if parameters is not None:
+        parameter_folder = run_dir / "parameters"
+        parameter_folder.mkdir()
+        parameter_copy = parameter_folder / parameters.name
+        parameter_copy.write_text(parameter_code, encoding="utf-8")
+        print(f"Parameters: {parameters.name} (after shared initialization, before {source.name})", flush=True)
     submitted = run_dir / "_submitted.sas"
-    submitted.write_text(compose_sas(source, run_dir / "results", explicit_lib, init_dir, extra_init_dir), encoding="utf-8")
+    submitted.write_text(compose_sas(source, run_dir / "results", explicit_lib, init_dir, extra_init_dir,
+                                    parameters=parameter_copy, parameter_source=parameters), encoding="utf-8")
     started = time.time()
     rc, console = execute_eg("RUNFILE", project, submitted, display_name or source.name, 0, 0, run_dir, tables)
     log_files = list((run_dir / "logs").glob("*.log"))
@@ -942,7 +963,8 @@ def runner_run(args: argparse.Namespace) -> int:
     lib = Path(args.lib).resolve() if args.lib else None
     init_dir = Path(args.init_dir).expanduser().resolve() if getattr(args, "init_dir", None) else None
     if init_dir is not None and not init_dir.is_dir(): raise FileNotFoundError(init_dir)
-    result = run_job(source, project, tables, lib, not args.no_notify, init_dir=init_dir)
+    parameters = Path(args.parameters).expanduser().resolve() if getattr(args, "parameters", None) else None
+    result = run_job(source, project, tables, lib, not args.no_notify, init_dir=init_dir, parameters=parameters)
     label = {"SUCCESS": "DONE", "SAS_ERROR": "DONE WITH SAS ERRORS", "FAILED": "RUNNER FAILED"}[result["status"]]
     print(f"{label}: {source.name}")
     print(result["run_dir"])
@@ -1367,7 +1389,7 @@ def parser() -> argparse.ArgumentParser:
     runner = subs.add_parser("runner", help="run or watch standalone SAS jobs; _*.sas init files run first")
     rsub = runner.add_subparsers(dest="runner_command", required=True)
     rr = rsub.add_parser("run"); rr.add_argument("program"); rr.add_argument("--template"); rr.add_argument("--lib")
-    rr.add_argument("--tables", action="store_true"); rr.add_argument("--no-notify", action="store_true"); rr.set_defaults(func=runner_run)
+    rr.add_argument("--parameters", help="SAS parameters to prepend after initialization and before the program"); rr.add_argument("--tables", action="store_true"); rr.add_argument("--no-notify", action="store_true"); rr.set_defaults(func=runner_run)
     rw = rsub.add_parser("watch"); rw.add_argument("--template"); rw.add_argument("--lib"); rw.add_argument("--tables", action="store_true")
     rw.add_argument("--workers", type=int, default=2); rw.add_argument("--poll", type=float, default=2.0)
     rw.add_argument("--no-notify", action="store_true"); rw.set_defaults(func=runner_watch)

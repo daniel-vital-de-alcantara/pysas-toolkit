@@ -322,6 +322,22 @@ class HttpTests(unittest.TestCase):
         connection.close()
         return result
 
+    def test_parameter_editor_http_save_load_and_legacy_import(self):
+        headers = {'X-PySAS-Token': self.server.token}
+        status, body, _ = self.request('POST', '/api/parameters/save', json.dumps({'name':'_cases.sas','text':'%let ids=1;'}), headers)
+        self.assertEqual(status, 200, body)
+        status, body, _ = self.request('GET', '/api/parameters?name=_cases.sas')
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)['text'], '%let ids=1;')
+        status, body, _ = self.request('POST', '/api/parameters/import?name=cases.sas', '%let city=café;'.encode('cp1252'), headers)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(json.loads(body)['text'], '%let city=café;')
+        self.assertFalse((self.server.app.storage/'parameters/cases.sas').exists())
+        status, _, _ = self.request('POST', '/api/parameters/save', '{}')
+        self.assertEqual(status, 403)
+        status, _, _ = self.request('POST', '/api/parameters/import?name=bad.py', b'code', headers)
+        self.assertEqual(status, 400)
+
     def test_saved_data_http_roundtrip_and_folder_zip(self):
         folder = self.root / 'runs' / 'old'
         folder.mkdir(parents=True)

@@ -46,17 +46,17 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'preview') }}
           fail_on_unmatched_files: true
           body: |
-            Portable saved data, historical runtime estimates and complete run-folder downloads.
+            Edit SAS parameters and reusable case lists directly in Run a file.
 
-            Download PySAS-Workbench-Python-0.4.0-preview.18.zip, extract fully and open START_PYSAS.bat.
+            Download PySAS-Workbench-Python-0.4.0-preview.19.zip, extract fully and open START_PYSAS.bat.
 
-            - Files & folders: export and restore saved-data ZIPs with all saved run outputs, command history, consoles, bundle downloads and settings. Existing runs are preserved; workspace paths are remapped. External input folders and queued jobs are not included.
-            - Estimate time for individual files and schedules, using successful history for the same program and section/rows. Expected total durations also appear beside running tasks and queued watcher files.
-            - Schedule estimates respect dependencies, skipped-row barriers and parallel limits. Incomplete history is shown as a lower bound such as ~5h+; no history is shown as unknown.
-            - Inspect: download the entire run folder as a ZIP, including files beyond the preview limit.
-            - The working standalone SAS execution engine remains unchanged at 0.3.11.
+            - Enable Use parameters for this run, then type/paste SAS macro definitions or load a local .sas file into the editor.
+            - Shared initialization runs first, then the current editor contents, then your program, in the same SAS submission. Unsaved edits are used by Run program.
+            - Save named parameter files and load them again. Saved lists live separately from shared initialization and are included in saved-data backups.
+            - Each launch freezes its own parameter snapshot. Inspect parameters/<filename>.sas in the run folder, including after success. Later edits cannot change an already launched job.
+            - Standalone pysas.py 0.3.12 supports runner run --parameters cases.sas. Existing watcher, scheduler, dependency, shared-setup and Windows automation behavior is retained.
 
-            First upgrade: close PySAS and copy the new app files into your existing workspace, keeping .pysas-ui, runs and runner/runs, then export a backup. Backups require an idle workbench and are limited to 10 GB expanded / 200,000 files. Restoring replaces folder settings and saved bundle paths, preserves existing runs, and starts no jobs. Estimates match names and selections; changed code, data and server load can affect actual duration.
+            Close PySAS before upgrading. Keep your .pysas-ui, runs and runner/runs data or use the saved-data backup/restore controls. Imported .sas files are copied into the editor, not moved; if an old case list is already in shared initialization, move the original out of that folder when you want it to apply only to selected runs.
 
           files: |
             release/PySAS-Workbench-Python-*.zip

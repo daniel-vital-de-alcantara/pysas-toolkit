@@ -1,7 +1,7 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-let state = null, page = "overview", selectedCommand = null, selectedPath = null, selectedPreview = null, inspectingFolder = false, pendingUnpack = null, polling = false, clockAnchor = null, renderSignature = null, bundlePathsInitialized = false, foldersInitialized = false;
+let state = null, page = "overview", selectedCommand = null, selectedPath = null, selectedPreview = null, inspectingFolder = false, pendingUnpack = null, polling = false, clockAnchor = null, renderSignature = null, bundlePathsInitialized = false, foldersInitialized = false, parametersInitialized = false, parameterLoading = false, parameterRevision = null, parameterLoadedName = "";
 const monotonic = () => globalThis.performance?.now?.() ?? Date.now();
 function syncClock(now) { if(clockAnchor===null)clockAnchor={server:now,local:monotonic()}; }
 function clockSeconds() { return clockAnchor ? clockAnchor.server+(monotonic()-clockAnchor.local)/1000 : Date.now()/1000; }
@@ -19,7 +19,7 @@ async function api(path, data) { const response = await fetch(path, data === und
 function error(message) { $("error").textContent = message; $("error").hidden = !message; }
 function navigate(next) { page = titles[next] ? next : "overview"; document.querySelectorAll(".page").forEach(p=>p.hidden = p.id !== `page-${page}`); document.querySelectorAll(".nav").forEach(n=>{n.classList.toggle("active", n.dataset.page===page); if(n.dataset.page===page)n.setAttribute("aria-current","page");else n.removeAttribute("aria-current");}); $("page-title").textContent=titles[page]; history.replaceState(null,"",`#${page}`); render(); }
 function fillSelect(select, values) { const signature = JSON.stringify(values); if (select.dataset.signature === signature) return; const current=select.value, first=select.options[0]?.textContent || "Select a file"; select.innerHTML=`<option value="">${esc(first)}</option>` + values.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join(""); if(values.includes(current))select.value=current; select.dataset.signature=signature; }
-function files() { if(state.folders && !foldersInitialized){for(const key of ["inputs","init","inbox"])$("folder-"+key).value=state.folders[key];foldersInitialized=true;}const settings=state.bundle_settings || {paths:[],last:""};fillSelect($("saved-bundle-path"),settings.paths);if(!bundlePathsInitialized){$("bundle-code-root").value=settings.last;$("saved-bundle-path").value=settings.paths.includes(settings.last)?settings.last:"";bundlePathsInitialized=true;} document.querySelectorAll("select[data-files]").forEach(s=>fillSelect(s,state.files.filter(f=>f.toLowerCase().endsWith("."+s.dataset.files)))); fillSelect($("previous-schedule"),state.history.filter(h=>h.kind==="schedule"&&h.status!=="UNKNOWN").map(h=>h.path)); }
+function files() { fillSelect($("parameter-files"),state.parameters_settings?.files || []); if(state.folders && !foldersInitialized){for(const key of ["inputs","init","inbox"])$("folder-"+key).value=state.folders[key];foldersInitialized=true;}const settings=state.bundle_settings || {paths:[],last:""};fillSelect($("saved-bundle-path"),settings.paths);if(!bundlePathsInitialized){$("bundle-code-root").value=settings.last;$("saved-bundle-path").value=settings.paths.includes(settings.last)?settings.last:"";bundlePathsInitialized=true;} document.querySelectorAll("select[data-files]").forEach(s=>fillSelect(s,state.files.filter(f=>f.toLowerCase().endsWith("."+s.dataset.files)))); fillSelect($("previous-schedule"),state.history.filter(h=>h.kind==="schedule"&&h.status!=="UNKNOWN").map(h=>h.path)); }
 function taskScope(task) {
   const parts=[];
   if(task.section)parts.push(`Section ${task.section}`);
@@ -50,16 +50,16 @@ function scheduleStopControl(command) {
 function scheduleLogLink(command) {
   return command?.schedule_log?`<a class="subtle" href="/api/download?path=${encodeURIComponent(command.schedule_log)}" download>Download schedule log ↓</a>`:"";
 }
-function commandCards(commands, showTasks=false) { if(!commands.length)return empty("No command activity", "Commands launched from this workbench will appear here.");return commands.map(c=>`<article class="command-card"><div class="command-head"><div><strong>${esc(c.name)}</strong>${badge(c.status,c.status==="STOPPING"&&["schedule","continue"].includes(c.action)?"Stopping schedule":null)}${timer(c)}${c.estimate?estimateMarkup(c.estimate):""}<small>${date(c.started)}${c.code_root?` · ${esc(c.code_root)}`:""}</small></div>${scheduleStopControl(c)}<button class="subtle" data-command="${esc(c.id)}">Console →</button></div>${c.message?`<p class="empty-small">${esc(c.message)}</p>`:""}${c.download?`<a class="subtle" href="/api/download?command=${encodeURIComponent(c.id)}" download>Download bundle ↓</a>`:""}${scheduleLogLink(c)}${showTasks&&Object.keys(c.tasks).length?taskTable(Object.values(c.tasks),c.id):""}</article>`).join(""); }
+function commandCards(commands, showTasks=false) { if(!commands.length)return empty("No command activity", "Commands launched from this workbench will appear here.");return commands.map(c=>`<article class="command-card"><div class="command-head"><div><strong>${esc(c.name)}</strong>${badge(c.status,c.status==="STOPPING"&&["schedule","continue"].includes(c.action)?"Stopping schedule":null)}${timer(c)}${c.estimate?estimateMarkup(c.estimate):""}<small>${date(c.started)}${c.code_root?` · ${esc(c.code_root)}`:""}${c.parameters?` · Parameters: ${esc(c.parameters.name)}`:""}</small></div>${scheduleStopControl(c)}<button class="subtle" data-command="${esc(c.id)}">Console →</button></div>${c.message?`<p class="empty-small">${esc(c.message)}</p>`:""}${c.download?`<a class="subtle" href="/api/download?command=${encodeURIComponent(c.id)}" download>Download bundle ↓</a>`:""}${scheduleLogLink(c)}${showTasks&&Object.keys(c.tasks).length?taskTable(Object.values(c.tasks),c.id):""}</article>`).join(""); }
 function render() { if(!state)return;$("watch-inbox-path").textContent=state.folders?.inbox || "runner/inbox";$("keep-awake").checked=!!state.awake?.enabled;$("keep-awake").disabled=!state.awake?.supported;$("awake-status").textContent=state.awake?.error || (state.awake?.enabled?"On · Windows and display idle sleep are prevented.":state.awake?.supported?"Off · Normal power settings apply.":"Available on Windows. No mouse or keyboard input is generated.");uploadDestination(); const watcher=state.commands.find(c=>c.action==="watch"&&active(c)); $("running-count").textContent=state.commands.filter(active).flatMap(c=>Object.values(c.tasks).filter(t=>t.status==="RUNNING")).length; $("queue-count").textContent=state.queued.length; $("completed-count").textContent=state.history.filter(h=>!["RUNNING","UNKNOWN"].includes(h.status)).length; $("watcher-state").textContent=watcher?(watcher.status==="STOPPING"?"Finishing":"Watching"):"Stopped"; $("watcher-time").innerHTML=watcher?`${timer(watcher)} · ${watcher.status==="STOPPING"?"Waiting for active files":"Session elapsed"}`:"Ready when you are"; $("start-watch").disabled=!!watcher||!state.windows; $("stop-watch").disabled=!watcher||watcher.status==="STOPPING";
 if(page==="overview"){$("live-overview").innerHTML=live();$("recent-runs").innerHTML=historyTable(state.history.slice(0,6));$("commands-overview").innerHTML=commandCards(state.commands.slice(0,5));}
 if(page==="runner"){$("init-file-list").innerHTML=state.initialization_files?.length?state.initialization_files.map(p=>`<div class="queue-item"><code>${esc(p)}</code></div>`).join(""):'<p class="hint">No _*.sas files were found in the initialization folder or inbox.</p>';$("live-runner").innerHTML=live();$("inbox").innerHTML=state.queued.length?state.queued.map((name,i)=>`<div class="queue-item"><span class="badge pending">${i+1}</span><span>${esc(name)}</span><small>Waiting · ${esc(expectedText(state.queued_estimates?.[name]))}</small></div>`).join(""):'<p class="hint">The inbox is empty. Add job .sas files through Files & folders or your configured inbox.</p>';}
 if(page==="scheduler")$("schedule-activity").innerHTML=commandCards(state.commands.filter(c=>["schedule","continue"].includes(c.action)).slice(0,10),true);
 if(page==="tools")$("tools-activity").innerHTML=commandCards(state.commands.filter(c=>c.action.startsWith("bundle-")||c.action.startsWith("egp-")).slice(0,10));
 if(page==="history"){let records=state.history;const q=$("history-search").value.toLowerCase(), filter=$("history-filter").value;records=records.filter(h=>(h.name+" "+h.path).toLowerCase().includes(q)&&(filter==="all"||filter==="errors"&&/FAIL|ERROR|LOST|BLOCKED/.test(h.status)||h.status===filter));$("all-history").innerHTML=historyTable(records);$("commands-history").innerHTML=commandCards(state.commands);}}
-async function refresh(force=false) { if(polling)return; polling=true;try{state=await api(force?"/api/state?refresh=1":"/api/state");if($("error").textContent.startsWith("The local server is unavailable"))error("");syncClock(state.now);$("workspace").textContent=state.workspace;$("version").textContent=`v${state.version} · This computer only`;$("connection").textContent="Connected locally";$("connection-dot").className="online";const notices=[];if(!state.windows)notices.push("SAS execution requires Windows with Enterprise Guide. You can use file tools and inspect history on this computer.");if(!state.openpyxl)notices.push("Install openpyxl for schedules and Excel table previews (see START_HERE.txt).");$("notice").textContent=notices.join(" ");$("notice").hidden=!notices.length;document.querySelectorAll(".sas-action").forEach(b=>b.disabled=!state.windows);files();renderIfChanged();if($("details-dialog").open){if(selectedCommand)await refreshConsole();else if(inspectingFolder&&selectedPath)await showPath(selectedPath,true);}}catch(e){$("connection").textContent="Connection lost";$("connection-dot").className="offline";error("The local server is unavailable. The app may have closed. Displayed job states may be stale.");}finally{polling=false;}}
+async function refresh(force=false) { if(polling)return; polling=true;try{state=await api(force?"/api/state?refresh=1":"/api/state");if($("error").textContent.startsWith("The local server is unavailable"))error("");syncClock(state.now);$("workspace").textContent=state.workspace;$("version").textContent=`v${state.version} · This computer only`;$("connection").textContent="Connected locally";$("connection-dot").className="online";const notices=[];if(!state.windows)notices.push("SAS execution requires Windows with Enterprise Guide. You can use file tools and inspect history on this computer.");if(!state.openpyxl)notices.push("Install openpyxl for schedules and Excel table previews (see START_HERE.txt).");$("notice").textContent=notices.join(" ");$("notice").hidden=!notices.length;document.querySelectorAll(".sas-action").forEach(b=>b.disabled=!state.windows);files();await initializeParameters();renderIfChanged();if($("details-dialog").open){if(selectedCommand)await refreshConsole();else if(inspectingFolder&&selectedPath)await showPath(selectedPath,true);}}catch(e){$("connection").textContent="Connection lost";$("connection-dot").className="offline";error("The local server is unavailable. The app may have closed. Displayed job states may be stale.");}finally{polling=false;}}
 function formData(form) { const data=Object.fromEntries(new FormData(form));form.querySelectorAll('input[type="checkbox"]').forEach(c=>data[c.name]=c.checked);return data; }
-async function launch(data, form) { const button=form?.querySelector('[type="submit"]');if(button)button.disabled=true;error("");try{const result=await api("/api/launch",data);await refresh();await showCommand(result.id);}catch(e){error(e.message);}finally{if(button)button.disabled=false;}}
+async function launch(data, form) { if(data.action==="run"&&data.use_parameters&&parameterLoading){error("Wait for the parameter file to finish loading.");return;}const button=form?.querySelector('[type="submit"]');if(button)button.disabled=true;error("");try{const result=await api("/api/launch",data);await refresh();await showCommand(result.id);}catch(e){error(e.message);}finally{if(button)button.disabled=false;}}
 function bindForm(id, action) { $(id).addEventListener("submit",event=>{event.preventDefault();launch({...formData(event.currentTarget),action},event.currentTarget);}); }
 function openDialog(title) { $("download-folder").hidden=true; $("detail-title").textContent=title;$("detail-tasks").innerHTML="";$("file-list").innerHTML="";$("preview-name").textContent="Select a file";$("download").hidden=true;$("file-preview").innerHTML="";if(!$("details-dialog").open)$("details-dialog").showModal(); }
 async function showCommand(identifier) { inspectingFolder=false;selectedPreview=null;selectedCommand=identifier;selectedPath=null;const command=state.commands.find(c=>c.id===identifier);openDialog(command?.name || "Command output");$("detail-meta").textContent=command?`py pysas.py ${command.args.join(" ")}`:"";$("preview-name").textContent="Console output";$("file-list").innerHTML='<p class="hint">The console updates while this command is running. SAS logs and results become available as Enterprise Guide writes them.</p>';await refreshConsole(); }
@@ -140,7 +140,58 @@ $("restore-form").addEventListener("submit",async event=>{
       request.onload=()=>{try{const result=JSON.parse(request.responseText);if(request.status===200)resolve(result);else reject(new Error(result.error||"Restore failed"));}catch(e){reject(e);}};
       request.onerror=()=>reject(new Error("Connection interrupted. Check history before retrying the restore."));request.send(file);
     });
-    foldersInitialized=false;bundlePathsInitialized=false;await refresh(true);
+    foldersInitialized=false;bundlePathsInitialized=false;parametersInitialized=false;await refresh(true);
     $("restore-status").textContent=`Restored ${result.runs} run folders and ${result.commands} commands. Existing runs were preserved.`+(result.missing_folders.length?` Review folder settings: ${result.missing_folders.join(", ")} used the new workspace defaults because their old locations are unavailable.`:"");
   }catch(e){$("restore-status").textContent=e.message;}finally{button.disabled=false;$("restore-progress").hidden=true;}
+});
+
+
+function parameterFields(){ $("parameters-editor").hidden=!$("use-parameters").checked; }
+function putParameters(result, saved){
+  $("parameter-name").value=result.name;$("parameter-text").value=result.text;
+  parameterLoadedName=saved?result.name:"";parameterRevision=saved?result.revision:null;
+  $("parameter-files").value=saved?result.name:"";
+  $("use-parameters").checked=true;parameterFields();
+  $("parameters-status").textContent=saved?"Loaded saved parameters. Edits are used by your next run; Save updates the reusable file.":"Loaded into the editor. The original file is unchanged. Save to keep a reusable copy.";
+}
+function parameterBusy(busy){
+  parameterLoading=busy;
+  for(const id of ["parameter-text","parameter-name","load-parameters","save-parameters","import-parameters"])$(id).disabled=busy;
+}
+async function loadParameters(name, remember=false){
+  if(parameterLoading)return;parameterBusy(true);
+  try{const result=remember?await api("/api/parameters/select",{name}):await api(`/api/parameters?name=${encodeURIComponent(name)}`);putParameters(result,true);return true;}
+  catch(e){$("parameters-status").textContent=e.message;}
+  finally{parameterBusy(false);}
+}
+async function initializeParameters(){
+  if(parametersInitialized)return;parametersInitialized=true;
+  const settings=state.parameters_settings || {};
+  const loaded=settings.last && settings.files?.includes(settings.last)?await loadParameters(settings.last):false;
+  $("use-parameters").checked=!!settings.enabled && !!loaded;parameterFields();
+}
+$("use-parameters").addEventListener("change",parameterFields);
+$("load-parameters").addEventListener("click",()=>{const name=$("parameter-files").value;if(name)loadParameters(name,true);else $("parameters-status").textContent="Choose a saved file, or enter new code below.";});
+$("parameter-text").addEventListener("input",()=>{$("parameters-status").textContent="Editor changed. Run uses these edits; Save updates your reusable file.";});
+$("save-parameters").addEventListener("click",async()=>{
+  if(parameterLoading)return;
+  const button=$("save-parameters");button.disabled=true;
+  const name=$("parameter-name").value, text=$("parameter-text").value;
+  try{const result=await api("/api/parameters/save",{name,text,revision:name.toLowerCase()===parameterLoadedName.toLowerCase()?parameterRevision:null});
+    parameterLoadedName=result.name;parameterRevision=result.revision;
+    // A refresh must not replace text typed while the save was in flight.
+    await refresh();$("parameter-files").value=result.name;
+    $("parameters-status").textContent=$("parameter-text").value===text?"Parameter file saved. It is available next time you open PySAS.":"Saved the earlier text. Your latest editor changes are still unsaved.";
+  }catch(e){$("parameters-status").textContent=e.message;}finally{button.disabled=false;}
+});
+$("import-parameters").addEventListener("change",async()=>{
+  const input=$("import-parameters"),file=input.files[0];if(!file||parameterLoading)return;
+  parameterBusy(true);$("parameters-status").textContent="Loading parameters…";
+  try{
+    if(file.size>128*1024)throw new Error("Parameter files must be 128 KB or smaller.");
+    const response=await fetch(`/api/parameters/import?name=${encodeURIComponent(file.name)}`,{method:"POST",headers:{"X-PySAS-Token":state.token},body:file});
+    const result=await response.json();if(!response.ok)throw new Error(result.error||"Could not load this file.");
+    putParameters(result,false);
+  }catch(e){$("parameters-status").textContent=e.message;}
+  finally{parameterBusy(false);input.value="";}
 });

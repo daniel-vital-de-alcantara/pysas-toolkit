@@ -1,12 +1,12 @@
 # PySAS Toolkit
 
-**PySAS 0.3.11** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
+**PySAS 0.3.12** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
 
 It grew out of day-to-day model-development and consulting work where large SAS processes were difficult to inspect, rerun, parallelise, move between environments and review consistently. The current implementation brings those workflows together in one portable `pysas.py` utility.
 
 ## What it does
 
-| Component | Status in 0.3.11 | Purpose |
+| Component | Status in 0.3.12 | Purpose |
 | --- | --- | --- |
 | SAS bundle utility | Implemented | Pack, verify and safely unpack SAS source trees with SHA-256 integrity metadata and backups |
 | EGP tools | Implemented | Inspect EGP archives, extract embedded SAS programs and conservatively repack them into an EGP template |
@@ -31,11 +31,11 @@ Enterprise Guide setup; `openpyxl` is required for Excel features. No Node.js or
 frontend installation is needed.
 
 See [START_HERE.txt](START_HERE.txt) and the [workbench guide](docs/ui-workbench.md).
-The command-line toolkit is version 0.3.11; the UI preview is 0.4.0-preview.18.
+The command-line toolkit is version 0.3.12; the UI preview is 0.4.0-preview.19.
 
 ## Requirements
 
-PySAS 0.3.11 is designed for controlled Windows environments with:
+PySAS 0.3.12 is designed for controlled Windows environments with:
 
 - Python 3.9+ recommended;
 - SAS Enterprise Guide installed and configured for the target SAS environment;
@@ -293,7 +293,7 @@ Important limitations include:
 
 ## Version
 
-Current published implementation: **0.3.11**.
+Current published implementation: **0.3.12**.
 
 ```powershell
 py pysas.py version
