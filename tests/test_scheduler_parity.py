@@ -200,7 +200,7 @@ class SchedulerParityTests(unittest.TestCase):
             item = app.commands[identifier]
             self.assertEqual(item['status'], 'SUCCESS', (self.root/".pysas-ui"/(identifier+".txt")).read_text(encoding="utf-8"))
             self.assertEqual(item['tasks']['target']['status'], 'SUCCESS')
-            self.assertEqual(item['schedule_log'], item['path']+'/schedule.log')
+            self.assertEqual(Path(item['schedule_log']), Path(item['path'])/'schedule.log')
             self.assertIn('NOTE: completed', (self.root/item['schedule_log']).read_text(encoding='utf-8'))
             self.assertEqual(item['tasks']['target']['section'], 'Realised')
             self.assertEqual(len(item['tasks']['target']['setup']), 3)

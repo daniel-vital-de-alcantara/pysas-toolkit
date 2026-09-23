@@ -81,7 +81,7 @@ class ScheduleLogTests(unittest.TestCase):
             pysas.write_schedule_log(self.run, [row])
             item = dict(id='test', tasks={})
             app.event(item, dict(event='summary', path=str(self.run), tasks=[row]))
-            self.assertEqual(item['schedule_log'], 'runs/test__schedule/schedule.log')
+            self.assertEqual(Path(item['schedule_log']), Path('runs/test__schedule/schedule.log'))
             detail = app.details('runs/test__schedule')
             self.assertIn('schedule.log', [file['name'] for file in detail['files']])
         finally:
