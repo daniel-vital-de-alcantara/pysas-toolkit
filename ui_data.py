@@ -98,7 +98,7 @@ def restore_backup(app, stream, length):
             for i in entries:
                 name = i.filename
                 parts = PurePosixPath(name).parts
-                if (not parts or name.startswith('/') or '\\' in name or ':' in name or any(p in {'.', '..'} or p.endswith((' ', '.')) for p in parts)
+                if (not parts or name.startswith('/') or '\\' in i.orig_filename or '\x00' in i.orig_filename or ':' in name or any(p in {'.', '..'} or p.endswith((' ', '.')) for p in parts)
                     or any(re.match(r'(?i)^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)', p) for p in parts)
                     or name.casefold() in seen or (i.external_attr >> 16) & 0o170000 == 0o120000):
                     raise ValueError('Backup contains an unsafe or duplicate path.')

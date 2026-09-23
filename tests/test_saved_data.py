@@ -96,7 +96,12 @@ class SavedDataTests(unittest.TestCase):
                 if i.filename == 'manifest.json' and transform:
                     content = json.dumps(transform(json.loads(content))).encode()
                 target.writestr(i, content)
-            if extra: target.writestr(extra, b'bad')
+            if extra:
+                if isinstance(extra, str):
+                    raw = zipfile.ZipInfo('placeholder')
+                    raw.filename = raw.orig_filename = extra
+                    extra = raw
+                target.writestr(extra, b'bad')
         return out.getvalue()
 
     def test_rejects_traversal_application_overwrite_and_symlink(self):
