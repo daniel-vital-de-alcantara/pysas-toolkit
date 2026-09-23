@@ -1156,10 +1156,12 @@ def append_schedule_log_file(output, path: Path, console: bool = False) -> None:
             encoding = "cp1252"
     last = ""
     with path.open(encoding=encoding, errors="replace") as source:
-        for line in source:
-            if console and line.startswith("PYSAS_STAGE|") and line.count("|") >= 2:
+        line_start = True
+        while line := source.readline(128 * 1024):
+            if console and line_start and line.startswith("PYSAS_STAGE|") and line.count("|") >= 2:
                 line = line.split("|", 2)[2]
             output.write(line)
+            line_start = line.endswith("\n")
             last = line
     if last and not last.endswith("\n"):
         output.write("\n")

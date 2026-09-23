@@ -45,7 +45,7 @@ class ScheduleLogTests(unittest.TestCase):
         self.assertEqual((first['task_dir']/'logs'/'same-program.log').read_text(), 'NOTE: first succeeded\n')
 
     def test_large_legacy_and_unicode_logs_are_not_truncated(self):
-        long_text = 'NOTE: line\n'*60000 + 'Informação — preço €\nLAST LINE\n'
+        long_text = 'NOTE: line\n'*60000 + 'x'*300000 + '\nInformação — preço €\nLAST LINE\n'
         rows = [self.task('legacy', long_text, encoding='cp1252'), self.task('unicode', 'NOTE: 中文 café\n', encoding='utf-16')]
         log = pysas.write_schedule_log(self.run, rows).read_text(encoding='utf-8')
         self.assertIn(long_text, log)
