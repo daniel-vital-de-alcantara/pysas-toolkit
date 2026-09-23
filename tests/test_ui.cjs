@@ -96,3 +96,12 @@ test('whole-schedule stop is available for schedule and continuation and disable
   assert.equal(h.scheduleStopControl({id:'watcher',action:'watch',status:'RUNNING'}), '');
   assert.equal(h.scheduleStopControl(undefined), '');
 });
+
+
+test('completed schedules offer their own combined log download',()=>{
+  const command={id:'schedule',action:'schedule',name:'Schedule',status:'SUCCESS',tasks:{},schedule_log:'runs/my schedule/schedule.log'};
+  const markup=h.commandCards([command]);
+  assert.match(markup,/Download schedule log/);
+  assert.match(markup,/api\/download\?path=runs%2Fmy%20schedule%2Fschedule.log/);
+  assert.doesNotMatch(h.commandCards([{...command,schedule_log:undefined}]),/Download schedule log/);
+});

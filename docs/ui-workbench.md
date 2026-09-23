@@ -1,7 +1,7 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.16 is a separate browser UI for the standalone PySAS
-0.3.10 command-line engine. Download the Python ZIP from GitHub Releases, extract
+The Workbench 0.4.0-preview.17 is a separate browser UI for the standalone PySAS
+0.3.11 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
 
@@ -185,3 +185,22 @@ Skipped normal rows show Pending while their prerequisites are unfinished, with
 a note that they will be skipped. They become Skipped only after those parents
 succeed. Descendants therefore wait for the entire dependency chain. Failures
 propagate through skipped rows as Blocked. Setup definitions remain Shared setup.
+
+## Full schedule log
+
+Each new schedule or continuation writes `schedule.log` beside its summaries
+when the run finishes or is stopped. It combines every available task SAS log
+and automation console, grouped in workbook order. Each task section includes
+its ID, program, selected section/rows, final status and elapsed seconds. Skipped,
+blocked and cancelled tasks are listed even when no SAS log was produced.
+Shared setup is covered by the target programs' logs, as it runs in their submissions.
+
+Choose **Download schedule log** on the command card or in Console, or open the
+schedule in History and select `schedule.log` under Logs. The downloaded file
+contains the complete available output; the in-app preview can be truncated for
+large files. Original task logs remain available. The combined file uses UTF-8
+and reads inputs in bounded chunks, including Windows-encoded SAS logs.
+
+This is a report after completion/stop; it does not request live remote SAS logs
+or combine separate schedule runs. Existing runs from older releases retain
+their individual logs.

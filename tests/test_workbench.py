@@ -322,6 +322,15 @@ class HttpTests(unittest.TestCase):
         connection.close()
         return result
 
+    def test_combined_schedule_log_download_is_complete(self):
+        folder = self.root/'runs'/'combined'; folder.mkdir(parents=True)
+        body = ('NOTE: schedule log\n'*30000 + 'LAST LINE café\n').encode('utf-8')
+        (folder/'schedule.log').write_bytes(body)
+        status, downloaded, headers = self.request('GET', '/api/download?path=runs/combined/schedule.log')
+        self.assertEqual(status, 200)
+        self.assertEqual(downloaded, body)
+        self.assertIn('schedule.log', headers['Content-Disposition'])
+
     def test_bundle_download_retains_each_completed_output(self):
         with tempfile.TemporaryDirectory() as directory:
             code_root = Path(directory)

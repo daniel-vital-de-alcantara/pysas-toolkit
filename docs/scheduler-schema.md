@@ -1,6 +1,6 @@
 # Scheduler schema
 
-PySAS 0.3.10 reads an Excel workbook and uses the worksheet named `Schedule` when it exists; otherwise it reads the first worksheet.
+PySAS 0.3.11 reads an Excel workbook and uses the worksheet named `Schedule` when it exists; otherwise it reads the first worksheet.
 
 The public repository includes [`examples/schedule_example.csv`](../examples/schedule_example.csv) as a sanitized example. To use it as a workbook template, open it in Excel, save it as `Schedule.xlsx`, and name the worksheet `Schedule`.
 
@@ -37,7 +37,7 @@ matching markers exist in that EGP program.
 
 ## Validation behaviour
 
-Before execution PySAS 0.3.10 checks key structural conditions including:
+Before execution PySAS 0.3.11 checks key structural conditions including:
 
 - duplicate `task_id` values;
 - dependencies that reference unknown tasks;
@@ -111,3 +111,22 @@ its workers exit. Per-file Stop still affects only that file.
 Cancellation terminates each owned local automation process; as with per-file
 Stop, server-side SAS termination depends on the existing EG/server connection.
 Partial outputs may remain. A stopped run can be continued using its summary.
+
+## Full schedule log
+
+Each new schedule or continuation writes `schedule.log` beside its summaries
+when the run finishes or is stopped. It combines every available task SAS log
+and automation console, grouped in workbook order. Each task section includes
+its ID, program, selected section/rows, final status and elapsed seconds. Skipped,
+blocked and cancelled tasks are listed even when no SAS log was produced.
+Shared setup is covered by the target programs' logs, as it runs in their submissions.
+
+Choose **Download schedule log** on the command card or in Console, or open the
+schedule in History and select `schedule.log` under Logs. The downloaded file
+contains the complete available output; the in-app preview can be truncated for
+large files. Original task logs remain available. The combined file uses UTF-8
+and reads inputs in bounded chunks, including Windows-encoded SAS logs.
+
+This is a report after completion/stop; it does not request live remote SAS logs
+or combine separate schedule runs. Existing runs from older releases retain
+their individual logs.

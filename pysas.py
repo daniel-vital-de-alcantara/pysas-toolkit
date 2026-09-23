@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PySAS 0.3.10 — portable SAS Enterprise Guide command-line utilities.
+"""PySAS 0.3.11 — portable SAS Enterprise Guide command-line utilities.
 
 Keep this file beside the EGP, scheduler workbook and any top-level _*.sas
 initialisation files it should use.  Python 3.9+ is recommended.  ``rich`` is
@@ -29,7 +29,7 @@ from typing import Any, Iterable
 from xml.etree import ElementTree as ET
 
 
-VERSION = "0.3.10"
+VERSION = "0.3.11"
 ROOT_DIR = Path(__file__).resolve().parent
 CODEBASE_FILE = "codebase.sasbundle.txt"
 BACKUP_FOLDER = "_codebase_backups"
@@ -1142,6 +1142,68 @@ def report_task_result(result: dict[str, Any]) -> None:
         print(f"{result['task_id']}: {result['status']} · {result['message']}", flush=True)
 
 
+def append_schedule_log_file(output, path: Path, console: bool = False) -> None:
+    """Copy full text with bounded memory, including legacy Windows SAS encodings."""
+    with path.open("rb") as source:
+        encoding = text_encoding(source.read(4096))
+    if encoding == "utf-8-sig":
+        # An ASCII prefix does not distinguish UTF-8 from later cp1252 accents.
+        try:
+            with path.open(encoding=encoding) as source:
+                while source.read(128 * 1024):
+                    pass
+        except UnicodeDecodeError:
+            encoding = "cp1252"
+    last = ""
+    with path.open(encoding=encoding, errors="replace") as source:
+        for line in source:
+            if console and line.startswith("PYSAS_STAGE|") and line.count("|") >= 2:
+                line = line.split("|", 2)[2]
+            output.write(line)
+            last = line
+    if last and not last.endswith("\n"):
+        output.write("\n")
+
+
+def write_schedule_log(run_dir: Path, results: list[dict[str, Any]]) -> Path:
+    """Combine task evidence in workbook order after a completed or stopped run."""
+    target = run_dir / "schedule.log"
+    fd, temporary_name = tempfile.mkstemp(prefix=".schedule-log-", suffix=".tmp", dir=run_dir)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as output:
+            output.write(f"PySAS {VERSION} — Full schedule log\nSchedule: {run_dir.name}\n")
+            output.write("Tasks are grouped in workbook order; parallel task durations overlap.\n")
+            output.write("Includes available SAS logs and automation console output.\n\n")
+            for result in results:
+                output.write(f"{result['task_id']}: {result['status']} — {result['program']} ({result.get('elapsed', 0):.1f}s)\n")
+            for index, result in enumerate(results, 1):
+                output.write("\n" + "=" * 80 + "\n")
+                output.write(f"TASK {index}/{len(results)}: {result['task_id']} — {result['program']}\n")
+                output.write(f"Selection: {describe_selection(result)}\nStatus: {result['status']}\nElapsed: {result.get('elapsed', 0):.1f} seconds\n")
+                if result.get("message"):
+                    output.write(f"Message: {result['message']}\n")
+                folder = Path(result["task_dir"]) if result.get("task_dir") else None
+                logs = sorted((folder / "logs").glob("*.log")) if folder else []
+                if not logs:
+                    note = "Shared setup is included in each target's SAS log." if result["status"] == "ALWAYS_RUN_DEFINITION" else "No SAS log was produced for this task."
+                    output.write(note + "\n")
+                evidence = [(path, False) for path in logs]
+                if folder and (folder / "console.txt").is_file():
+                    evidence.append((folder / "console.txt", True))
+                for path, console in evidence:
+                    output.write(f"\n--- {'Automation console' if console else 'SAS log'}: {path.name} ---\n")
+                    try:
+                        append_schedule_log_file(output, path, console=console)
+                    except (OSError, ValueError) as exc:
+                        output.write(f"\n[Could not read {path.name}: {exc}]\n")
+            output.write("\n" + "=" * 80 + "\nEnd of full schedule log.\n")
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return target
+
+
 def write_summary(run_dir: Path, results: list[dict[str, Any]]) -> None:
     fields = ["task_id", "program", "status", "elapsed", "depends_on", "message"]
     with (run_dir / "run_summary.csv").open("w", newline="", encoding="utf-8-sig") as f:
@@ -1150,6 +1212,7 @@ def write_summary(run_dir: Path, results: list[dict[str, Any]]) -> None:
     text = [f"PySAS {VERSION} schedule summary", ""]
     text += [f"{r['task_id']}: {r['status']} ({r.get('elapsed', 0):.1f}s)" for r in results]
     (run_dir / "run_summary.txt").write_text("\n".join(text) + "\n", encoding="utf-8")
+    write_schedule_log(run_dir, results)
     Workbook, _, Font, PatternFill, get_column_letter = require_openpyxl()
     wb = Workbook(); ws = wb.active; ws.title = "Summary"; ws.append(fields)
     for cell in ws[1]: cell.font = Font(bold=True); cell.fill = PatternFill("solid", fgColor="D9EAF7")

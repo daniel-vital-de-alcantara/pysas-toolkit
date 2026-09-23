@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 from pysas import text_encoding
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.16"
+VERSION = "0.4.0-preview.17"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 
@@ -384,6 +384,9 @@ class Workbench:
                 task["path"] = self.relative(event["path"])
         elif kind == "summary":
             item["path"] = self.relative(event["path"])
+            schedule_log = Path(event["path"]) / "schedule.log"
+            if schedule_log.is_file():
+                item["schedule_log"] = self.relative(schedule_log)
             for result in event["tasks"]:
                 task = item["tasks"].setdefault(result["task_id"], {"key": result["task_id"], "name": result["program"]})
                 task.update({field: result[field] for field in ("section", "row_start", "row_end") if field in result})

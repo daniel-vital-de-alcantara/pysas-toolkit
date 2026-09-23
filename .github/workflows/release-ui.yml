@@ -46,18 +46,18 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'preview') }}
           fail_on_unmatched_files: true
           body: |
-            Stop an entire schedule and preserve dependencies through skipped tasks.
+            One complete log file for each schedule.
 
-            Download PySAS-Workbench-Python-0.4.0-preview.16.zip, extract fully and open START_PYSAS.bat.
+            Download PySAS-Workbench-Python-0.4.0-preview.17.zip, extract fully and open START_PYSAS.bat.
 
-            - Stop schedule is available on each active Scheduler/Continue card and inside its Console view. It prevents further submissions and cancels that schedule's active local automation processes, including files still starting.
-            - Other schedules and watchers continue independently. Completed results are preserved, queued tasks become Cancelled, and the run is saved as Stopped with its elapsed time.
-            - Skipped rows wait for their dependencies before releasing downstream tasks. For A -> B (skipped) -> C, C waits for A. Longer skipped chains, multiple parents, failed ancestors and continuation follow the same rule.
-            - Skipped rows remain Pending in the UI until prerequisites complete, then change to Skipped without starting a SAS session.
-            - Includes the working preview.15 submission behavior, one scheduler with 10 parallel tasks by default, section/row progress and shared setup.
-            - Standalone pysas.py is version 0.3.10.
+            - Every new schedule or continuation creates schedule.log when it completes or is stopped.
+            - Includes available SAS logs and automation console output, grouped in workbook order, with task ID, program, section/rows, status and elapsed time.
+            - Records skipped, blocked and cancelled tasks, including when no SAS log is available. Keeps individual logs intact.
+            - Download schedule log is available on the schedule card and in Console. The file is also under Logs in the schedule inspector.
+            - Handles large files and Windows/Unicode encodings. Downloads include the complete file even when the in-app preview is limited.
+            - Standalone pysas.py is version 0.3.11; whole-schedule stop and skipped dependency handling remain included.
 
-            Tests cover skipped dependency chains and failures, cancellation before startup, stopping queued/active tasks, and independent schedules. Windows integration exercises the UI, worker and real cscript with a COM substitute, including cancelling one schedule while another completes. Actual remote SAS cancellation depends on the EG/server connection; partial outputs may remain, as with Stop file.
+            The combined log is generated after completion or stop; it does not fetch live remote SAS logs. Tests cover grouping, multiple encodings, large downloads and stopped runs, including Windows UI-to-worker integration with a COM substitute.
 
           files: |
             release/PySAS-Workbench-Python-*.zip

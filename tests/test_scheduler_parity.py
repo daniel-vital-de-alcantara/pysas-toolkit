@@ -200,6 +200,8 @@ class SchedulerParityTests(unittest.TestCase):
             item = app.commands[identifier]
             self.assertEqual(item['status'], 'SUCCESS', (self.root/".pysas-ui"/(identifier+".txt")).read_text(encoding="utf-8"))
             self.assertEqual(item['tasks']['target']['status'], 'SUCCESS')
+            self.assertEqual(item['schedule_log'], item['path']+'/schedule.log')
+            self.assertIn('NOTE: completed', (self.root/item['schedule_log']).read_text(encoding='utf-8'))
             self.assertEqual(item['tasks']['target']['section'], 'Realised')
             self.assertEqual(len(item['tasks']['target']['setup']), 3)
             for task in self.setups:
@@ -250,6 +252,7 @@ class SchedulerParityTests(unittest.TestCase):
             while app.processes and time.monotonic()<deadline: time.sleep(.05)
             item = app.commands[chosen]
             self.assertEqual(item['status'], 'STOPPED')
+            self.assertIn('Status: CANCELLED', (self.root/item['schedule_log']).read_text(encoding='utf-8'))
             self.assertEqual({t['status'] for t in item['tasks'].values()}, {'CANCELLED'})
             self.assertFalse(any((self.root/item['path']/'tasks'/key/'executed.txt').exists() for key in ['C', 'D']))
             self.assertEqual(app.commands[other]['status'], 'SUCCESS')
