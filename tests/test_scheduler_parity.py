@@ -189,11 +189,13 @@ class SchedulerParityTests(unittest.TestCase):
         app = ui.Workbench(self.root)
         try:
             identifier = app.launch(dict(action='run', program=str(source), template=str(project), use_parameters=True, parameters_name='_cases.sas', parameters_text='%let city=café;'))['id']
-            self.assertEqual(app.processes[identifier].wait(timeout=30), 0)
+            exit_code = app.processes[identifier].wait(timeout=30)
             deadline = time.monotonic()+10
             while identifier in app.processes and time.monotonic()<deadline: time.sleep(.05)
             item = app.commands[identifier]
-            self.assertEqual(item['status'], 'SUCCESS', (app.storage/(identifier+'.txt')).read_text(encoding='utf-8'))
+            console = (app.storage/(identifier+'.txt')).read_text(encoding='utf-8')
+            self.assertEqual(exit_code, 0, console)
+            self.assertEqual(item['status'], 'SUCCESS', console)
             task = next(iter(item['tasks'].values()))
             folder = self.root/task['path']
             code = engine.read_text(next((folder/'code').glob('*.sas')))

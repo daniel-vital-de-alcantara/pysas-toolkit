@@ -27,7 +27,8 @@ Class CodeStub
     Dim config, output, folder, filesystem
     Set filesystem = CreateObject("Scripting.FileSystemObject")
     Set config = ReadProjectConfig()
-    folder = filesystem.GetParentFolderName(projectPath)
+    ' Logs are always inside the task folder; a runner template can live elsewhere.
+    folder = filesystem.GetParentFolderName(filesystem.GetParentFolderName(logPath))
     If Server <> config.documentElement.getAttribute("expected_server") Then Err.Raise 7001, , "Source SAS server was not assigned"
     If CreateObject("WScript.Shell").CurrentDirectory <> folder Then Err.Raise 7003, , "Task did not run in its own directory"
     Set output = filesystem.CreateTextFile(folder & "\executed.txt", False)

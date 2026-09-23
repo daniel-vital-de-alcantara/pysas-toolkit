@@ -1,5 +1,6 @@
 from pathlib import Path
 import ctypes
+import contextlib
 import json
 import shutil
 import subprocess
@@ -16,6 +17,24 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from windows_app import app_id
 from pysas_ui import LocalServer
+
+
+@contextlib.contextmanager
+def browser_test_workspace():
+    """Chrome child processes can release profile files just after its parent exits."""
+    temp = tempfile.TemporaryDirectory()
+    try:
+        yield temp.name
+    finally:
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                temp.cleanup()
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(.1)
 
 
 class LifecycleTests(unittest.TestCase):
@@ -82,7 +101,7 @@ class WindowsTests(unittest.TestCase):
 
     def run_hidden_server(self, options, worker_probe=False):
         pythonw = Path(sys.executable).with_name('pythonw.exe')
-        with tempfile.TemporaryDirectory() as folder:
+        with browser_test_workspace() as folder:
             root = Path(folder)
             shutil.copy2(ROOT / 'pysas.py', root / 'pysas.py')
             if worker_probe:
