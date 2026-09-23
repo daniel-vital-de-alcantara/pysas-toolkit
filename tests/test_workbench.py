@@ -322,6 +322,28 @@ class HttpTests(unittest.TestCase):
         connection.close()
         return result
 
+    def test_saved_data_http_roundtrip_and_folder_zip(self):
+        folder = self.root / 'runs' / 'old'
+        folder.mkdir(parents=True)
+        (folder / 'schedule.log').write_text('full log')
+        status, archive, headers = self.request('GET', '/api/backup')
+        self.assertEqual(status, 200)
+        self.assertEqual(headers['Content-Type'], 'application/zip')
+        status, body, _ = self.request('POST', '/api/restore', archive)
+        self.assertEqual(status, 403)
+        status, body, _ = self.request('POST', '/api/restore', archive, {'X-PySAS-Token': self.server.token})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(json.loads(body)['runs'], 1)
+        status, body, _ = self.request('GET', '/api/run-zip?path=runs/old')
+        self.assertEqual(status, 200)
+        with zipfile.ZipFile(io.BytesIO(body)) as z:
+            self.assertEqual(z.read('old/schedule.log'), b'full log')
+        status, body, _ = self.request('GET', '/api/run-zip?path=.pysas-ui')
+        self.assertEqual(status, 400)
+        status, body, _ = self.request('POST', '/api/estimate', json.dumps({'program': 'new.sas'}), {'X-PySAS-Token': self.server.token})
+        self.assertEqual(status, 200, body)
+        self.assertIsNone(json.loads(body)['seconds'])
+
     def test_combined_schedule_log_download_is_complete(self):
         folder = self.root/'runs'/'combined'; folder.mkdir(parents=True)
         body = ('NOTE: schedule log\n'*30000 + 'LAST LINE café\n').encode('utf-8')

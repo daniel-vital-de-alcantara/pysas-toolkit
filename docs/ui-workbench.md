@@ -1,6 +1,6 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.17 is a separate browser UI for the standalone PySAS
+The Workbench 0.4.0-preview.18 is a separate browser UI for the standalone PySAS
 0.3.11 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
@@ -34,8 +34,61 @@ Run history opens logs (with error/warning highlighting), submitted code,
 console files, result files, and Excel previews. Previewed HTML is shown as
 source text. Download generated reports to open them in their normal app.
 
+## Saved-data backups and run ZIPs
+
+In **Files & folders**, use **Download saved data ZIP** after finishing all jobs
+and stopping the watcher. Restore that ZIP in the new version or PC using
+**Restore saved data**. Backups include `runs`, `runner/runs`, saved command
+history and consoles, downloadable bundles, folder settings and bundle paths.
+They contain your saved code, logs, results and project/workbook snapshots.
+
+Restore adds history without deleting existing runs. Conflicting run folder
+names are renamed and imported history points to the renamed folders. Folder
+settings and bundle shortcuts are replaced; paths inside the old workspace
+are adjusted to the new workspace. Unavailable input/init/inbox paths fall back
+to the new workspace defaults and are reported for review. External input
+folders, queued watcher files, app binaries and browser profiles are excluded.
+No imported command starts automatically. Backup ZIPs and their expanded
+contents are limited to 10 GB and 200,000 files. Symbolic links are excluded.
+
+For the first upgrade from preview.17 or older, close PySAS and copy the new
+app files into the existing workspace, keeping `.pysas-ui`, `runs` and
+`runner/runs`. You can then export a backup. Alternatively copy those three
+data locations into the newly extracted app before launching it.
+
+**Inspect → Download entire run folder ZIP** downloads all files beneath that
+run, including logs, code, results and schedule snapshots. It is independent
+of the inspector's 1,000-file display limit. A ZIP of an active run contains
+only the output available at download time. These ZIPs are for accessing run
+files; use the saved-data backup for importing settings and command history.
+
+## Expected duration
+
+Use **Estimate time** before starting a program or schedule. Expected durations
+also appear alongside elapsed time in active task tables and schedule cards,
+and alongside queued watcher files. These are estimated *total* durations, not
+remaining-time countdowns. They never change scheduling or SAS execution.
+
+The UI reads successful saved UI runs and existing CLI run folders. It takes
+the median of the ten most recent matching program names and section/row
+selections. Older scheduler CSVs recover their selections from the saved Excel
+workbook. Original 0.3.2 scheduler h/m/s columns and watcher start/finish
+timestamps are also supported. Failed, cancelled and skipped executions are excluded from samples.
+Different code or data with the same name/selection can take a different time;
+the UI describes this limitation. No fuzzy name matching or code-identity
+claim is made. Workspace history is refreshed in the background every 30 seconds.
+
+Whole-schedule estimates simulate workbook-order dispatch with dependencies
+and the selected parallel limit. Always-run setup is already included in task
+timings; it is not counted as another task. Skipped rows take zero execution
+time while preserving their dependency barriers. With missing timings, the
+estimate is a lower bound from known dependency paths and known work divided
+by parallel capacity, shown as e.g. **~5h+**. Entirely unknown work is labelled
+unknown. Server contention, changed inputs and errors can change actual times.
+
 ## Architecture
 
+- `ui_data.py`: portable backup/restore, full run ZIPs and historical estimates.
 - `pysas_ui.py`: standard-library HTTP server bound to loopback, constrained
   command arguments, subprocess management, history/files and previews.
 - `ui_worker.py`: loads the workspace's `pysas.py` in a separate

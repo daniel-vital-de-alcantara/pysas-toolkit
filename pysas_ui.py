@@ -17,14 +17,16 @@ import threading
 import time
 import uuid
 import webbrowser
+import zipfile
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 from pysas import text_encoding
+from ui_data import archive_folder, export_backup, restore_backup, duration_history, estimate_task, estimate_schedule, index_samples
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.17"
+VERSION = "0.4.0-preview.18"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 
@@ -358,6 +360,7 @@ class Workbench:
                         "status": ("SKIPPED_SUCCESS" if task.get("skip") else "ALWAYS_RUN_DEFINITION") if task.get("always_run") else "PENDING",
                         "message": "Will be skipped after dependencies complete" if task.get("skip") and not task.get("always_run") else "",
                         "depends_on": task.get("depends_on", []), "started": None, "elapsed": 0,
+                        "skip": task.get("skip", False), "always_run": task.get("always_run", False),
                         "section": task.get("section", ""), "row_start": task.get("row_start"), "row_end": task.get("row_end")}
         elif kind in {"start", "finish"}:
             key = event["key"]
@@ -576,6 +579,16 @@ class Workbench:
             for task in command.get("tasks", {}).values():
                 if task.get("path") in paths:
                     paths[task["path"]].update(status=task["status"], elapsed=task.get("elapsed"), started=task.get("started") or paths[task["path"]]["started"])
+        samples = index_samples(self.cached_listing("timings", self.timing_samples, 30))
+        for command in commands:
+            for task in command.get("tasks", {}).values():
+                if task.get("status") in {"RUNNING", "CANCELLING", "PENDING"}:
+                    task["estimate"] = {"seconds": 0, "samples": 0} if task.get("skip") or task.get("status") in {"SKIPPED_SUCCESS", "SKIPPED_PREVIOUS"} else estimate_task(task, samples)
+            if command.get("status") in ACTIVE and command.get("action") in {"schedule", "continue"} and command.get("tasks"):
+                args = command.get("args", [])
+                workers = args[args.index("--workers") + 1] if "--workers" in args else 10
+                result = estimate_schedule(list(command["tasks"].values()), workers, samples)
+                command["estimate"] = {k: v for k, v in result.items() if k != "tasks"}
         inbox = Path(self.folders()["inbox"])
         queued = self.cached_listing("queue", lambda: sorted(p.name for p in inbox.iterdir() if p.is_file() and p.suffix.casefold() == ".sas" and not p.name.startswith("_")) if inbox.exists() else [], 2)
         return {"version": VERSION, "workspace": str(self.root), "windows": os.name == "nt",
@@ -583,7 +596,30 @@ class Workbench:
                 "files": self.cached_listing("inventory", self.inventory, 30), "commands": commands[:200], "history": history,
                 "folders": self.folders(), "awake": self.awake.status(),
                 "initialization_files": self.cached_listing("init", lambda: sorted({str(p.resolve()) for folder in {Path(self.folders()["init"]), inbox} for p in folder.glob("_*") if p.is_file() and p.suffix.casefold() == ".sas"}), 5),
+                "queued_estimates": {name: estimate_task({"name": name}, samples) for name in queued},
                 "queued": queued, "bundle_settings": self.bundle_settings(), "now": time.time()}
+
+    def timing_samples(self):
+        with self.lock:
+            commands = json.loads(json.dumps(list(self.commands.values())))
+        return duration_history(self.root, commands)
+
+    def estimate(self, data):
+        samples = index_samples(self.timing_samples())
+        if data.get("action") == "schedule":
+            from pysas import load_schedule
+            workbook = self.input_path(data.get("workbook", ""))
+            if not workbook.is_file():
+                raise ValueError("Select a schedule workbook first.")
+            return estimate_schedule(load_schedule(workbook), int(data.get("workers") or 10), samples)
+        return estimate_task({"name": data.get("program", "")}, samples)
+
+    def backup(self, stream=None, length=0):
+        # Hold the launch lock so a command cannot start halfway through a snapshot.
+        with self.lock:
+            if self.uploading or self.processes or any(c.get("status") in ACTIVE for c in self.commands.values()):
+                raise ValueError("Finish active commands and stop the watcher before transferring saved data.")
+            return restore_backup(self, stream, length) if stream is not None else export_backup(self)
 
     def details(self, relative):
         path = within(self.root, relative)
@@ -657,6 +693,20 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def send_archive(self, result):
+        stream, name = result
+        with stream:
+            size = stream.seek(0, 2)
+            stream.seek(0)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Disposition", "attachment; filename*=UTF-8''" + quote(name))
+            self.send_header("Content-Length", str(size))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            shutil.copyfileobj(stream, self.wfile, 256 * 1024)
+
     def do_GET(self):
         if not self.authorized():
             return
@@ -666,6 +716,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if url.path == "/api/state":
                 self.respond({**self.server.app.state(refresh=value("refresh") == "1"), "token": self.server.token})
+            elif url.path == "/api/run-zip":
+                self.send_archive(archive_folder(self.server.app.root, value("path")))
+            elif url.path == "/api/backup":
+                self.send_archive(self.server.app.backup())
             elif url.path == "/api/details":
                 self.respond(self.server.app.details(value("path")))
             elif url.path == "/api/preview":
@@ -728,6 +782,10 @@ class Handler(BaseHTTPRequestHandler):
             self.server.app.invalidate_lists()
             length = int(self.headers.get("Content-Length", "0"))
             url = urlsplit(self.path)
+            if url.path == "/api/restore":
+                self.connection.settimeout(60)
+                self.respond(self.server.app.backup(self.rfile, length))
+                return
             if url.path == "/api/upload":
                 if not 0 <= length <= UPLOAD_LIMIT:
                     raise ValueError("Each file must be 512 MB or smaller.")
@@ -742,6 +800,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/quit":
                 self.respond({"message": "Closing PySAS after active jobs finish."})
                 threading.Thread(target=self.server.request_close, daemon=True).start()
+            elif self.path == "/api/estimate":
+                self.respond(self.server.app.estimate(data))
             elif self.path == "/api/launch":
                 self.respond(self.server.app.launch(data))
             elif self.path == "/api/folders":
@@ -756,7 +816,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(self.server.app.stop(data.get("id")))
             else:
                 self.respond({"error": "Not found."}, 404)
-        except (ValueError, TypeError, OSError) as exc:
+        except (ValueError, TypeError, OSError, zipfile.BadZipFile) as exc:
             self.respond({"error": str(exc)}, 400)
 
 

@@ -15,7 +15,7 @@ const context = {
   fetch:async()=>({ok:true,json:async()=>snapshot}),setInterval(){},AbortController,Date,console
 };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl};',context);
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText};',context);
 const h = context.helpers;
 test('elapsed formatting supports seconds, hours, and runs longer than a day',()=>{
   assert.equal(h.duration(65.9),'00:01:05');
@@ -104,4 +104,13 @@ test('completed schedules offer their own combined log download',()=>{
   assert.match(markup,/Download schedule log/);
   assert.match(markup,/api\/download\?path=runs%2Fmy%20schedule%2Fschedule.log/);
   assert.doesNotMatch(h.commandCards([{...command,schedule_log:undefined}]),/Download schedule log/);
+});
+
+
+test('timing labels distinguish partial history, unknown and skipped work',()=>{
+  assert.match(h.expectedText({seconds:18000,unknown:2}), /~5h\+.*2 task/);
+  assert.match(h.expectedText({seconds:null}), /unknown/);
+  assert.match(h.expectedText({seconds:120,samples:4}), /~2m.*4 previous/);
+  assert.match(h.expectedText({seconds:0}), /skipped/);
+  assert.match(h.taskTable([{name:'file',status:'RUNNING',estimate:{seconds:18000,samples:2}}]), /Expected: ~5h/);
 });

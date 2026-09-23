@@ -1,4 +1,4 @@
-PySAS Workbench 0.4.0-preview.17
+PySAS Workbench 0.4.0-preview.18
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
@@ -177,3 +177,17 @@ Preview.17 changes
 - Use Download schedule log on the schedule card or inside Console, or find
   schedule.log under Logs when inspecting the full schedule in History.
 - Downloads contain the full file even when the on-screen preview is limited.
+
+Saved data and timing estimates (preview.18)
+------------------------------------------
+Files & folders now exports/restores saved-data ZIPs. Finish active jobs and
+stop the watcher first. Restores preserve existing run folders and replace
+folder settings. External input folders and queued jobs are not included.
+For your first upgrade, copy the new app files into your existing workspace
+while PySAS is closed, keeping .pysas-ui, runs and runner/runs; then export.
+
+Estimate time reads successful past runs by program and section/row selection.
+Schedule totals account for dependencies and parallelism. A + means some work
+has unknown timing. Estimates are approximate total durations, not a guarantee.
+Inspect any saved run to download its entire folder as a ZIP.
+The standalone SAS execution engine remains unchanged at 0.3.11.
