@@ -31,7 +31,13 @@ Enterprise Guide setup; `openpyxl` is required for Excel features. No Node.js or
 frontend installation is needed.
 
 See [START_HERE.txt](START_HERE.txt) and the [workbench guide](docs/ui-workbench.md).
-The command-line toolkit is version 0.3.12; the UI preview is 0.4.0-preview.19.
+The **Servers** tab saves a catalog of libraries and tables through your existing
+EGP connection. Refresh on demand, browse table sizes, reported row counts and
+creation/change dates, and see storage totals per library. No shared server folder
+is required. Saved snapshots remain available offline and travel with saved-data
+backups; missing metadata is shown as unknown.
+
+The command-line toolkit is version 0.3.12; the UI preview is 0.4.0-preview.20.
 
 ## Requirements
 

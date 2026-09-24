@@ -25,9 +25,10 @@ from urllib.parse import parse_qs, quote, urlsplit
 from pysas import text_encoding
 from ui_data import archive_folder, export_backup, restore_backup, duration_history, estimate_task, estimate_schedule, index_samples
 import ui_parameters
+import ui_servers
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.19"
+VERSION = "0.4.0-preview.20"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 
@@ -228,6 +229,7 @@ class Workbench:
     def arguments(self, data):
         action = data.get("action", "")
         choices = {
+            "server-refresh": ["runner", "run"],
             "run": ["runner", "run"], "watch": ["runner", "watch"],
             "schedule": ["schedule"], "continue": ["schedule", "continue"],
             "bundle-pack": ["bundle", "pack"], "bundle-verify": ["bundle", "verify"],
@@ -236,9 +238,15 @@ class Workbench:
         }
         if action not in choices:
             raise ValueError("Unknown command.")
-        if action in {"run", "watch", "schedule", "continue"} and os.name != "nt":
+        if action in {"run", "watch", "schedule", "continue", "server-refresh"} and os.name != "nt":
             raise ValueError("SAS execution requires Windows and SAS Enterprise Guide. File tools and history work here.")
         data = dict(data)
+        if action == "server-refresh":
+            ui_servers.library_filter(data.get("libraries", ""))
+            if not str(data.get("template", "")).strip():
+                raise ValueError("Select the EGP connection to refresh.")
+            if len(str(data.get("label", ""))) > 100:
+                raise ValueError("Connection names must be 100 characters or fewer.")
         folders = self.folders()
         project_field = "template" if action in {"run", "watch", "egp-pack"} else "project"
         if action in {"run", "watch", "schedule", "egp-pack", "egp-inspect", "egp-extract"} and not data.get(project_field) and Path(folders["inputs"]) != self.root:
@@ -247,7 +255,7 @@ class Workbench:
                 raise ValueError("Select an EGP project from the input folder.")
             data[project_field] = str(projects[0])
         args = choices[action].copy()
-        if action in {"run", "watch"}:
+        if action in {"run", "watch", "server-refresh"}:
             init_dir = Path(folders["init"])
             if not init_dir.is_dir():
                 raise ValueError("The configured initialization folder is unavailable.")
@@ -269,6 +277,7 @@ class Workbench:
         if action in {"egp-inspect", "egp-extract"} and data.get("project"):
             args.append(str(self.input_path(data["project"])))
         allowed = {
+            "server-refresh": ["template", "lib"],
             "run": ["template", "lib"], "watch": ["template", "lib"],
             "schedule": ["workbook", "project"], "continue": [],
             "bundle-pack": ["output"], "bundle-verify": ["bundle"],
@@ -297,7 +306,7 @@ class Workbench:
             args.extend(["--poll", str(poll)])
         if action in {"run", "watch"} and data.get("tables"):
             args.append("--tables")
-        if action in {"run", "watch", "schedule", "continue"}:
+        if action in {"run", "watch", "schedule", "continue", "server-refresh"}:
             args.append("--no-notify")
         if action == "bundle-pack" and data.get("recursive"):
             args.append("--recursive")
@@ -317,6 +326,19 @@ class Workbench:
                     "code_root": str(self.code_root(data.get("code_root"))) if action.startswith("bundle-") else None,
                     "started": time.time(), "finished": None, "status": "RUNNING", "tasks": {}, "message": "",
                     "can_cancel_file": True}
+            if action == "server-refresh":
+                token = identifier[:12]
+                libraries = ui_servers.library_filter(data.get("libraries", ""))
+                template = str(self.input_path(data["template"]))
+                label = str(data.get("label", "")).strip() or Path(template).stem
+                source = self.storage / "artifacts" / identifier / "server_catalog.sas"
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text(ui_servers.catalog_code(token, libraries), encoding="utf-8")
+                args.append(str(source))
+                item["args"] = list(args)
+                item["name"] = "Refresh server · " + label
+                item["server"] = {"token": token, "label": label, "template": template,
+                                  "libraries": libraries, "lib": str(data.get("lib") or "")}
             if action == "run":
                 enabled = data.get("use_parameters") is True
                 if enabled:
@@ -341,7 +363,7 @@ class Workbench:
             env.update(PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
             env.pop("PYSAS_LIVE_LOG", None)
             isolation = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {"start_new_session": True}
-            if os.name == "nt" and action in {"run", "watch", "schedule", "continue"}:
+            if os.name == "nt" and action in {"run", "watch", "schedule", "continue", "server-refresh"}:
                 # Keep the same console semantics as terminal Python, without a visible window.
                 startup = subprocess.STARTUPINFO()
                 startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -463,6 +485,19 @@ class Workbench:
 
     def complete_worker(self, identifier, process):
         rc = process.wait()
+        item = self.commands[identifier]
+        if item["action"] == "server-refresh" and rc == 0:
+            try:
+                task = next(t for t in item["tasks"].values() if t.get("path") and t.get("status") == "SUCCESS")
+                catalog = ui_servers.read_catalog(within(self.root, task["path"]), item["server"]["token"])
+                catalog.update(captured=time.time(), label=item["server"]["label"], template=item["server"]["template"])
+                snapshot = self.storage / "artifacts" / identifier / "server-catalog.json"
+                atomic_json(snapshot, catalog)
+                item["server"]["snapshot"] = self.relative(snapshot)
+                item["message"] = f"Snapshot saved: {len(catalog['libraries'])} libraries, {len(catalog['tables'])} tables and views."
+            except (OSError, ValueError, StopIteration) as exc:
+                rc = 1
+                item["message"] = "Server snapshot failed: " + (str(exc) or "No successful metadata run was returned.")
         with self.lock:
             item = self.commands[identifier]
             item["finished"] = time.time()
@@ -630,8 +665,28 @@ class Workbench:
                 "folders": self.folders(), "awake": self.awake.status(),
                 "initialization_files": self.cached_listing("init", lambda: sorted({str(p.resolve()) for folder in {Path(self.folders()["init"]), inbox} for p in folder.glob("_*") if p.is_file() and p.suffix.casefold() == ".sas"}), 5),
                 "queued_estimates": {name: estimate_task({"name": name}, samples) for name in queued},
+                "server_snapshots": self.server_snapshots(),
                 "parameters_settings": self.parameter_settings(),
                 "queued": queued, "bundle_settings": self.bundle_settings(), "now": time.time()}
+
+    def server_snapshots(self):
+        with self.lock:
+            return [{"id": c["id"], "status": c["status"], "started": c["started"],
+                     "message": c.get("message", ""), **c["server"]}
+                    for c in sorted(self.commands.values(), key=lambda c: c["started"], reverse=True)
+                    if c.get("server")]
+
+    def server_catalog(self, identifier):
+        with self.lock:
+            command = self.commands.get(identifier, {})
+            snapshot = command.get("server", {}).get("snapshot")
+        if not snapshot:
+            raise ValueError("This refresh has no saved snapshot. Inspect its console for details.")
+        path = within(self.storage / "artifacts", self.root / snapshot)
+        result = read_json(path)
+        if not isinstance(result, dict):
+            raise ValueError("Saved snapshot is missing or unreadable.")
+        return result
 
     def timing_samples(self):
         with self.lock:
@@ -754,6 +809,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_archive(archive_folder(self.server.app.root, value("path")))
             elif url.path == "/api/backup":
                 self.send_archive(self.server.app.backup())
+            elif url.path == "/api/server-catalog":
+                self.respond(self.server.app.server_catalog(value("id")))
             elif url.path == "/api/parameters":
                 self.respond(ui_parameters.load_parameters(self.server.app.storage, value("name")))
             elif url.path == "/api/details":

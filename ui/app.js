@@ -2,12 +2,13 @@
 const $ = (id) => document.getElementById(id);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 let state = null, page = "overview", selectedCommand = null, selectedPath = null, selectedPreview = null, inspectingFolder = false, pendingUnpack = null, polling = false, clockAnchor = null, renderSignature = null, bundlePathsInitialized = false, foldersInitialized = false, parametersInitialized = false, parameterLoading = false, parameterRevision = null, parameterLoadedName = "";
+let serverCatalog=null, serverLoadedId=null, serverLoadingId=null, serverPage=0;
 const monotonic = () => globalThis.performance?.now?.() ?? Date.now();
 function syncClock(now) { if(clockAnchor===null)clockAnchor={server:now,local:monotonic()}; }
 function clockSeconds() { return clockAnchor ? clockAnchor.server+(monotonic()-clockAnchor.local)/1000 : Date.now()/1000; }
 function renderIfChanged() { const {now,token,...stable}=state; const signature=JSON.stringify(stable);if(signature!==renderSignature){renderSignature=signature;render();} }
 const active = c => ["RUNNING", "STOPPING", "CANCELLING"].includes(c.status);
-const titles = {overview:"Workspace overview", runner:"Runner & watcher", scheduler:"Dependency scheduler", tools:"Bundles & EGP", history:"Run history", files:"Files & folders"};
+const titles = {servers:"Servers & libraries", overview:"Workspace overview", runner:"Runner & watcher", scheduler:"Dependency scheduler", tools:"Bundles & EGP", history:"Run history", files:"Files & folders"};
 function duration(seconds) { if (seconds == null || !Number.isFinite(Number(seconds))) return "—"; seconds = Math.max(0, Math.floor(seconds)); return `${String(Math.floor(seconds/3600)).padStart(2,"0")}:${String(Math.floor(seconds%3600/60)).padStart(2,"0")}:${String(seconds%60).padStart(2,"0")}`; }
 function elapsed(item) { return item.status === "UNKNOWN" ? "—" : active(item) && item.started ? duration(clockSeconds() - item.started) : duration(item.elapsed); }
 function timer(item) { return `<span class="elapsed" ${active(item)&&item.started?`data-start="${Number(item.started)}"`:""}>${elapsed(item)}</span>`; }
@@ -55,6 +56,7 @@ function render() { if(!state)return;$("watch-inbox-path").textContent=state.fol
 if(page==="overview"){$("live-overview").innerHTML=live();$("recent-runs").innerHTML=historyTable(state.history.slice(0,6));$("commands-overview").innerHTML=commandCards(state.commands.slice(0,5));}
 if(page==="runner"){$("init-file-list").innerHTML=state.initialization_files?.length?state.initialization_files.map(p=>`<div class="queue-item"><code>${esc(p)}</code></div>`).join(""):'<p class="hint">No _*.sas files were found in the initialization folder or inbox.</p>';$("live-runner").innerHTML=live();$("inbox").innerHTML=state.queued.length?state.queued.map((name,i)=>`<div class="queue-item"><span class="badge pending">${i+1}</span><span>${esc(name)}</span><small>Waiting · ${esc(expectedText(state.queued_estimates?.[name]))}</small></div>`).join(""):'<p class="hint">The inbox is empty. Add job .sas files through Files & folders or your configured inbox.</p>';}
 if(page==="scheduler")$("schedule-activity").innerHTML=commandCards(state.commands.filter(c=>["schedule","continue"].includes(c.action)).slice(0,10),true);
+if(page==="servers")renderServers();
 if(page==="tools")$("tools-activity").innerHTML=commandCards(state.commands.filter(c=>c.action.startsWith("bundle-")||c.action.startsWith("egp-")).slice(0,10));
 if(page==="history"){let records=state.history;const q=$("history-search").value.toLowerCase(), filter=$("history-filter").value;records=records.filter(h=>(h.name+" "+h.path).toLowerCase().includes(q)&&(filter==="all"||filter==="errors"&&/FAIL|ERROR|LOST|BLOCKED/.test(h.status)||h.status===filter));$("all-history").innerHTML=historyTable(records);$("commands-history").innerHTML=commandCards(state.commands);}}
 async function refresh(force=false) { if(polling)return; polling=true;try{state=await api(force?"/api/state?refresh=1":"/api/state");if($("error").textContent.startsWith("The local server is unavailable"))error("");syncClock(state.now);$("workspace").textContent=state.workspace;$("version").textContent=`v${state.version} · This computer only`;$("connection").textContent="Connected locally";$("connection-dot").className="online";const notices=[];if(!state.windows)notices.push("SAS execution requires Windows with Enterprise Guide. You can use file tools and inspect history on this computer.");if(!state.openpyxl)notices.push("Install openpyxl for schedules and Excel table previews (see START_HERE.txt).");$("notice").textContent=notices.join(" ");$("notice").hidden=!notices.length;document.querySelectorAll(".sas-action").forEach(b=>b.disabled=!state.windows);files();await initializeParameters();renderIfChanged();if($("details-dialog").open){if(selectedCommand)await refreshConsole();else if(inspectingFolder&&selectedPath)await showPath(selectedPath,true);}}catch(e){$("connection").textContent="Connection lost";$("connection-dot").className="offline";error("The local server is unavailable. The app may have closed. Displayed job states may be stale.");}finally{polling=false;}}
@@ -194,4 +196,63 @@ $("import-parameters").addEventListener("change",async()=>{
     putParameters(result,false);
   }catch(e){$("parameters-status").textContent=e.message;}
   finally{parameterBusy(false);input.value="";}
+});
+
+function storageSize(bytes, unknown=0) {
+  if(bytes==null || (unknown>0 && !bytes))return "Unknown";
+  const units=["B","KB","MB","GB","TB","PB"];let size=bytes, unit=0;
+  while(size>=1024 && unit<units.length-1){size/=1024;unit++;}
+  return `${unknown>0?"At least ":""}${size.toLocaleString(undefined,{maximumFractionDigits:unit?2:0})} ${units[unit]}`;
+}
+function catalogRows(catalog, library, query, sort) {
+  const q=query.trim().toLowerCase();
+  return catalog.tables.filter(t=>(!library || t.libname===library) && `${t.libname}.${t.name} ${t.label||""}`.toLowerCase().includes(q)).sort((a,b)=>{
+    if(sort==="size")return (b.bytes??-1)-(a.bytes??-1) || a.name.localeCompare(b.name);
+    if(sort==="modified")return (b.modified||"").localeCompare(a.modified||"") || a.name.localeCompare(b.name);
+    return `${a.libname}.${a.name}`.localeCompare(`${b.libname}.${b.name}`);
+  });
+}
+async function renderServers() {
+  const snapshots=state.server_snapshots || [], select=$("server-snapshots"), previous=select.value;
+  select.innerHTML='<option value="">Latest successful refresh</option>'+snapshots.filter(s=>s.snapshot).map(s=>`<option value="${esc(s.id)}">${esc(s.label)} · ${esc(date(s.started))}</option>`).join("");select.value=previous;
+  const selected=snapshots.find(s=>s.id===select.value && s.snapshot) || snapshots.find(s=>s.snapshot);
+  $("server-activity").innerHTML=commandCards(state.commands.filter(c=>c.action==="server-refresh").slice(0,3));
+  $("server-reuse").disabled=!selected;$("server-download").hidden=!selected;
+  if(!selected){$("server-library-list").innerHTML=empty("No server snapshot yet","Select an EGP connection and refresh to discover its assigned libraries.");$("server-table-list").innerHTML="";$("server-summary").textContent="";$("server-snapshot-status").textContent="No successful refresh has been saved.";return;}
+  $("server-download").href=`/api/download?path=${encodeURIComponent(selected.snapshot)}`;
+  if(serverLoadedId!==selected.id){
+    if(serverLoadingId===selected.id)return;
+    const id=selected.id;serverLoadingId=id;serverCatalog=null;serverLoadedId=null;$("server-library-list").innerHTML="";$("server-table-list").innerHTML="";$("server-summary").textContent="";$("server-snapshot-status").textContent="Loading saved catalog…";
+    try{const catalog=await api(`/api/server-catalog?id=${encodeURIComponent(id)}`);if(serverLoadingId!==id)return;
+      serverCatalog=catalog;serverLoadedId=id;serverPage=0;
+      fillSelect($("server-library"),catalog.libraries.map(l=>l.name));
+      $("server-snapshot-status").textContent=`${catalog.label} · captured ${date(catalog.captured)}. Refresh to update; this is not a live view.`;
+      renderCatalog();
+    }catch(e){if(serverLoadingId===id)$("server-snapshot-status").textContent=e.message;}
+    finally{if(serverLoadingId===id)serverLoadingId=null;}
+  }else renderCatalog();
+}
+function renderCatalog(){
+  if(!serverCatalog)return;
+  const libs=serverCatalog.libraries;
+  $("server-summary").textContent=`${libs.length} libraries · ${libs.reduce((n,l)=>n+l.tables,0)} tables · ${libs.reduce((n,l)=>n+l.views,0)} ${libs.reduce((n,l)=>n+l.views,0)===1?"view":"views"}. Storage totals are per library; aliases can overlap.`;
+  $("server-library-list").innerHTML=libs.length?table(["Library / engine","Table storage","Tables / views","Location"],libs.map(l=>`<tr><td><button type="button" class="text-button" data-server-library="${esc(l.name)}">${esc(l.name)}</button><small>${esc(l.engines.join(", "))}</small></td><td>${esc(storageSize(l.known_bytes,l.unknown_sizes))}${l.unknown_sizes?`<small>${l.unknown_sizes} ${l.unknown_sizes===1?"table size":"table sizes"} unavailable</small>`:""}</td><td>${l.tables} / ${l.views}</td><td class="server-location">${l.paths.map(esc).join("<br>") || "—"}</td></tr>`)):empty("No libraries returned","Check your initialization assignments and library filter in the refresh console.");
+  const rows=catalogRows(serverCatalog,$("server-library").value,$("server-search").value,$("server-sort").value);
+  const pages=Math.max(1,Math.ceil(rows.length/100));serverPage=Math.max(0,Math.min(serverPage,pages-1));
+  $("server-table-list").innerHTML=rows.length?table(["Table / label","Type","Storage","Rows / columns","Created","Changed"],rows.slice(serverPage*100,(serverPage+1)*100).map(t=>`<tr><td><strong>${esc(t.libname)}.${esc(t.name)}</strong><small>${esc(t.label)}</small></td><td>${t.kind==="VIEW"?"View":"Table"}</td><td>${t.kind==="VIEW"?"—":esc(storageSize(t.bytes))}</td><td>${t.rows==null?"Unknown":esc(t.rows.toLocaleString())} / ${t.columns==null?"Unknown":esc(t.columns.toLocaleString())}</td><td>${esc(t.created?.replace("T"," ")||"Unknown")}</td><td>${esc(t.modified?.replace("T"," ")||"Unknown")}</td></tr>`)):empty("No matching tables","Choose another library or change your search.");
+  $("server-page").textContent=`${rows.length} ${rows.length===1?"match":"matches"} · page ${serverPage+1} of ${pages}`;$("server-prev").disabled=serverPage===0;$("server-next").disabled=serverPage===pages-1;
+}
+bindForm("server-form","server-refresh");
+$("server-snapshots").addEventListener("change",renderServers);
+for(const id of ["server-library","server-search","server-sort"])$(id).addEventListener("input",()=>{serverPage=0;renderCatalog();});
+$("server-prev").addEventListener("click",()=>{serverPage--;renderCatalog();});
+$("server-next").addEventListener("click",()=>{serverPage++;renderCatalog();});
+document.addEventListener("click",e=>{const button=e.target.closest("[data-server-library]");if(button){$("server-library").value=button.dataset.serverLibrary;serverPage=0;renderCatalog();}});
+$("server-reuse").addEventListener("click",()=>{
+  const saved=(state.server_snapshots||[]).find(s=>s.id===serverLoadedId);if(!saved)return;
+  $("server-label").value=saved.label;$("server-libraries").value=saved.libraries.join(", ");
+  for(const [id,value] of [["server-template",saved.template],["server-init",saved.lib]]){
+    const select=$(id), matching=state.files.find(f=>f===value || `${state.workspace}/${f}`===value || `${state.workspace}\\${f}`===value);
+    if(value && !matching){error("The saved EGP or initialization path is unavailable. Select its location on this computer.");select.value="";}else select.value=matching||"";
+  }
 });

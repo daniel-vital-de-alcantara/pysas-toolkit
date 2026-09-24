@@ -1,4 +1,4 @@
-PySAS Workbench 0.4.0-preview.19
+PySAS Workbench 0.4.0-preview.20
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
@@ -214,3 +214,13 @@ it no longer applies globally to other jobs.
 
 CLI equivalent: py pysas.py runner run extract.sas --parameters cases.sas
 The watcher and scheduler keep their existing setup and execution behavior.
+
+Servers tab (preview.20)
+-----------------------
+Choose an EGP connection and click Refresh snapshot to save a library/table
+catalog. Shared initialization assigns the libraries first; an optional override
+and library filter are available. Browse storage, reported row counts, creation
+and modification dates, even after disconnecting from SAS. Unknown metadata stays
+unknown; library totals say At least when sizes are missing. This is table disk
+storage, not RAM. WORK, SASHELP and SASUSER are excluded. No shared folder is needed.
+Snapshots are included in saved-data backups and can be downloaded as JSON.

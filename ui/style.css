@@ -5,3 +5,7 @@
 .expected-time{display:block;color:var(--muted);font-size:12px;font-weight:400;margin-top:5px;max-width:300px}#download-folder{display:inline-block;margin:0 24px 16px}#download-folder[hidden]{display:none}#restore-form{margin-top:24px}
 
 .parameters-panel{border:1px solid var(--line);border-radius:8px;padding:16px;margin:20px 0}.parameters-panel textarea{box-sizing:border-box;width:100%;resize:vertical;min-height:160px;padding:12px;border:1px solid var(--line);border-radius:5px;font:13px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;background:var(--panel,#fff);color:var(--ink,#172f40)}.parameters-panel textarea:focus{outline:2px solid var(--accent,#0075b7);outline-offset:2px}.parameter-import{cursor:pointer;margin:0!important;display:inline-flex!important;align-items:center}.parameter-import:focus-within{outline:2px solid var(--accent,#0075b7)}
+
+.server-filters{display:grid;grid-template-columns:1fr 2fr 1fr;gap:16px}.server-location{max-width:340px;overflow-wrap:anywhere}#server-activity:empty{display:none}#server-page{align-self:center}.text-button{background:none;border:0;padding:0;color:var(--accent);font-weight:700;cursor:pointer;text-align:left}@media(max-width:800px){.server-filters{grid-template-columns:1fr}}
+
+#server-table-list td:first-child{max-width:300px;overflow-wrap:anywhere;white-space:normal}

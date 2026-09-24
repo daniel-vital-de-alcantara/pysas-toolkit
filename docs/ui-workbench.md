@@ -1,6 +1,6 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.19 is a separate browser UI for the standalone PySAS
+The Workbench 0.4.0-preview.20 is a separate browser UI for the standalone PySAS
 0.3.12 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
@@ -296,3 +296,52 @@ and reads inputs in bounded chunks, including Windows-encoded SAS logs.
 This is a report after completion/stop; it does not request live remote SAS logs
 or combine separate schedule runs. Existing runs from older releases retain
 their individual logs.
+
+
+## Servers: saved library and table catalogs (preview.20)
+
+1. Open **Servers**, name the connection and select an EGP template.
+2. Use shared `_*.sas` initialization or choose a library setup override. As in
+   Run a file, the first program in the EGP supplies the SAS connection. Project
+   programs are not executed automatically; library assignments must be available
+   through server startup or your initialization code.
+3. Optionally enter library names (for example `DWH, REPORTS`). Leaving this empty
+   discovers all assigned libraries except WORK, SASHELP and SASUSER. Filtering
+   can reduce metadata discovery time on large or database-backed libraries.
+4. Click **Refresh snapshot**. The usual runner executes initialization and the
+   generated metadata program in the same submission. Console, elapsed time,
+   Inspect and Stop file controls work as they do for other single-file runs.
+5. Browse libraries, filter/search tables and sort by storage or modification
+   date. Results are paged at 100 tables. Older snapshots remain selectable;
+   **Use this connection for next refresh** fills the refresh form again.
+
+The collector queries `DICTIONARY.LIBNAMES` and `DICTIONARY.TABLES`. It creates two
+small metadata datasets in its own WORK session; it does not select table contents
+or alter source tables. Shared initialization remains ordinary SAS code and runs
+normally. SAS metadata discovery can still access library members or view engines
+and may be slow for remote databases. This is a fresh session, so libraries assigned
+only inside another running job (including its WORK) are not visible.
+
+Storage means SAS-reported `FILESIZE`, not RAM, free disk capacity or a complete
+filesystem usage audit. Engine/index/compression semantics vary. Unreported,
+negative and zero table sizes display Unknown, not a claim of zero disk usage.
+Library totals sum known table sizes, exclude views, and show **At least** if some
+sizes are missing. Aliased or concatenated library paths can overlap; do not add
+all library totals to estimate unique server storage. Counts use reported `NOBS`
+(physical observations where applicable), not a row scan. Missing counts/dates
+remain Unknown. Dates display SAS's values without inventing a timezone.
+
+The existing EG log export carries short ASCII-framed UTF-8 hex records back to
+the PC; no shared folder, Excel export or extra COM calls during Run are needed.
+Incomplete/failed refreshes do not replace earlier snapshots. Each refresh retains
+its generated SAS code and log in the normal run folder; its parsed JSON is saved
+under `.pysas-ui/artifacts/<command-id>/server-catalog.json`. **Download snapshot
+JSON** exports it, and saved-data backup/restore includes snapshots and connection
+selections. Refreshing after moving PCs requires an accessible EGP and setup files.
+
+Reference: [SAS DICTIONARY metadata and discovery](https://support.sas.com/documentation/cdl/en/sqlproc/63043/HTML/default/n02s19q65mw08gn140bwfdh7spx7.htm)
+and [SAS table storage metadata](https://blogs.sas.com/content/sastraining/2017/04/25/determining-the-size-of-a-sas-data-set/).
+Automated tests cover transport parsing (including Unicode and incomplete logs),
+backup/restore, HTTP downloads, UI filters, and the real Windows cscript path with
+substituted EG COM. A licensed SAS server is required to validate actual metadata
+returned by your specific engines.

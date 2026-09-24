@@ -207,6 +207,35 @@ class SchedulerParityTests(unittest.TestCase):
                 if process.poll() is None: process.kill(); process.wait()
             app.awake.close()
 
+    def test_server_refresh_uses_runner_connection_and_complete_exported_log(self):
+        from test_servers import catalog_log, RECORDS, TOKEN
+        from types import SimpleNamespace
+        (self.root/'pysas.py').write_text((ROOT/'pysas.py').read_text(encoding='utf-8') + '\nVBS = ' + repr(self.current), encoding='utf-8')
+        self.programs = [('Seed', 'seed;', 'TARGET_SERVER')]
+        project = self.project(log=catalog_log(RECORDS, TOKEN))
+        (self.root/'_libs.sas').write_text('library_token;', encoding='utf-8')
+        app = ui.Workbench(self.root)
+        try:
+            with patch.object(ui.uuid, 'uuid4', return_value=SimpleNamespace(hex=TOKEN+'0'*20)):
+                identifier = app.launch(dict(action='server-refresh', template=str(project), label='Test connection', libraries='DATA'))['id']
+            exit_code = app.processes[identifier].wait(timeout=30)
+            deadline = time.monotonic()+10
+            while identifier in app.processes and time.monotonic()<deadline: time.sleep(.05)
+            item = app.commands[identifier]
+            console = (app.storage/(identifier+'.txt')).read_text(encoding='utf-8')
+            self.assertEqual(exit_code, 0, console)
+            self.assertEqual(item['status'], 'SUCCESS', item['message']+'\n'+console)
+            self.assertEqual(len(app.server_catalog(identifier)['tables']), 3)
+            folder = self.root/next(iter(item['tasks'].values()))['path']
+            code = engine.read_text(next((folder/'code').glob('*.sas')))
+            self.assertLess(code.index('library_token;'), code.index('from dictionary.tables'))
+            self.assertIn('--init-dir', item['args'])
+            self.assertNotIn('--tables', item['args'])
+        finally:
+            for process in list(app.processes.values()):
+                if process.poll() is None: process.kill(); process.wait()
+            app.awake.close()
+
     def test_ui_schedule_completes_with_real_bridge_and_three_setup_sections(self):
         import openpyxl
         # The real UI worker imports this single engine; only EG COM is replaced.

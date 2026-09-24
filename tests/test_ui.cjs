@@ -15,7 +15,7 @@ const context = {
   fetch:async()=>({ok:true,json:async()=>snapshot}),setInterval(){},AbortController,Date,console
 };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
 const h = context.helpers;
 test('elapsed formatting supports seconds, hours, and runs longer than a day',()=>{
   assert.equal(h.duration(65.9),'00:01:05');
@@ -128,4 +128,19 @@ test('parameters load into the editor as text and can be disabled without discar
   h.putParameters({name:'import.sas',text:'%let name=café;'},false);
   assert.equal(node('parameter-files').value,'');
   assert.match(node('parameters-status').textContent,/original file is unchanged/);
+});
+
+test('server storage distinguishes missing sizes and partial library totals',()=>{
+  assert.equal(h.storageSize(null),'Unknown');
+  assert.equal(h.storageSize(0,3),'Unknown');
+  assert.equal(h.storageSize(1024,2),'At least 1 KB');
+  assert.equal(h.storageSize(1048576),'1 MB');
+  assert.equal(h.storageSize(0),'0 B');
+});
+test('server tables filter and sort without changing the saved snapshot',()=>{
+  const catalog={tables:[{libname:'B',name:'Z',bytes:null},{libname:'A',name:'X',label:'Claims',bytes:1024,modified:'2026-09-24T10:00:00'},{libname:'A',name:'Y',bytes:2048,modified:'2026-09-23T10:00:00'}]};
+  assert.equal(h.catalogRows(catalog,'A','claims','name')[0].name,'X');
+  assert.deepEqual(Array.from(h.catalogRows(catalog,'','','size'),t=>t.name),['Y','X','Z']);
+  assert.deepEqual(Array.from(h.catalogRows(catalog,'','','modified'),t=>t.name),['X','Y','Z']);
+  assert.equal(catalog.tables[0].name,'Z');
 });

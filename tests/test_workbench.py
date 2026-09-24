@@ -338,6 +338,20 @@ class HttpTests(unittest.TestCase):
         status, _, _ = self.request('POST', '/api/parameters/import?name=bad.py', b'code', headers)
         self.assertEqual(status, 400)
 
+    def test_server_catalog_http_and_snapshot_download(self):
+        path = self.server.app.storage/'artifacts/catalog/server-catalog.json'
+        path.parent.mkdir(parents=True)
+        payload = dict(libraries=[], tables=[], label='Test connection', captured=1)
+        ui.atomic_json(path, payload)
+        self.server.app.commands['catalog'] = dict(id='catalog', action='server-refresh', status='SUCCESS', started=1, tasks={}, server=dict(label='Test connection', snapshot=self.server.app.relative(path)))
+        status, body, _ = self.request('GET', '/api/server-catalog?id=catalog')
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), payload)
+        status, body, _ = self.request('GET', '/api/download?path=.pysas-ui/artifacts/catalog/server-catalog.json')
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), payload)
+        self.assertEqual(self.request('GET', '/api/server-catalog?id=unknown')[0], 400)
+
     def test_saved_data_http_roundtrip_and_folder_zip(self):
         folder = self.root / 'runs' / 'old'
         folder.mkdir(parents=True)
