@@ -1,6 +1,6 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.21 is a separate browser UI for the standalone PySAS
+The Workbench 0.4.0-preview.22 is a separate browser UI for the standalone PySAS
 0.3.12 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
@@ -347,15 +347,28 @@ substituted EG COM. A licensed SAS server is required to validate actual metadat
 returned by your specific engines.
 
 
-## Copy logs and code from Inspect (preview.21)
+## Copy actual files from Inspect (preview.22)
 
-Select a log, SAS program or another text file in Inspect, then click **Copy** next
-to Download. This copies the entire decoded file, even when the preview only shows
-the latest log output or truncates a large file. Paste it into Copilot or another
-application normally. A Copied confirmation appears after the clipboard operation
-succeeds. Copy takes the contents available when clicked, so click again to include
-newly written output. Excel/binary results continue to use Download.
+Select a file in Inspect and click **Copy file** beside Download. On Windows this
+places the actual file on the native shell clipboard, like selecting a file in
+Explorer and choosing Copy. Paste it with Ctrl+V into Explorer or an application
+that accepts pasted file attachments. This replaces preview.21's text-copy button.
+It works for logs, SAS programs, Excel workbooks and other inspected files without
+reading, decoding or changing their contents.
 
-Clipboard access requires a supported browser and a focused app window. A denied
-clipboard request displays an error and leaves Download available. No content is
-sent to Copilot or another service by PySAS.
+**File copied** confirms success. The clipboard references the selected original
+file; keep that file available until pasting, just as with Explorer Copy. It uses
+copy semantics, not cut/move. Attachment acceptance and allowed file types depend
+on the destination application; PySAS does not upload anything automatically.
+The button is disabled on macOS/Linux, where Download remains available.
+
+The loopback app's token-protected POST action validates the selected file against
+its existing allowed folders. `windows_clipboard.py` writes Unicode `CF_HDROP`
+plus Preferred DropEffect COPY through the Windows API; a hidden window owns the
+clipboard during the operation. No browser text clipboard or PowerShell is used
+by the app. A busy clipboard is retried briefly and failures are reported.
+
+Windows integration tests use a separate Python writer process and a .NET file
+clipboard reader after the writer exits, checking Unicode filenames, unchanged
+binary content, no text clipboard format, and copy rather than move semantics.
+See [Microsoft's shell clipboard formats](https://learn.microsoft.com/en-us/windows/win32/shell/clipboard).

@@ -22,13 +22,14 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
-from pysas import text_encoding, read_text as read_full_text
+from pysas import text_encoding
 from ui_data import archive_folder, export_backup, restore_backup, duration_history, estimate_task, estimate_schedule, index_samples
 import ui_parameters
 import ui_servers
+import windows_clipboard
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.21"
+VERSION = "0.4.0-preview.22"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 TEXT_SUFFIXES = {".sas", ".log", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".xml"}
@@ -732,11 +733,12 @@ class Workbench:
                     break
         return {"files": files, "tasks": tasks}
 
-    def file_text(self, relative):
+    def copy_file(self, relative):
         path = self.input_path(relative)
-        if path.suffix.lower() not in TEXT_SUFFIXES:
-            raise ValueError("Copy is available for text files. Download this file to open it in its application.")
-        return {"text": read_full_text(path)}
+        if not path.is_file():
+            raise ValueError("Select an existing file to copy.")
+        windows_clipboard.copy_file(path)
+        return {"name": path.name}
 
     def preview(self, relative):
         path = self.input_path(relative)
@@ -822,8 +824,6 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(ui_parameters.load_parameters(self.server.app.storage, value("name")))
             elif url.path == "/api/details":
                 self.respond(self.server.app.details(value("path")))
-            elif url.path == "/api/file-text":
-                self.respond(self.server.app.file_text(value("path")))
             elif url.path == "/api/preview":
                 self.respond(self.server.app.preview(value("path")))
             elif url.path == "/api/console":
@@ -912,6 +912,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/quit":
                 self.respond({"message": "Closing PySAS after active jobs finish."})
                 threading.Thread(target=self.server.request_close, daemon=True).start()
+            elif self.path == "/api/copy-file":
+                self.respond(self.server.app.copy_file(data.get("path", "")))
             elif self.path == "/api/parameters/select":
                 self.respond(self.server.app.select_parameters(data.get("name")))
             elif self.path == "/api/parameters/save":

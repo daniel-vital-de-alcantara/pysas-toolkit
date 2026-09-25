@@ -338,24 +338,31 @@ class HttpTests(unittest.TestCase):
         status, _, _ = self.request('POST', '/api/parameters/import?name=bad.py', b'code', headers)
         self.assertEqual(status, 400)
 
-    def test_copy_reads_complete_log_and_respects_text_encodings_and_path_limits(self):
+    def test_copy_file_post_requires_token_and_passes_real_file_not_its_text(self):
         folder = self.root/'runs/copy'; folder.mkdir(parents=True)
-        text = 'FIRST LINE café\n' + 'NOTE: line of log output\n'*30000 + 'LAST LINE\n'
-        for encoding in ('utf-8', 'cp1252', 'utf-16'):
-            (folder/'full.log').write_bytes(text.encode(encoding))
-            status, body, _ = self.request('GET', '/api/preview?path=runs/copy/full.log')
-            self.assertEqual(status, 200)
-            self.assertNotIn('FIRST LINE', json.loads(body)['text'])
-            status, body, _ = self.request('GET', '/api/file-text?path=runs/copy/full.log')
-            self.assertEqual(status, 200)
-            self.assertEqual(json.loads(body)['text'], text)
-        (folder/'job.sas').write_text('%let cases=123;')
-        status, body, _ = self.request('GET', '/api/file-text?path=runs/copy/job.sas')
-        self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body)['text'], '%let cases=123;')
-        for path in ('../outside.log', 'runs/copy/results.xlsx', 'runs/copy/missing.log'):
-            self.assertEqual(self.request('GET', '/api/file-text?path='+path)[0], 400)
-        self.assertEqual(self.request('GET', '/api/file-text?path=runs/copy/full.log', headers={'Origin':'https://evil.example'})[0], 403)
+        headers = {'X-PySAS-Token': self.server.token}
+        with patch.object(ui.windows_clipboard, 'copy_file') as clipboard:
+            for name in ('full.log', 'results.xlsx'):
+                path = folder/name
+                contents = bytes(range(256)); path.write_bytes(contents)
+                body = json.dumps({'path': 'runs/copy/'+name})
+                self.assertEqual(self.request('POST', '/api/copy-file', body)[0], 403)
+                clipboard.assert_not_called()
+                status, response, _ = self.request('POST', '/api/copy-file', body, headers)
+                self.assertEqual(status, 200, response)
+                self.assertEqual(json.loads(response), {'name': name})
+                clipboard.assert_called_once_with(path.resolve())
+                self.assertEqual(path.read_bytes(), contents)
+                clipboard.reset_mock()
+            for path in ('../outside.log', 'runs/copy', 'runs/copy/missing.log'):
+                self.assertEqual(self.request('POST', '/api/copy-file', json.dumps({'path':path}), headers)[0], 400)
+            clipboard.assert_not_called()
+            self.assertEqual(self.request('POST', '/api/copy-file', body, {**headers, 'Origin':'https://evil.example'})[0], 403)
+            clipboard.side_effect = OSError('Clipboard busy')
+            status, response, _ = self.request('POST', '/api/copy-file', body, headers)
+            self.assertEqual(status, 400)
+            self.assertIn('Clipboard busy', json.loads(response)['error'])
+        self.assertEqual(self.request('GET', '/api/copy-file')[0], 404)
 
     def test_server_catalog_http_and_snapshot_download(self):
         path = self.server.app.storage/'artifacts/catalog/server-catalog.json'

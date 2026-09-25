@@ -46,16 +46,17 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'preview') }}
           fail_on_unmatched_files: true
           body: |
-            Copy logs and SAS code directly from Inspect.
+            Copy actual files from Inspect, like Copy in Windows Explorer.
 
-            Download PySAS-Workbench-Python-0.4.0-preview.21.zip, extract fully and open START_PYSAS.bat.
+            Download PySAS-Workbench-Python-0.4.0-preview.22.zip, extract fully and open START_PYSAS.bat.
 
-            - New Copy button beside Download for log, SAS and other text files in Inspect.
-            - Copies the entire file, including lines outside a truncated preview or log tail. UTF-8, UTF-16 and legacy Windows text decoding use the existing engine reader.
-            - Copied confirms success. Clipboard permission failures display an error; nothing is automatically sent to Copilot or any other service.
-            - Click Copy again to include newly written output. Excel/binary results remain downloadable.
-            - Includes Servers snapshots and all previous features. The standalone SAS execution engine remains 0.3.12.
+            - Copy file beside Download now places the selected file on the Windows shell clipboard. This replaces preview.21's text-copy behavior.
+            - Paste with Ctrl+V into apps that accept file attachments. Works for logs, SAS programs, Excel and other inspected files with their original filename and bytes.
+            - Uses copy semantics, not cut/move. Keep the source file available until pasting. Attachment support depends on the destination application.
+            - File copied confirms success; clipboard failures are reported. No upload is performed automatically. On macOS/Linux, use Download.
+            - Includes all previous features; the standalone SAS execution engine remains 0.3.12.
 
+            Windows tests verify that another process receives a real file-drop clipboard entry after the copying process exits, without text conversion or changes to the source file.
             Close PySAS before upgrading and keep your saved data or use backup/restore.
 
           files: |

@@ -145,38 +145,36 @@ test('server tables filter and sort without changing the saved snapshot',()=>{
   assert.equal(catalog.tables[0].name,'Z');
 });
 
-test('Copy writes full endpoint text rather than the rendered tail and reports permission failures',async()=>{
-  const originalFetch=context.fetch;let copied=null, requested=null;
-  const originalNavigator=context.navigator;
+test('Copy file requests a native file copy and never fetches or writes file text',async()=>{
+  const originalFetch=context.fetch;const originalWindows=snapshot.windows;let request;
   try{
-    node('file-preview').textContent='[Showing latest output] last few lines';
-    context.fetch=async path=>{requested=path;return {ok:true,json:async()=>({text:'FIRST\nfull log café\nLAST'})};};
-    context.navigator={clipboard:{writeText:async text=>{copied=text;}}};
-    h.setCopyTarget('runs/a long path/job.log');await h.copyFile();
-    assert.equal(requested,'/api/file-text?path=runs%2Fa%20long%20path%2Fjob.log');
-    assert.equal(copied,'FIRST\nfull log café\nLAST');
-    assert.equal(node('copy-file').textContent,'Copied');
-    assert.equal(node('copy-file').disabled,false);
-    context.navigator.clipboard.writeText=async()=>{throw new Error('Clipboard permission denied');};
+    snapshot.windows=true;
+    context.fetch=async(path,options)=>{request={path,options};return {ok:true,json:async()=>({name:'results.xlsx'})};};
+    h.setCopyTarget('runs/a long path/results.xlsx');await h.copyFile();
+    assert.equal(request.path,'/api/copy-file');
+    assert.equal(request.options.method,'POST');
+    assert.equal(request.options.headers['X-PySAS-Token'],'test');
+    assert.deepEqual(JSON.parse(request.options.body),{path:'runs/a long path/results.xlsx'});
+    assert.equal(node('copy-file').textContent,'File copied');
+    assert.match(node('copy-status').textContent,/results.xlsx copied as a file/);
+    context.fetch=async()=>({ok:false,json:async()=>({error:'Windows clipboard busy'})});
     await h.copyFile();
-    assert.match(node('copy-status').textContent,/Copy failed.*permission denied/);
-    assert.equal(node('copy-file').textContent,'Copy');
-    h.setCopyTarget(null);
-    assert.equal(node('copy-file').hidden,true);
-    assert.equal(node('copy-status').hidden,true);
-  }finally{context.fetch=originalFetch;context.navigator=originalNavigator;}
+    assert.match(node('copy-status').textContent,/Copy failed.*clipboard busy/);
+    assert.equal(node('copy-file').textContent,'Copy file');
+    snapshot.windows=false;h.setCopyTarget('job.log');
+    assert.equal(node('copy-file').disabled,true);
+    h.setCopyTarget(null);assert.equal(node('copy-file').hidden,true);
+  }finally{context.fetch=originalFetch;snapshot.windows=originalWindows;}
 });
-test('Copy retains click activation and does not mark a newly selected file as copied',async()=>{
-  const originalFetch=context.fetch;const originalNavigator=context.navigator;let resolveFile, copied;
+test('A completed file copy does not mark a different selected file as copied',async()=>{
+  const originalFetch=context.fetch;const originalWindows=snapshot.windows;let finish;
   try{
-    context.Blob=Blob;context.ClipboardItem=class{constructor(values){this.values=values;}};
-    context.fetch=()=>new Promise(resolve=>{resolveFile=()=>resolve({ok:true,json:async()=>({text:'Original file contents'})});});
-    context.navigator={clipboard:{write:async items=>{copied=await (await items[0].values['text/plain']).text();}}};
+    snapshot.windows=true;
+    context.fetch=()=>new Promise(resolve=>{finish=()=>resolve({ok:true,json:async()=>({name:'original.log'})});});
     h.setCopyTarget('original.log');const pending=h.copyFile();
     assert.equal(node('copy-file').disabled,true);
-    h.setCopyTarget('different.log');resolveFile();await pending;
-    assert.equal(copied,'Original file contents');
-    assert.equal(node('copy-file').textContent,'Copy');
+    h.setCopyTarget('different.log');finish();await pending;
+    assert.equal(node('copy-file').textContent,'Copy file');
     assert.equal(node('copy-status').hidden,true);
-  }finally{context.fetch=originalFetch;context.navigator=originalNavigator;delete context.ClipboardItem;delete context.Blob;h.setCopyTarget(null);}
+  }finally{context.fetch=originalFetch;snapshot.windows=originalWindows;h.setCopyTarget(null);}
 });

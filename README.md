@@ -37,7 +37,7 @@ creation/change dates, and see storage totals per library. No shared server fold
 is required. Saved snapshots remain available offline and travel with saved-data
 backups; missing metadata is shown as unknown.
 
-The command-line toolkit is version 0.3.12; the UI preview is 0.4.0-preview.21.
+The command-line toolkit is version 0.3.12; the UI preview is 0.4.0-preview.22.
 
 ## Requirements
 
