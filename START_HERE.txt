@@ -1,4 +1,4 @@
-PySAS Workbench 0.4.0-preview.20
+PySAS Workbench 0.4.0-preview.21
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
@@ -224,3 +224,9 @@ and modification dates, even after disconnecting from SAS. Unknown metadata stay
 unknown; library totals say At least when sizes are missing. This is table disk
 storage, not RAM. WORK, SASHELP and SASUSER are excluded. No shared folder is needed.
 Snapshots are included in saved-data backups and can be downloaded as JSON.
+
+Copy from Inspect (preview.21)
+------------------------------
+Select a log or SAS/text file and click Copy next to Download. The entire file
+is copied, including lines outside the visible preview. Paste into Copilot or
+another app. Copied confirms success; click again for newly written log output.

@@ -1,6 +1,6 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.20 is a separate browser UI for the standalone PySAS
+The Workbench 0.4.0-preview.21 is a separate browser UI for the standalone PySAS
 0.3.12 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
@@ -345,3 +345,17 @@ Automated tests cover transport parsing (including Unicode and incomplete logs),
 backup/restore, HTTP downloads, UI filters, and the real Windows cscript path with
 substituted EG COM. A licensed SAS server is required to validate actual metadata
 returned by your specific engines.
+
+
+## Copy logs and code from Inspect (preview.21)
+
+Select a log, SAS program or another text file in Inspect, then click **Copy** next
+to Download. This copies the entire decoded file, even when the preview only shows
+the latest log output or truncates a large file. Paste it into Copilot or another
+application normally. A Copied confirmation appears after the clipboard operation
+succeeds. Copy takes the contents available when clicked, so click again to include
+newly written output. Excel/binary results continue to use Download.
+
+Clipboard access requires a supported browser and a focused app window. A denied
+clipboard request displays an error and leaves Download available. No content is
+sent to Copilot or another service by PySAS.

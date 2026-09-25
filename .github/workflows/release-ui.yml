@@ -46,18 +46,17 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'preview') }}
           fail_on_unmatched_files: true
           body: |
-            Browse SAS libraries and tables in the new Servers tab.
+            Copy logs and SAS code directly from Inspect.
 
-            Download PySAS-Workbench-Python-0.4.0-preview.20.zip, extract fully and open START_PYSAS.bat.
+            Download PySAS-Workbench-Python-0.4.0-preview.21.zip, extract fully and open START_PYSAS.bat.
 
-            - Choose an EGP connection and refresh an on-demand catalog through the existing runner. Shared initialization or an override assigns libraries first; optionally filter library names.
-            - Browse library storage totals and searchable tables/views with sizes, reported row counts, column counts and creation/change dates. Sort by size/date and page through larger catalogs.
-            - Metadata returns through the standard saved SAS log. No shared server folder or live COM polling is needed.
-            - Keep older snapshots, reuse a connection, download catalog JSON, and carry snapshots with saved-data backup/restore. A failed refresh preserves earlier successful snapshots.
-            - Missing metadata is shown as Unknown; partial library totals say At least. Storage is SAS-reported table disk space, not RAM or free server capacity. WORK, SASHELP and SASUSER are excluded.
-            - The standalone engine remains 0.3.12. Scheduler, watcher and per-run parameter execution are unchanged.
+            - New Copy button beside Download for log, SAS and other text files in Inspect.
+            - Copies the entire file, including lines outside a truncated preview or log tail. UTF-8, UTF-16 and legacy Windows text decoding use the existing engine reader.
+            - Copied confirms success. Clipboard permission failures display an error; nothing is automatically sent to Copilot or any other service.
+            - Click Copy again to include newly written output. Excel/binary results remain downloadable.
+            - Includes Servers snapshots and all previous features. The standalone SAS execution engine remains 0.3.12.
 
-            Windows automation is regression-tested using real cscript with substituted EG COM. Actual metadata availability depends on your SAS connection and library engines. Close PySAS before upgrading and keep your saved data or use backup/restore.
+            Close PySAS before upgrading and keep your saved data or use backup/restore.
 
           files: |
             release/PySAS-Workbench-Python-*.zip

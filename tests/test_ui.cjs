@@ -15,7 +15,7 @@ const context = {
   fetch:async()=>({ok:true,json:async()=>snapshot}),setInterval(){},AbortController,Date,console
 };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
 const h = context.helpers;
 test('elapsed formatting supports seconds, hours, and runs longer than a day',()=>{
   assert.equal(h.duration(65.9),'00:01:05');
@@ -143,4 +143,40 @@ test('server tables filter and sort without changing the saved snapshot',()=>{
   assert.deepEqual(Array.from(h.catalogRows(catalog,'','','size'),t=>t.name),['Y','X','Z']);
   assert.deepEqual(Array.from(h.catalogRows(catalog,'','','modified'),t=>t.name),['X','Y','Z']);
   assert.equal(catalog.tables[0].name,'Z');
+});
+
+test('Copy writes full endpoint text rather than the rendered tail and reports permission failures',async()=>{
+  const originalFetch=context.fetch;let copied=null, requested=null;
+  const originalNavigator=context.navigator;
+  try{
+    node('file-preview').textContent='[Showing latest output] last few lines';
+    context.fetch=async path=>{requested=path;return {ok:true,json:async()=>({text:'FIRST\nfull log café\nLAST'})};};
+    context.navigator={clipboard:{writeText:async text=>{copied=text;}}};
+    h.setCopyTarget('runs/a long path/job.log');await h.copyFile();
+    assert.equal(requested,'/api/file-text?path=runs%2Fa%20long%20path%2Fjob.log');
+    assert.equal(copied,'FIRST\nfull log café\nLAST');
+    assert.equal(node('copy-file').textContent,'Copied');
+    assert.equal(node('copy-file').disabled,false);
+    context.navigator.clipboard.writeText=async()=>{throw new Error('Clipboard permission denied');};
+    await h.copyFile();
+    assert.match(node('copy-status').textContent,/Copy failed.*permission denied/);
+    assert.equal(node('copy-file').textContent,'Copy');
+    h.setCopyTarget(null);
+    assert.equal(node('copy-file').hidden,true);
+    assert.equal(node('copy-status').hidden,true);
+  }finally{context.fetch=originalFetch;context.navigator=originalNavigator;}
+});
+test('Copy retains click activation and does not mark a newly selected file as copied',async()=>{
+  const originalFetch=context.fetch;const originalNavigator=context.navigator;let resolveFile, copied;
+  try{
+    context.Blob=Blob;context.ClipboardItem=class{constructor(values){this.values=values;}};
+    context.fetch=()=>new Promise(resolve=>{resolveFile=()=>resolve({ok:true,json:async()=>({text:'Original file contents'})});});
+    context.navigator={clipboard:{write:async items=>{copied=await (await items[0].values['text/plain']).text();}}};
+    h.setCopyTarget('original.log');const pending=h.copyFile();
+    assert.equal(node('copy-file').disabled,true);
+    h.setCopyTarget('different.log');resolveFile();await pending;
+    assert.equal(copied,'Original file contents');
+    assert.equal(node('copy-file').textContent,'Copy');
+    assert.equal(node('copy-status').hidden,true);
+  }finally{context.fetch=originalFetch;context.navigator=originalNavigator;delete context.ClipboardItem;delete context.Blob;h.setCopyTarget(null);}
 });

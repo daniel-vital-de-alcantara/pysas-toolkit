@@ -9,3 +9,5 @@
 .server-filters{display:grid;grid-template-columns:1fr 2fr 1fr;gap:16px}.server-location{max-width:340px;overflow-wrap:anywhere}#server-activity:empty{display:none}#server-page{align-self:center}.text-button{background:none;border:0;padding:0;color:var(--accent);font-weight:700;cursor:pointer;text-align:left}@media(max-width:800px){.server-filters{grid-template-columns:1fr}}
 
 #server-table-list td:first-child{max-width:300px;overflow-wrap:anywhere;white-space:normal}
+
+.preview-actions{display:flex;gap:8px;flex-shrink:0}#copy-status{margin:0;padding:8px 20px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.preview-heading{gap:12px}.preview-heading strong{overflow-wrap:anywhere;min-width:0}

@@ -22,15 +22,16 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
-from pysas import text_encoding
+from pysas import text_encoding, read_text as read_full_text
 from ui_data import archive_folder, export_backup, restore_backup, duration_history, estimate_task, estimate_schedule, index_samples
 import ui_parameters
 import ui_servers
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.20"
+VERSION = "0.4.0-preview.21"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
+TEXT_SUFFIXES = {".sas", ".log", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".xml"}
 
 
 def read_json(path, default=None):
@@ -731,6 +732,12 @@ class Workbench:
                     break
         return {"files": files, "tasks": tasks}
 
+    def file_text(self, relative):
+        path = self.input_path(relative)
+        if path.suffix.lower() not in TEXT_SUFFIXES:
+            raise ValueError("Copy is available for text files. Download this file to open it in its application.")
+        return {"text": read_full_text(path)}
+
     def preview(self, relative):
         path = self.input_path(relative)
         if path.suffix.lower() == ".xlsx":
@@ -749,7 +756,7 @@ class Workbench:
                 return {"sheets": sheets, "note": "Preview: up to 100 data rows, 30 columns, and 10 sheets."}
             finally:
                 workbook.close()
-        if path.suffix.lower() not in {".sas", ".log", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".xml"}:
+        if path.suffix.lower() not in TEXT_SUFFIXES:
             raise ValueError("Download this file to open it in its application.")
         return {"text": read_text(path, limit=60000 if path.suffix.lower() == ".log" or path.name == "console.txt" else 400000, tail=path.suffix.lower() == ".log" or path.name == "console.txt"),
                 "modified": path.stat().st_mtime, "size": path.stat().st_size}
@@ -815,6 +822,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(ui_parameters.load_parameters(self.server.app.storage, value("name")))
             elif url.path == "/api/details":
                 self.respond(self.server.app.details(value("path")))
+            elif url.path == "/api/file-text":
+                self.respond(self.server.app.file_text(value("path")))
             elif url.path == "/api/preview":
                 self.respond(self.server.app.preview(value("path")))
             elif url.path == "/api/console":
