@@ -14,7 +14,7 @@ function duration(seconds) { if (seconds == null || !Number.isFinite(Number(seco
 function elapsed(item) { return item.status === "UNKNOWN" ? "—" : active(item) && item.started ? duration(clockSeconds() - item.started) : duration(item.elapsed); }
 function timer(item) { return `<span class="elapsed" ${active(item)&&item.started?`data-start="${Number(item.started)}"`:""}>${elapsed(item)}</span>`; }
 function date(value) { return value ? new Date(Number(value)*1000).toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}) : "—"; }
-function badge(status, override) { const label = {CANCELLED:"Stopped by you",CANCELLING:"Stopping file",RUNNING:"Running",STOPPING:"Finishing files",STOPPED:"Stopped",STOPPED_ON_ERROR:"Stopped after error",SUCCESS:"Success",FAILED:"Failed",SAS_ERROR:"SAS error",CONNECTION_LOST:"Connection lost",ALWAYS_RUN_DEFINITION:"Shared setup",PENDING:"Pending",BLOCKED_DEPENDENCY:"Blocked",SKIPPED_SUCCESS:"Skipped",SKIPPED_PREVIOUS:"Previously completed",UNKNOWN:"Unknown"}[status] || status; const cls = active({status})?"running": status.includes("SUCCESS")||status==="SKIPPED_PREVIOUS"?"success":/FAIL|ERROR|LOST|BLOCKED/.test(status)?"error":status==="PENDING"?"pending":""; return `<span class="badge ${cls}">${esc(override || label)}</span>`; }
+function badge(status, override) { const label = {PARTIAL:"Partial snapshot",CANCELLED:"Stopped by you",CANCELLING:"Stopping file",RUNNING:"Running",STOPPING:"Finishing files",STOPPED:"Stopped",STOPPED_ON_ERROR:"Stopped after error",SUCCESS:"Success",FAILED:"Failed",SAS_ERROR:"SAS error",CONNECTION_LOST:"Connection lost",ALWAYS_RUN_DEFINITION:"Shared setup",PENDING:"Pending",BLOCKED_DEPENDENCY:"Blocked",SKIPPED_SUCCESS:"Skipped",SKIPPED_PREVIOUS:"Previously completed",UNKNOWN:"Unknown"}[status] || status; const cls = active({status})?"running": status.includes("SUCCESS")||status==="SKIPPED_PREVIOUS"?"success":/FAIL|ERROR|LOST|BLOCKED/.test(status)?"error":["PENDING","PARTIAL"].includes(status)?"pending":""; return `<span class="badge ${cls}">${esc(override || label)}</span>`; }
 function empty(title, text) { return `<div class="empty"><span class="empty-icon" aria-hidden="true">◇</span><strong>${esc(title)}</strong><p>${esc(text)}</p></div>`; }
 function table(headers, rows) { return `<div class="table-wrap"><table><thead><tr>${headers.map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`; }
 async function api(path, data) { const response = await fetch(path, data === undefined ? {} : {method:"POST",headers:{"Content-Type":"application/json","X-PySAS-Token":state?.token || ""},body:JSON.stringify(data)}); const result = await response.json(); if (!response.ok) throw new Error(result.error || "Request failed"); return result; }
@@ -215,29 +215,34 @@ function catalogRows(catalog, library, query, sort) {
 }
 async function renderServers() {
   const snapshots=state.server_snapshots || [], select=$("server-snapshots"), previous=select.value;
-  select.innerHTML='<option value="">Latest successful refresh</option>'+snapshots.filter(s=>s.snapshot).map(s=>`<option value="${esc(s.id)}">${esc(s.label)} · ${esc(date(s.started))}</option>`).join("");select.value=previous;
+  select.innerHTML='<option value="">Latest available snapshot</option>'+snapshots.filter(s=>s.snapshot).map(s=>`<option value="${esc(s.id)}">${esc(s.label)} · ${esc(date(s.started))}${s.partial?" · Partial":""}</option>`).join("");select.value=previous;
   const selected=snapshots.find(s=>s.id===select.value && s.snapshot) || snapshots.find(s=>s.snapshot);
   $("server-activity").innerHTML=commandCards(state.commands.filter(c=>c.action==="server-refresh").slice(0,3));
   $("server-reuse").disabled=!selected;$("server-download").hidden=!selected;
-  if(!selected){$("server-library-list").innerHTML=empty("No server snapshot yet","Select an EGP connection and refresh to discover its assigned libraries.");$("server-table-list").innerHTML="";$("server-summary").textContent="";$("server-snapshot-status").textContent="No successful refresh has been saved.";return;}
+  if(!selected){$("server-library-list").innerHTML=empty("No server snapshot yet","Select an EGP connection and refresh to discover its assigned libraries.");$("server-table-list").innerHTML="";$("server-summary").textContent="";$("server-issues").innerHTML="";$("server-snapshot-status").textContent="No readable snapshot has been saved.";return;}
   $("server-download").href=`/api/download?path=${encodeURIComponent(selected.snapshot)}`;
   if(serverLoadedId!==selected.id){
     if(serverLoadingId===selected.id)return;
-    const id=selected.id;serverLoadingId=id;serverCatalog=null;serverLoadedId=null;$("server-library-list").innerHTML="";$("server-table-list").innerHTML="";$("server-summary").textContent="";$("server-snapshot-status").textContent="Loading saved catalog…";
+    const id=selected.id;serverLoadingId=id;serverCatalog=null;serverLoadedId=null;$("server-library-list").innerHTML="";$("server-table-list").innerHTML="";$("server-summary").textContent="";$("server-issues").innerHTML="";$("server-snapshot-status").textContent="Loading saved catalog…";
     try{const catalog=await api(`/api/server-catalog?id=${encodeURIComponent(id)}`);if(serverLoadingId!==id)return;
       serverCatalog=catalog;serverLoadedId=id;serverPage=0;
       fillSelect($("server-library"),catalog.libraries.map(l=>l.name));
-      $("server-snapshot-status").textContent=`${catalog.label} · captured ${date(catalog.captured)}. Refresh to update; this is not a live view.`;
+      $("server-snapshot-status").textContent=`${catalog.label} · ${catalog.partial?"Partial snapshot · ":""}captured ${date(catalog.captured)}. Refresh to update; this is not a live view.`;
       renderCatalog();
     }catch(e){if(serverLoadingId===id)$("server-snapshot-status").textContent=e.message;}
     finally{if(serverLoadingId===id)serverLoadingId=null;}
   }else renderCatalog();
 }
+function catalogIssues(catalog){
+  const issues=catalog.issues||[];if(!issues.length)return "";
+  return `<details class="catalog-issues" open><summary>${issues.length} skipped-item / refresh ${issues.length===1?"warning":"warnings"}</summary><p class="hint">Readable metadata was retained. Storage totals for incomplete libraries show known storage only. Inspect the refresh log for full SAS errors.</p>${table(["Skipped item / scope","Reason"],issues.slice(0,100).map(issue=>`<tr><td>${esc([issue.libname,issue.name].filter(Boolean).join(".") || "Refresh")}</td><td>${esc(issue.message)}</td></tr>`))}${issues.length>100?'<p class="hint">Showing the first 100 warnings. Download the snapshot JSON for the full list.</p>':""}</details>`;
+}
 function renderCatalog(){
   if(!serverCatalog)return;
   const libs=serverCatalog.libraries;
-  $("server-summary").textContent=`${libs.length} libraries · ${libs.reduce((n,l)=>n+l.tables,0)} tables · ${libs.reduce((n,l)=>n+l.views,0)} ${libs.reduce((n,l)=>n+l.views,0)===1?"view":"views"}. Storage totals are per library; aliases can overlap.`;
-  $("server-library-list").innerHTML=libs.length?table(["Library / engine","Table storage","Tables / views","Location"],libs.map(l=>`<tr><td><button type="button" class="text-button" data-server-library="${esc(l.name)}">${esc(l.name)}</button><small>${esc(l.engines.join(", "))}</small></td><td>${esc(storageSize(l.known_bytes,l.unknown_sizes))}${l.unknown_sizes?`<small>${l.unknown_sizes} ${l.unknown_sizes===1?"table size":"table sizes"} unavailable</small>`:""}</td><td>${l.tables} / ${l.views}</td><td class="server-location">${l.paths.map(esc).join("<br>") || "—"}</td></tr>`)):empty("No libraries returned","Check your initialization assignments and library filter in the refresh console.");
+  $("server-issues").innerHTML=catalogIssues(serverCatalog);
+  $("server-summary").textContent=`${libs.length} libraries · ${libs.reduce((n,l)=>n+l.tables,0)} tables · ${libs.reduce((n,l)=>n+l.views,0)} ${libs.reduce((n,l)=>n+l.views,0)===1?"view":"views"}. ${serverCatalog.partial?"Partial metadata: skipped items are listed below. ":""}Storage totals are per library; aliases can overlap.`;
+  $("server-library-list").innerHTML=libs.length?table(["Library / engine","Table storage","Tables / views","Location"],libs.map(l=>`<tr><td><button type="button" class="text-button" data-server-library="${esc(l.name)}">${esc(l.name)}</button><small>${esc(l.engines.join(", "))}</small></td><td>${esc(storageSize(l.known_bytes,l.unknown_sizes+(l.incomplete?1:0)))}${l.unknown_sizes?`<small>${l.unknown_sizes} ${l.unknown_sizes===1?"table size":"table sizes"} unavailable</small>`:""}</td><td>${l.tables} / ${l.views}${l.incomplete?`<small>${l.skipped_members?`${l.skipped_members} skipped members`:"Incomplete library metadata"}</small>`:""}</td><td class="server-location">${l.paths.map(esc).join("<br>") || "—"}</td></tr>`)):empty("No libraries returned","Check your initialization assignments and library filter in the refresh console.");
   const rows=catalogRows(serverCatalog,$("server-library").value,$("server-search").value,$("server-sort").value);
   const pages=Math.max(1,Math.ceil(rows.length/100));serverPage=Math.max(0,Math.min(serverPage,pages-1));
   $("server-table-list").innerHTML=rows.length?table(["Table / label","Type","Storage","Rows / columns","Created","Changed"],rows.slice(serverPage*100,(serverPage+1)*100).map(t=>`<tr><td><strong>${esc(t.libname)}.${esc(t.name)}</strong><small>${esc(t.label)}</small></td><td>${t.kind==="VIEW"?"View":"Table"}</td><td>${t.kind==="VIEW"?"—":esc(storageSize(t.bytes))}</td><td>${t.rows==null?"Unknown":esc(t.rows.toLocaleString())} / ${t.columns==null?"Unknown":esc(t.columns.toLocaleString())}</td><td>${esc(t.created?.replace("T"," ")||"Unknown")}</td><td>${esc(t.modified?.replace("T"," ")||"Unknown")}</td></tr>`)):empty("No matching tables","Choose another library or change your search.");

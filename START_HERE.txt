@@ -1,4 +1,4 @@
-PySAS Workbench 0.4.0-preview.22
+PySAS Workbench 0.4.0-preview.23
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
@@ -232,3 +232,6 @@ Copy in Explorer. Paste with Ctrl+V into an app that accepts file attachments.
 Logs, SAS programs and Excel/binary files keep their original contents and names.
 Keep the source file available until pasting. File copied confirms success.
 On macOS/Linux use Download. This replaces preview.21's text-copy behavior.
+
+Servers refresh is best effort: inaccessible tables/libraries are listed as skipped,
+readable results are retained, and incomplete totals show At least or Unknown.

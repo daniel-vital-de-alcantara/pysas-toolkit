@@ -15,7 +15,7 @@ const context = {
   fetch:async()=>({ok:true,json:async()=>snapshot}),setInterval(){},AbortController,Date,console
 };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={catalogIssues,setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
 const h = context.helpers;
 test('elapsed formatting supports seconds, hours, and runs longer than a day',()=>{
   assert.equal(h.duration(65.9),'00:01:05');
@@ -177,4 +177,17 @@ test('A completed file copy does not mark a different selected file as copied',a
     assert.equal(node('copy-file').textContent,'Copy file');
     assert.equal(node('copy-status').hidden,true);
   }finally{context.fetch=originalFetch;snapshot.windows=originalWindows;h.setCopyTarget(null);}
+});
+
+
+test('partial catalogs expose escaped skip reasons and incomplete totals',()=>{
+  assert.match(h.badge('PARTIAL'), /Partial snapshot/);
+  assert.equal(h.catalogIssues({}), '');
+  const html=h.catalogIssues({issues:[{libname:'DATA',name:'<Locked>',message:'Denied <script>'}]});
+  assert.match(html, /DATA.&lt;Locked&gt;/);
+  assert.match(html, /Denied &lt;script&gt;/);
+  assert.doesNotMatch(html, /<script>/);
+  assert.equal(h.storageSize(1024,1),'At least 1 KB');
+  assert.equal(h.storageSize(0,1),'Unknown');
+  assert.match(h.catalogIssues({issues:Array.from({length:101},()=>({message:'Missing'}))}), /first 100 warnings/);
 });

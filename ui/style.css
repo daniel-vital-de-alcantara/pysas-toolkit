@@ -11,3 +11,5 @@
 #server-table-list td:first-child{max-width:300px;overflow-wrap:anywhere;white-space:normal}
 
 .preview-actions{display:flex;gap:8px;flex-shrink:0}#copy-status{margin:0;padding:8px 20px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.preview-heading{gap:12px}.preview-heading strong{overflow-wrap:anywhere;min-width:0}
+
+.catalog-issues{margin:16px 0;padding:14px;border:1px solid #e5cd95;border-radius:6px;background:#fffcf5}.catalog-issues summary{cursor:pointer;font-weight:600}.catalog-issues .hint{margin:12px 0}.catalog-issues td{white-space:normal;overflow-wrap:anywhere}

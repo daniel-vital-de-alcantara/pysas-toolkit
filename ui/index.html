@@ -31,13 +31,13 @@
 <p class="hint">This opens a fresh SAS session and queries metadata. A large catalog or database connection may take time. You can inspect its console or stop its file while it runs.</p></form>
 <div class="panel"><div class="panel-number">SAVED SNAPSHOTS</div><h2>Browse after the run</h2>
 <p>Browse saved metadata even when SAS is disconnected. Refresh whenever you need an updated picture.</p>
-<label>Snapshot<select id="server-snapshots"><option value="">Latest successful refresh</option></select></label>
+<label>Snapshot<select id="server-snapshots"><option value="">Latest available snapshot</option></select></label>
 <button type="button" id="server-reuse" class="secondary">Use this connection for next refresh</button>
 <p class="hint">Table storage is disk space reported by SAS, not RAM or available server capacity. Some engines do not report sizes, counts or dates. Totals exclude views and show “at least” when table sizes are missing; library aliases may refer to the same physical tables.</p>
 <p class="hint">Only libraries assigned in this refresh session are visible. Another job's WORK library is not visible. Dates are the values SAS reports, without a timezone conversion.</p>
 <p id="server-snapshot-status" class="hint" role="status"></p><a id="server-download" class="secondary" hidden download>Download snapshot JSON ↓</a></div></div>
 <div id="server-activity"></div>
-<div class="panel"><div class="section-heading"><div><div class="panel-number">LIBRARY STORAGE</div><h2>Libraries</h2></div></div><div id="server-summary" class="hint"></div><div id="server-library-list"></div></div>
+<div class="panel"><div class="section-heading"><div><div class="panel-number">LIBRARY STORAGE</div><h2>Libraries</h2></div></div><div id="server-summary" class="hint"></div><div id="server-issues"></div><div id="server-library-list"></div></div>
 <div class="panel"><div class="section-heading"><div><div class="panel-number">TABLE CATALOG</div><h2>Tables &amp; views</h2></div></div>
 <div class="server-filters"><label>Library<select id="server-library"><option value="">All libraries</option></select></label><label>Find a table<input id="server-search" type="search" placeholder="Table name or label"></label><label>Sort<select id="server-sort"><option value="name">Name</option><option value="size">Largest storage first</option><option value="modified">Most recently changed</option></select></label></div>
 <div id="server-table-list"></div><div class="actions"><button type="button" class="secondary" id="server-prev">Previous</button><span id="server-page" class="hint"></span><button type="button" class="secondary" id="server-next">Next</button></div></div>

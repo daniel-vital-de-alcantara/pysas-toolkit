@@ -1,6 +1,6 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.22 is a separate browser UI for the standalone PySAS
+The Workbench 0.4.0-preview.23 is a separate browser UI for the standalone PySAS
 0.3.12 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
@@ -315,9 +315,11 @@ their individual logs.
    date. Results are paged at 100 tables. Older snapshots remain selectable;
    **Use this connection for next refresh** fills the refresh form again.
 
-The collector queries `DICTIONARY.LIBNAMES` and `DICTIONARY.TABLES`. It creates two
-small metadata datasets in its own WORK session; it does not select table contents
-or alter source tables. Shared initialization remains ordinary SAS code and runs
+The collector lists assigned libraries with `DICTIONARY.LIBNAMES`, enumerates
+members in each library with `DICTIONARY.MEMBERS`, and queries `DICTIONARY.TABLES`
+separately for each member. An ordinary metadata error skips the affected member
+or library and continues. Small temporary metadata datasets live in its own WORK
+session; it does not select table contents or alter source tables. Shared initialization remains ordinary SAS code and runs
 normally. SAS metadata discovery can still access library members or view engines
 and may be slow for remote databases. This is a fresh session, so libraries assigned
 only inside another running job (including its WORK) are not visible.
@@ -333,7 +335,13 @@ remain Unknown. Dates display SAS's values without inventing a timezone.
 
 The existing EG log export carries short ASCII-framed UTF-8 hex records back to
 the PC; no shared folder, Excel export or extra COM calls during Run are needed.
-Incomplete/failed refreshes do not replace earlier snapshots. Each refresh retains
+From preview.23, readable results survive inaccessible tables/libraries and
+incomplete exported logs. **Partial snapshot** lists skipped items and refresh
+warnings; affected library totals show **At least** or **Unknown**. Counts include
+only returned members. SAS errors remain visible in the underlying run and log.
+A fatal server disconnect can still prevent further collection; partial recovery
+requires EG to return a log containing complete metadata records. A refresh with
+no readable records fails, and earlier snapshots remain available. Each refresh retains
 its generated SAS code and log in the normal run folder; its parsed JSON is saved
 under `.pysas-ui/artifacts/<command-id>/server-catalog.json`. **Download snapshot
 JSON** exports it, and saved-data backup/restore includes snapshots and connection

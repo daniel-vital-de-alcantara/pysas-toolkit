@@ -29,7 +29,7 @@ import ui_servers
 import windows_clipboard
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.22"
+VERSION = "0.4.0-preview.23"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 TEXT_SUFFIXES = {".sas", ".log", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".xml"}
@@ -488,18 +488,27 @@ class Workbench:
     def complete_worker(self, identifier, process):
         rc = process.wait()
         item = self.commands[identifier]
-        if item["action"] == "server-refresh" and rc == 0:
+        snapshot_status = None
+        if item["action"] == "server-refresh":
             try:
-                task = next(t for t in item["tasks"].values() if t.get("path") and t.get("status") == "SUCCESS")
+                task = next(t for t in item["tasks"].values() if t.get("path") and t.get("status") in {"SUCCESS", "SAS_ERROR", "FAILED"})
                 catalog = ui_servers.read_catalog(within(self.root, task["path"]), item["server"]["token"])
+                if rc != 0 or task.get("status") != "SUCCESS":
+                    catalog["partial"] = True
+                    catalog["issues"].append({"scope": "snapshot", "libname": "", "name": "", "message": "SAS or Enterprise Guide reported errors. Readable metadata was retained; inspect the refresh log."})
+                    for library in catalog["libraries"]:
+                        library["incomplete"] = True
+                snapshot_status = "PARTIAL" if catalog["partial"] else "SUCCESS"
                 catalog.update(captured=time.time(), label=item["server"]["label"], template=item["server"]["template"])
                 snapshot = self.storage / "artifacts" / identifier / "server-catalog.json"
                 atomic_json(snapshot, catalog)
                 item["server"]["snapshot"] = self.relative(snapshot)
-                item["message"] = f"Snapshot saved: {len(catalog['libraries'])} libraries, {len(catalog['tables'])} tables and views."
+                item["server"]["partial"] = catalog["partial"]
+                item["message"] = f"{'Partial snapshot' if catalog['partial'] else 'Snapshot'} saved: {len(catalog['libraries'])} libraries, {len(catalog['tables'])} tables and views." + (f" {len(catalog['issues'])} skipped-item or refresh warnings; see Servers." if catalog["issues"] else "")
             except (OSError, ValueError, StopIteration) as exc:
                 rc = 1
-                item["message"] = "Server snapshot failed: " + (str(exc) or "No successful metadata run was returned.")
+                snapshot_status = None
+                item["message"] = "Server snapshot failed: " + (str(exc) or "No readable metadata run was returned.")
         with self.lock:
             item = self.commands[identifier]
             item["finished"] = time.time()
@@ -515,6 +524,8 @@ class Workbench:
                 except OSError as exc:
                     item["message"] = "Bundle created, but download copy failed: " + str(exc)
             item["status"] = "STOPPED" if item["status"] == "STOPPING" and rc in {0, 130} else ("SUCCESS" if rc == 0 else "FAILED")
+            if snapshot_status:
+                item["status"] = snapshot_status
             if item["status"] == "STOPPED" and item["action"] in {"schedule", "continue"}:
                 item["message"] = "Schedule stopped. No further tasks will launch."
             for task in item["tasks"].values():

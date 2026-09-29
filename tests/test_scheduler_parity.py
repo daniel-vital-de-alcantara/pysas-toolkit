@@ -207,12 +207,15 @@ class SchedulerParityTests(unittest.TestCase):
                 if process.poll() is None: process.kill(); process.wait()
             app.awake.close()
 
-    def test_server_refresh_uses_runner_connection_and_complete_exported_log(self):
+    def check_server_refresh(self, partial=False):
         from test_servers import catalog_log, RECORDS, TOKEN
         from types import SimpleNamespace
         (self.root/'pysas.py').write_text((ROOT/'pysas.py').read_text(encoding='utf-8') + '\nVBS = ' + repr(self.current), encoding='utf-8')
         self.programs = [('Seed', 'seed;', 'TARGET_SERVER')]
-        project = self.project(log=catalog_log(RECORDS, TOKEN))
+        records = RECORDS[:4] + ([('issue', dict(scope='table', libname='DATA', name='Locked', message='Access denied'))] if partial else []) + RECORDS[4:]
+        log = catalog_log(records, TOKEN)
+        if partial: log = 'ERROR: Table DATA.Locked is inaccessible.\n' + log
+        project = self.project(log=log)
         (self.root/'_libs.sas').write_text('library_token;', encoding='utf-8')
         app = ui.Workbench(self.root)
         try:
@@ -223,10 +226,13 @@ class SchedulerParityTests(unittest.TestCase):
             while identifier in app.processes and time.monotonic()<deadline: time.sleep(.05)
             item = app.commands[identifier]
             console = (app.storage/(identifier+'.txt')).read_text(encoding='utf-8')
-            self.assertEqual(exit_code, 0, console)
-            self.assertEqual(item['status'], 'SUCCESS', item['message']+'\n'+console)
+            self.assertEqual(exit_code, 1 if partial else 0, console)
+            self.assertEqual(item['status'], 'PARTIAL' if partial else 'SUCCESS', item['message']+'\n'+console)
             self.assertEqual(len(app.server_catalog(identifier)['tables']), 3)
-            folder = self.root/next(iter(item['tasks'].values()))['path']
+            task = next(iter(item['tasks'].values()))
+            self.assertEqual(task['status'], 'SAS_ERROR' if partial else 'SUCCESS')
+            self.assertEqual(app.server_catalog(identifier)['partial'], partial)
+            folder = self.root/task['path']
             code = engine.read_text(next((folder/'code').glob('*.sas')))
             self.assertLess(code.index('library_token;'), code.index('from dictionary.tables'))
             self.assertIn('--init-dir', item['args'])
@@ -235,6 +241,12 @@ class SchedulerParityTests(unittest.TestCase):
             for process in list(app.processes.values()):
                 if process.poll() is None: process.kill(); process.wait()
             app.awake.close()
+
+    def test_server_refresh_uses_runner_connection_and_complete_exported_log(self):
+        self.check_server_refresh()
+
+    def test_server_refresh_keeps_partial_catalog_when_sas_reports_inaccessible_table(self):
+        self.check_server_refresh(partial=True)
 
     def test_ui_schedule_completes_with_real_bridge_and_three_setup_sections(self):
         import openpyxl

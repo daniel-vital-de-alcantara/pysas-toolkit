@@ -58,7 +58,36 @@ class CatalogTests(unittest.TestCase):
                 servers.parse_catalog(text, TOKEN)
         with self.assertRaises(ValueError):
             servers.parse_catalog(log, 'abcdef123456')
-        self.assertEqual(servers.parse_catalog(catalog_log([]), TOKEN), dict(libraries=[], tables=[]))
+        self.assertEqual(servers.parse_catalog(catalog_log([]), TOKEN), dict(libraries=[], tables=[], issues=[], partial=False))
+
+    def test_failed_members_and_libraries_keep_readable_tables_before_and_after(self):
+        issues = [
+            ('issue', dict(scope='table', libname='DATA', name='Locked', message='Access denied')),
+            ('issue', dict(scope='library', libname='OFFLINE', message='Library unavailable')),
+        ]
+        result = servers.parse_catalog(catalog_log(RECORDS[:4]+issues+RECORDS[4:]), TOKEN)
+        self.assertTrue(result['partial'])
+        self.assertEqual([t['name'] for t in result['tables']], ['Claims', 'Unknown', 'View'])
+        data, empty, offline = result['libraries']
+        self.assertEqual((data['known_bytes'], data['skipped_members'], data['incomplete']), (1048576, 1, True))
+        self.assertFalse(empty['incomplete'])
+        self.assertTrue(offline['incomplete'])
+        self.assertEqual(offline['known_bytes'], 0)
+        self.assertEqual(len(result['issues']), 2)
+
+    def test_partial_log_keeps_only_complete_records_and_recovers_after_corruption(self):
+        prefix = 'PSC'+TOKEN+'|'
+        log = catalog_log(RECORDS[:4]).rsplit('\n', 1)[0]+'\n'+prefix+'R|table\n'+prefix+'V|name|00'
+        result = servers.parse_catalog(log, TOKEN, allow_partial=True)
+        self.assertEqual(len(result['tables']), 1)
+        self.assertTrue(result['partial'])
+        self.assertTrue(all(l['incomplete'] for l in result['libraries']))
+        damaged = catalog_log(RECORDS).replace('R|library', 'R|invalid', 1)
+        result = servers.parse_catalog(damaged, TOKEN, allow_partial=True)
+        self.assertEqual(len(result['tables']), 3)
+        self.assertEqual(result['tables'][0]['label'], RECORDS[3][1]['label'])
+        for log in ('no catalog', prefix+'BEGIN\n'+prefix+'R|table', catalog_log([('issue', dict(scope='library', libname='OFFLINE', message='Unavailable'))])):
+            with self.assertRaises(ValueError): servers.parse_catalog(log, TOKEN, allow_partial=True)
 
     def test_filters_are_validated_and_script_only_queries_metadata(self):
         self.assertEqual(servers.library_filter(' data,Other DATA\n_lib'), ['DATA', 'OTHER', '_LIB'])
@@ -68,6 +97,14 @@ class CatalogTests(unittest.TestCase):
         self.assertIn("where libname in ('DATA')", code)
         self.assertIn('from dictionary.tables', code)
         self.assertIn('from dictionary.libnames', code)
+        self.assertIn('from dictionary.members', code)
+        self.assertIn('where libname="&_psc_libhex"x and memname="&_psc_memhex"x', code)
+        self.assertIn('nosyntaxcheck noerrorabend', code)
+        self.assertIn('set work._psc_members point=_psc_point;', code)
+        self.assertIn('set work._psc_librefs point=_psc_point;', code)
+        self.assertLess(code.index('data work._psc_one;'), code.index('insert into work._psc_one'))
+        self.assertIn('%_psc_issue(table,', code)
+        self.assertIn('%_psc_issue(library,', code)
         self.assertNotIn('select *', code)
         self.assertNotIn('proc export', code)
         self.assertIn("getoption('encoding'), 'utf-8'", code)
@@ -88,7 +125,7 @@ class ServerWorkbenchTests(unittest.TestCase):
         self.app.awake.close()
         self.temp.cleanup()
 
-    def refresh(self, records=RECORDS, rc=0, truncated=False):
+    def refresh(self, records=RECORDS, rc=0, truncated=False, no_catalog=False, task_status=None):
         process = Mock(stdin=None); process.wait.return_value = rc
         # Only skip platform gating: use the real launch, arguments are covered
         # by the real Windows/cscript integration test in test_scheduler_parity.
@@ -99,8 +136,9 @@ class ServerWorkbenchTests(unittest.TestCase):
         (folder/'logs').mkdir(parents=True)
         text = catalog_log(records, item['server']['token'])
         if truncated: text = text.rsplit('\n', 1)[0]
+        if no_catalog: text = 'ERROR: No server connection'
         (folder/'logs/catalog.log').write_text(text, encoding='utf-8')
-        item['tasks']['source'] = dict(status='SUCCESS' if rc == 0 else 'FAILED', path=self.app.relative(folder))
+        item['tasks']['source'] = dict(status=task_status or ('SUCCESS' if rc == 0 else 'FAILED'), path=self.app.relative(folder))
         self.app.complete_worker(identifier, process)
         return identifier
 
@@ -114,7 +152,7 @@ class ServerWorkbenchTests(unittest.TestCase):
         catalog = self.app.server_catalog(identifier)
         self.assertEqual(catalog['label'], 'Production')
         self.assertEqual(len(catalog['tables']), 3)
-        for kwargs in (dict(rc=1), dict(truncated=True)):
+        for kwargs in (dict(rc=1, no_catalog=True), dict(records=[], truncated=True)):
             failed = self.refresh(**kwargs)
             self.assertEqual(self.app.commands[failed]['status'], 'FAILED')
             with self.assertRaises(ValueError): self.app.server_catalog(failed)
@@ -124,8 +162,24 @@ class ServerWorkbenchTests(unittest.TestCase):
         self.assertNotIn('tables', snapshots[0])
         self.assertEqual(ui.Workbench(self.root).server_catalog(identifier), catalog)
 
+    def test_refresh_with_sas_errors_retains_catalog_and_original_task_failure(self):
+        issue = ('issue', dict(scope='table', libname='DATA', name='Locked', message='Access denied'))
+        for options in (dict(rc=1, task_status='SAS_ERROR'), dict(rc=1), dict(rc=0), dict(truncated=True)):
+            with self.subTest(options=options):
+                identifier = self.refresh(RECORDS[:4]+[issue]+RECORDS[4:], **options)
+                item = self.app.commands[identifier]
+                self.assertEqual(item['status'], 'PARTIAL')
+                self.assertEqual(item['exit_code'], options.get('rc', 0))
+                self.assertTrue(item['server']['partial'])
+                self.assertEqual(item['tasks']['source']['status'], options.get('task_status', 'FAILED' if options.get('rc') else 'SUCCESS'))
+                catalog = self.app.server_catalog(identifier)
+                self.assertEqual(len(catalog['tables']), 3)
+                self.assertIn('Locked', [issue['name'] for issue in catalog['issues']])
+                self.assertTrue(catalog['partial'])
+                self.assertIn('Partial snapshot saved', item['message'])
+
     def test_saved_data_round_trip_remaps_catalog_paths_and_preserves_snapshot(self):
-        identifier = self.refresh()
+        identifier = self.refresh(truncated=True)
         expected = self.app.server_catalog(identifier)
         stream, _ = self.app.backup()
         with stream: data = stream.read()
