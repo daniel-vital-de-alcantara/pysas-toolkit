@@ -15,7 +15,7 @@ const context = {
   URLSearchParams,fetch:async()=>({ok:true,json:async()=>snapshot}),setInterval(){},AbortController,Date,console
 };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={putMarkup,catalogIssues,setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={focusTarget,putMarkup,catalogIssues,setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
 const h = context.helpers;
 test('elapsed formatting supports seconds, hours, and runs longer than a day',()=>{
   assert.equal(h.duration(65.9),'00:01:05');
@@ -81,7 +81,7 @@ test('running scheduler task shows setup and stage without extra running rows',(
   const html=h.taskTable([{name:'Realised',key:'job',status:'RUNNING',section:'A',row_start:2,row_end:5,setup:[{program:'Libraries',row_start:1,row_end:4},{program:'Macros'}],progress:'Appending shared setup: <Libraries>'}]);
   assert.match(html,/Shared setup: Libraries/);
   assert.match(html,/Appending shared setup: &lt;Libraries&gt;/);
-  assert.equal((html.match(/<tr>/g)||[]).length,2); // one header and one task
+  assert.equal((html.match(/<tr(?: |>|\n)/g)||[]).length,2); // one header and one task
 });
 
 
@@ -205,37 +205,72 @@ test('bundle and schedule downloads offer actual-file copy actions',()=>{
   assert.match(html,/&quot;path&quot;:&quot;runs\/x\/schedule.log&quot;/);
 });
 
-// Exercise the real keyboard controller with focused, hidden, and disabled controls.
+// Exercise the actual event controller with DOM-like controls and a list.
 function keyboardFixture(count=2,onlyDialog=false){
-  const listeners={},controls=Array.from({length:count},(_,i)=>({
-    isConnected:true,disabled:false,dataset:{},type:'button',clicked:0,focused:0,
-    closest(){return null;},getClientRects(){return [1];},getBoundingClientRect(){return {left:10,top:10+i,bottom:30+i,right:100};},
-    focus(){this.focused++;},click(){this.clicked++;},matches(){return false;}
-  }));
-  function element(){return {children:[],style:{},setAttribute(){},append(child){this.children.push(child)},remove(){}};}
-  const dialog={...element(),querySelectorAll(){return controls.slice(1);}};
-  const doc={body:element(),createElement:element,getElementById(){return null},querySelectorAll(q){return q==='dialog[open]'?(onlyDialog?[dialog]:[]):controls;},addEventListener(k,f){listeners[k]=f;}};
+  const listeners={},lists=[];let doc;
+  function element(){return {children:[],style:{},dataset:{},isConnected:true,disabled:false,
+    setAttribute(){},getAttribute(){return null},hasAttribute(){return false},append(child){this.children.push(child)},remove(){},
+    closest(selector){return selector==='[data-key-list]'?this.list||null:null;},
+    getClientRects(){return [1]},getBoundingClientRect(){return {left:10,top:10,bottom:30,right:100}},
+    focus(){this.focused=(this.focused||0)+1;doc.activeElement=this;},scrollIntoView(){},querySelectorAll(){return []},
+    click(){this.clicked=(this.clicked||0)+1},matches(selector){return selector==='button,a[href]'?!this.field:!!this.field;}
+  };}
+  const controls=Array.from({length:count},(_,i)=>({...element(),id:'control'+String(i).padStart(3,'0'),textContent:'Action '+i,dataset:{keytip:i===0?'A':i===1?'B':undefined},clicked:0,focused:0}));
+  controls[0].dataset.page='overview';if(controls[1])controls[1].dataset.page='history';
+  const scope={...element(),querySelectorAll(){return [...(onlyDialog?controls.slice(1):controls),...lists]}};
+  doc={body:element(),createElement:element,activeElement:null,getElementById(){return null},
+    querySelector(q){if(q.startsWith('.page'))return scope;if(q.startsWith('#all-history'))return lists[0];return null;},
+    querySelectorAll(q){if(q==='dialog[open]')return onlyDialog?[scope]:[];if(q==='[data-key-list]')return lists;if(q==='[data-page]')return controls.filter(c=>c.dataset.page);return [];},
+    addEventListener(k,f){listeners[k]=f;}};
   const ctx={document:doc,window:{addEventListener(){}},innerWidth:1200,innerHeight:900,requestAnimationFrame:f=>f()};
   vm.createContext(ctx);vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/keyboard.js'),'utf8'),ctx);
-  function key(type,value,options={}){listeners[type]({key:value,preventDefault(){},stopPropagation(){},...options});}
-  return {api:ctx.PySASKeys,controls,key};
+  function key(type,value,options={}){const event={key:value,target:doc.activeElement,prevented:false,preventDefault(){this.prevented=true},stopPropagation(){},...options};listeners[type](event);return event;}
+  function addList(count=4){
+    const list={...element(),dataset:{keytip:'L'},textContent:'Run history',hasAttribute:q=>q==='data-key-list'};
+    list.list=list;list.rows=Array.from({length:count},(_,i)=>{
+      const row={...element(),list,matches(){return false;}};
+      row.buttons=[{...element(),list,dataset:{path:'runs/'+i},clicked:0},{...element(),list,dataset:{cancelKey:String(i)},clicked:0}];
+      row.querySelectorAll=()=>row.buttons;return row;
+    });list.querySelectorAll=()=>list.rows;lists.push(list);return list;
+  }
+  return {api:ctx.PySASKeys,controls,key,doc,addList};
 }
-test('Alt shows keyboard hints, letter activates target, Escape cancels, fields focus',()=>{
+test('Alt uses fixed mnemonic navigation and Escape returns from page hints',()=>{
   const f=keyboardFixture();f.key('keydown','Alt');f.key('keyup','Alt');assert.equal(f.api.active,true);
-  f.key('keydown','B');assert.equal(f.controls[1].clicked,1);assert.equal(f.api.active,false);
-  f.controls[0].matches=()=>true;f.key('keydown','F10');f.key('keydown','A');assert.equal(f.controls[0].focused,1);assert.equal(f.controls[0].clicked,0);
-  f.api.show();f.key('keydown','Escape');assert.equal(f.api.active,false);
+  f.key('keydown','O');assert.equal(f.controls[0].clicked,1);assert.equal(f.api.active,true);
+  f.key('keydown','Escape');assert.equal(f.api.active,true);f.key('keydown','Escape');assert.equal(f.api.active,false);
+  f.controls[0].field=true;f.api.showPage();f.key('keydown','A');assert.equal(f.controls[0].focused,2);assert.equal(f.controls[0].clicked,1);
 });
-test('keyboard codes are unique and prefix-free, ignore disabled controls and AltGr',()=>{
-  const f=keyboardFixture(30);const codes=f.api.codes(30);
-  assert.equal(new Set(codes).size,30);assert.ok(codes.every(c=>c.length===2));
-  f.controls[0].disabled=true;f.api.show();f.key('keydown','A');f.key('keydown','A');assert.equal(f.controls[1].clicked,1);assert.equal(f.controls[0].clicked,0);
-  f.key('keydown','Alt',{ctrlKey:true});f.key('keyup','Alt');assert.equal(f.api.active,false);
+test('page hints stay stable when a control is disabled and avoid ambiguous prefixes',()=>{
+  const f=keyboardFixture(30),items=[{identity:'a',preferred:'C',label:'Copy'},{identity:'b',preferred:'C',label:'Close'},...Array.from({length:40},(_,i)=>({identity:'x'+i,label:'Action'}))];
+  const assigned=f.api.assignHints(items);assert.equal(new Set(assigned).size,items.length);
+  assert.ok(assigned.every((code,i)=>!assigned.some((other,j)=>i!==j&&other.startsWith(code))));
+  f.controls[0].disabled=true;f.api.showPage();f.key('keydown','B');assert.equal(f.controls[1].clicked,1);assert.equal(f.controls[0].clicked,0);
+  f.api.hide();f.key('keydown','Alt',{ctrlKey:true});f.key('keyup','Alt');assert.equal(f.api.active,false);
 });
-
 test('keyboard hints target the open dialog only',()=>{
-  const f=keyboardFixture(2,true);f.api.show();f.key('keydown','A');
+  const f=keyboardFixture(2,true);f.api.show();f.key('keydown','B');
   assert.equal(f.controls[0].clicked,0);assert.equal(f.controls[1].clicked,1);
+});
+test('Alt H enters history, arrows browse without opening and row actions use left/right',()=>{
+  const f=keyboardFixture(),list=f.addList();f.api.show();f.key('keydown','H');
+  assert.equal(f.doc.activeElement,list.rows[0].buttons[0]);assert.equal(f.api.active,false);
+  f.key('keydown','ArrowDown');assert.equal(f.doc.activeElement,list.rows[1].buttons[0]);
+  f.key('keydown','ArrowRight');assert.equal(f.doc.activeElement,list.rows[1].buttons[1]);
+  f.key('keydown','End');assert.equal(f.doc.activeElement,list.rows[3].buttons[1]);
+  f.key('keydown','Home');assert.equal(f.doc.activeElement,list.rows[0].buttons[1]);
+  assert.ok(list.rows.every(r=>r.buttons.every(b=>b.clicked===0)));
+  assert.equal(f.key('keydown','Enter').prevented,false); // native button activation
+  assert.equal(f.key('keydown','Tab').prevented,false);
+});
+test('list entry remembers the inspected run, clamps bounds, and leaves text-field arrows alone',()=>{
+  const f=keyboardFixture(),list=f.addList(2);f.api.enterList(list);f.key('keydown','ArrowDown');
+  f.api.enterList(list);assert.equal(f.doc.activeElement,list.rows[1].buttons[0]);
+  f.key('keydown','PageDown');assert.equal(f.doc.activeElement,list.rows[1].buttons[0]);
+  f.key('keydown','PageUp');assert.equal(f.doc.activeElement,list.rows[0].buttons[0]);
+  const input={field:true,matches:()=>true,closest:()=>list};f.doc.activeElement=input;
+  assert.equal(f.key('keydown','ArrowDown').prevented,false);assert.equal(f.doc.activeElement,input);
+  f.api.refreshLists();assert.ok(list.rows.every(r=>r.buttons.every(b=>b.tabIndex===-1)));assert.equal(list.tabIndex,0);
 });
 test('unchanged inspector markup preserves focused controls and copy feedback',()=>{
   h.putMarkup('file-list','<button>Copy file</button>');
@@ -244,4 +279,12 @@ test('unchanged inspector markup preserves focused controls and copy feedback',(
   assert.match(node('file-list').innerHTML,/Copied/);
   h.putMarkup('file-list','<button>Different file</button>');
   assert.doesNotMatch(node('file-list').innerHTML,/Copied/);
+});
+
+test('restoring an inspected run chooses its original page, not a hidden duplicate',()=>{
+  const make=scope=>({tagName:'BUTTON',dataset:{path:'runs/a'},closest:q=>q==='dialog,.page'?{id:scope}:{getAttribute:()=> 'Run history'}});
+  const hidden=make('page-overview'),shown=make('page-history');
+  const old=context.document.querySelectorAll;context.document.querySelectorAll=()=>[hidden,shown];
+  try{assert.equal(h.focusTarget({el:{isConnected:false},data:JSON.stringify(shown.dataset),tag:'BUTTON',list:'Run history',scope:'page-history'}),shown);}
+  finally{context.document.querySelectorAll=old;}
 });

@@ -47,19 +47,18 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'preview') }}
           fail_on_unmatched_files: true
           body: |
-            Keyboard controls, reliable saved-data exports, storage cleanup, and consolidated schedule continuation.
+            More intuitive keyboard shortcuts and arrow-key list navigation.
 
-            Download PySAS-Workbench-Python-0.4.0-preview.24.zip, extract fully and open START_PYSAS.bat.
+            Download PySAS-Workbench-Python-0.4.0-preview.25.zip, extract fully and open START_PYSAS.bat.
 
-            - Tap Alt or F10 for letter hints on visible controls, including Inspect and confirmation dialogs. Esc cancels hints; Tab and Shift+Tab remain available.
-            - Copy actual files beside bundle, schedule-log, metadata JSON and prepared ZIP downloads on Windows.
-            - Background ZIP preparation with progress and nearby errors. Export all saved data or configs only, then Download or Copy file. Prepared ZIP caches last until app restart.
-            - The Completed runs card reports saved storage. History provides reviewed cleanup of failed/stopped runs or all finished runs, protecting active and unknown runs.
-            - Continue schedules in the same folder, retaining successful outputs and total active time, excluding pauses. Failed attempts are archived separately; the main log contains one current result per task and identifies multipart execution.
-            - Standalone engine 0.3.13 uses the same continuation behaviour. Existing SAS execution and shared initialization workflows remain available.
+            - Fixed navigation letters: Alt, then O Overview, R Runner, S Scheduler, B Bundles, H History, F Files, or V Servers. F10 also opens hints.
+            - X shows commands for the current page. Common actions use mnemonic hints; lists get one entry hint instead of a letter on every row.
+            - Alt H focuses run history directly. Up/Down browses items, Home/End jumps to the ends, Page Up/Down moves ten rows, and Enter opens the focused item.
+            - Arrow navigation also works in task tables and Inspect's file list. Left/Right moves between row actions; Tab leaves the list. Text fields keep normal editing keys.
+            - Esc closes Inspect and restores focus to the run. Automatic refresh preserves keyboard focus.
+            - Includes the saved-data, clipboard, cleanup and consolidated continuation features from preview.24. Standalone execution engine remains 0.3.13.
 
-            Regression tests cover repeated continuation, pause exclusion, log consolidation, Windows worker/EG bridge simulation, keyboard events, background exports, clipboard routing, and cleanup protections. A licensed SAS server is not available in CI.
-            Close PySAS before upgrading and keep your saved data or use backup/restore.
+            Automated tests cover fixed navigation, dialog scoping, collision-free hints, arrow navigation, focus, and unchanged execution behaviour. Close PySAS before upgrading and keep your saved data or use backup/restore.
 
           files: |
             release/PySAS-Workbench-Python-*.zip

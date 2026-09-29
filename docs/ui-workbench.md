@@ -1,6 +1,6 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.24 is a separate browser UI for the standalone PySAS
+The Workbench 0.4.0-preview.25 is a separate browser UI for the standalone PySAS
 0.3.13 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
@@ -389,11 +389,24 @@ See [Microsoft's shell clipboard formats](https://learn.microsoft.com/en-us/wind
 
 ## Keyboard, storage and continued schedules (preview.24)
 
-Tap **Alt** or **F10** to show letter hints beside visible controls, then type the
-hint to activate a button or focus a field. **Esc** cancels hints. Scroll to expose
-more controls, or use normal Tab / Shift+Tab navigation. Hints also work inside
-Inspect and confirmation dialogs. Choosing a navigation button shows hints on the
-new page. Text editing and AltGr combinations remain available outside hint mode.
+From preview.25, **Alt** or **F10** opens mnemonic navigation: **O** Overview,
+**R** Runner, **S** Scheduler, **B** Bundles, **H** History, **F** Files and
+**V** Servers. **X** opens commands for the current page; **U** refreshes and **Q**
+quits. Selecting most pages then shows that page's command hints. **Alt → H**
+focuses the run-history list directly (or its search field when empty).
+
+Lists get one entry hint instead of a letter per row. In history, task tables and
+Inspect's file list, **↑ / ↓** moves between items, **Home / End** jumps to the
+first/last, and **Page Up / Down** jumps ten items. **← / →** moves between a row's
+actions. **Enter** opens/activates the focused item; arrows never run an action.
+**Tab / Shift+Tab** leaves the list. Native fields keep their normal arrow keys.
+Inspect's **Esc** closes the dialog and restores focus to the inspected run.
+
+Inside a dialog, Alt shows local hints. Esc first cancels hints; outside a dialog,
+Esc from page hints returns to navigation hints. Scroll to expose more controls.
+Common actions have explicit hints and other controls use letters from their
+labels. Hint assignment includes disabled/off-screen controls so scrolling or
+changing a button's availability does not renumber the other hints.
 
 **Copy file** accompanies bundle, schedule-log, metadata JSON and prepared ZIP
 downloads on Windows. It places a real file attachment on the clipboard; paste

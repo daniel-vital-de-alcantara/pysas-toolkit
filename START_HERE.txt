@@ -1,4 +1,4 @@
-PySAS Workbench 0.4.0-preview.24
+PySAS Workbench 0.4.0-preview.25
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
@@ -245,3 +245,11 @@ Preview.24: keyboard and saved-run controls
   runs or all finished runs, protecting active and unknown runs.
 - Continue keeps one schedule folder, successful task outputs and active elapsed
   time. Retries archive failed evidence separately and rebuild one final log.
+
+Preview.25: mnemonic shortcuts and list navigation
+- Alt, then O Overview / R Runner / S Scheduler / B Bundles / H History /
+  F Files / V Servers. X shows current-page commands. F10 also opens hints.
+- Alt H focuses history directly. Use Up/Down, Home/End or Page Up/Down to
+  browse; Enter opens the item. Left/Right selects another action in a row.
+- The same arrows work in task lists and Inspect's file list. Tab leaves a list.
+- Esc closes Inspect and returns focus to the run. Fields keep native arrow keys.
