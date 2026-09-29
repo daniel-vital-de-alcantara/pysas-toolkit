@@ -209,7 +209,7 @@ class EngineTests(unittest.TestCase):
             return 0
         with patch.object(self.engine, 'schedule_run', resume):
             self.engine.schedule_continue(argparse.Namespace(run_dir=str(previous), workers=1, no_notify=True))
-        self.assertTrue(captured[0]['skip'])
+        self.assertFalse(captured[0]['skip'])  # Continuation keeps the original workbook unchanged.
         self.assertFalse(captured[1]['skip'])
 
 

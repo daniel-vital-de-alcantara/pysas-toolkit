@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PySAS 0.3.11 — portable SAS Enterprise Guide command-line utilities.
+"""PySAS 0.3.13 — portable SAS Enterprise Guide command-line utilities.
 
 Keep this file beside the EGP, scheduler workbook and any top-level _*.sas
 initialisation files it should use.  Python 3.9+ is recommended.  ``rich`` is
@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import contextlib
+import math
 import csv
 import hashlib
 import json
@@ -29,7 +31,7 @@ from typing import Any, Iterable
 from xml.etree import ElementTree as ET
 
 
-VERSION = "0.3.12"
+VERSION = "0.3.13"
 ROOT_DIR = Path(__file__).resolve().parent
 CODEBASE_FILE = "codebase.sasbundle.txt"
 BACKUP_FOLDER = "_codebase_backups"
@@ -1199,6 +1201,12 @@ def write_schedule_log(run_dir: Path, results: list[dict[str, Any]]) -> Path:
             output.write(f"PySAS {VERSION} — Full schedule log\nSchedule: {run_dir.name}\n")
             output.write("Tasks are grouped in workbook order; parallel task durations overlap.\n")
             output.write("Includes available SAS logs and automation console output.\n\n")
+            state = schedule_state(run_dir)
+            if len(state["attempts"]) > 1:
+                output.write(f"WARNING: This schedule ran in {len(state['attempts'])} parts. Pauses between parts are excluded.\n")
+                output.write(f"Total active schedule time: {state['elapsed']:.1f} seconds.\n")
+                if any(a.get("estimated") for a in state["attempts"]): output.write("Earlier timing is estimated from legacy task durations.\n")
+                output.write("Each task below is its retained successful result or latest attempt. Earlier failed evidence is in attempts/.\n\n")
             for result in results:
                 output.write(f"{result['task_id']}: {result['status']} — {result['program']} ({result.get('elapsed', 0):.1f}s)\n")
             for index, result in enumerate(results, 1):
@@ -1245,20 +1253,104 @@ def write_summary(run_dir: Path, results: list[dict[str, Any]]) -> None:
     wb.save(run_dir / "run_summary.xlsx")
 
 
+def schedule_state(run_dir: Path) -> dict:
+    path = run_dir / "schedule_state.json"
+    if path.is_file():
+        state = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(state.get("attempts"), list): raise ValueError("Invalid schedule attempt history")
+        return state
+    return {"attempts": [], "elapsed": 0.0}
+
+
+def save_schedule_state(run_dir: Path, state: dict) -> None:
+    temporary = run_dir / ".schedule-state.tmp"
+    temporary.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    os.replace(temporary, run_dir / "schedule_state.json")
+
+
+def report_schedule_state(run_dir: Path, state: dict) -> None:
+    """Observer hook; execution remains in the single-file engine."""
+    pass
+
+
+@contextlib.contextmanager
+def schedule_lock(run_dir: Path):
+    lock_dir = run_dir.parent / ".schedule-locks"
+    lock_dir.mkdir(exist_ok=True)
+    with (lock_dir / (run_dir.name + ".lock")).open("a+b") as handle:
+        try:
+            if os.name == "nt":
+                import msvcrt
+                if handle.seek(0, 2) == 0: handle.write(b"0"); handle.flush()
+                handle.seek(0); msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise ValueError("This schedule is already running in another process.") from exc
+        yield
+
+
 def schedule_run(args: argparse.Namespace) -> int:
     workbook = find_scheduler(args.workbook); project = choose_egp(args.project); tasks = load_schedule(workbook)
-    base_runs = ROOT_DIR / "runs"; base_runs.mkdir(exist_ok=True); run_dir = base_runs / f"{now_stamp()}__schedule"
-    suffix = 2
-    while run_dir.exists(): run_dir = base_runs / f"{now_stamp()}__schedule_{suffix}"; suffix += 1
-    run_dir.mkdir(); shutil.copy2(workbook, run_dir / workbook.name); shutil.copy2(project, run_dir / project.name)
+    if getattr(args, "_resume_dir", None):
+        run_dir = Path(args._resume_dir)
+    else:
+        base_runs = ROOT_DIR / "runs"; base_runs.mkdir(exist_ok=True); run_dir = base_runs / f"{now_stamp()}__schedule"
+        suffix = 2
+        while run_dir.exists(): run_dir = base_runs / f"{now_stamp()}__schedule_{suffix}"; suffix += 1
+        run_dir.mkdir(); shutil.copy2(workbook, run_dir / workbook.name); shutil.copy2(project, run_dir / project.name)
+    workers = args.workers if args.workers is not None else max((t["max_parallel"] for t in tasks if t["max_parallel"] is not None), default=10)
+    if workers < 1: raise ValueError("Parallel runs must be at least 1")
+    with schedule_lock(run_dir):
+        return execute_schedule(args, run_dir, project, tasks)
+
+
+def execute_schedule(args, run_dir, project, tasks):
+    state = schedule_state(run_dir)
+    prior = {}
+    if getattr(args, "_resume_dir", None):
+        with (run_dir / "run_summary.csv").open(encoding="utf-8-sig", newline="") as source:
+            prior = {r["task_id"].casefold(): r for r in csv.DictReader(source)}
+        if not state["attempts"]:
+            known = getattr(args, "prior_elapsed", None)
+            estimate = max((float(r.get("elapsed") or 0) for r in prior.values()), default=0)
+            seconds = known if known is not None else estimate
+            if not math.isfinite(seconds) or seconds < 0: raise ValueError("Prior elapsed time must be non-negative and finite")
+            state = {"attempts": [{"number": 1, "elapsed": seconds, "status": "IMPORTED", "estimated": known is None}], "elapsed": seconds}
+        archive = run_dir / "attempts" / f"part-{len(state['attempts']):03d}"
+        archive.mkdir(parents=True, exist_ok=True)
+        for name in ("run_summary.csv", "run_summary.xlsx", "run_summary.txt", "schedule.log", "status.txt"):
+            if (run_dir / name).is_file(): shutil.copy2(run_dir / name, archive / name)
+        # Preserve failed evidence separately; the current tasks folder has one result per task.
+        for task in tasks:
+            key = task["task_id"].casefold()
+            folder = run_dir / "tasks" / safe_name(task["task_id"])
+            if not task["always_run"] and prior.get(key, {}).get("status") not in {"SUCCESS", "SKIPPED_PREVIOUS"} and folder.exists():
+                destination = archive / "tasks" / folder.name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if destination.exists(): raise ValueError("Prior attempt archive already contains this task; inspect it before continuing")
+                folder.rename(destination)
+        (run_dir / "_cancel.request").unlink(missing_ok=True)
+    prior_elapsed = float(state.get("elapsed", 0))
     began = time.time()
+    state["attempts"].append({"number": len(state["attempts"])+1, "started": began, "status": "RUNNING", "elapsed": 0})
+    save_schedule_state(run_dir, state)
+    report_schedule_state(run_dir, state)
     cancel_file = Path(args.cancel_file).resolve() if getattr(args, "cancel_file", None) else run_dir / "_cancel.request"
     definitions = [t for t in tasks if t["always_run"] and not t["skip"]]
     pending = {t["task_id"].casefold(): {**t, "_always_run": definitions, "_cancel_file": str(cancel_file)} for t in tasks if not t["always_run"]}
     results = [{**t, "status": "SKIPPED_SUCCESS" if t["skip"] else "ALWAYS_RUN_DEFINITION",
                 "elapsed": 0.0, "message": "Marked skip" if t["skip"] else "Prepended before each program in workbook order"}
                for t in tasks if t["always_run"]]
+    for key, task in list(pending.items()):
+        previous = prior.get(key, {})
+        if previous.get("status") in {"SUCCESS", "SKIPPED_PREVIOUS"}:
+            kept = {**task, "status": previous["status"], "elapsed": float(previous.get("elapsed") or 0),
+                    "message": "Completed in an earlier part; original output retained" if (run_dir / "tasks" / safe_name(task["task_id"])).is_dir() else "Previously completed; its original output folder is missing", "task_dir": run_dir / "tasks" / safe_name(task["task_id"])}
+            results.append(kept); pending.pop(key); report_task_result(kept)
     satisfied = {t["task_id"].casefold() for t in tasks if t["always_run"]}
+    satisfied.update(r["task_id"].casefold() for r in results if r["status"] in {"SUCCESS", "SKIPPED_PREVIOUS"})
     failed: set[str] = set(); stop = False; cancelled = False
     max_workers = args.workers if args.workers is not None else max((t["max_parallel"] for t in tasks if t["max_parallel"] is not None), default=10)
     if max_workers < 1: raise ValueError("Parallel runs must be at least 1")
@@ -1323,11 +1415,16 @@ def schedule_run(args: argparse.Namespace) -> int:
     finally: executor.shutdown(wait=True)
     order = {t["task_id"].casefold(): i for i, t in enumerate(tasks)}; results.sort(key=lambda r: order[r["task_id"].casefold()])
     cancelled = cancelled or cancel_file.exists()
-    if cancelled:
-        (run_dir / "status.txt").write_text(
-            f"status=STOPPED\nstarted={datetime.fromtimestamp(began).isoformat()}\nelapsed_seconds={time.time() - began:.1f}\n", encoding="utf-8")
-    write_summary(run_dir, results)
     errors = [r for r in results if r["status"] not in FINAL_OK]
+    finished = time.time()
+    status = "STOPPED" if cancelled else ("FAILED" if errors else "SUCCESS")
+    state["attempts"][-1].update(finished=finished, elapsed=max(0, finished-began), status=status)
+    state["elapsed"] = prior_elapsed + state["attempts"][-1]["elapsed"]
+    save_schedule_state(run_dir, state)
+    (run_dir / "status.txt").write_text(
+        f"status={status}\nstarted={datetime.fromtimestamp(state['attempts'][0].get('started', began)).isoformat()}\nelapsed_seconds={state['elapsed']:.3f}\n", encoding="utf-8")
+    write_summary(run_dir, results)
+    report_schedule_state(run_dir, state)
     if not args.no_notify: notify("PySAS schedule", "Stopped by user" if cancelled else ("Completed successfully" if not errors else f"Completed with {len(errors)} error(s)"),
                                   error=bool(errors) and not cancelled, flash=bool(errors) and not cancelled)
     print(f"Schedule {'stopped' if cancelled else 'complete'}: {run_dir}")
@@ -1338,25 +1435,13 @@ def schedule_continue(args: argparse.Namespace) -> int:
     previous = Path(args.run_dir); previous = previous if previous.is_absolute() else ROOT_DIR / previous
     summaries = previous / "run_summary.csv"
     if not summaries.is_file(): raise FileNotFoundError(summaries)
-    with summaries.open(encoding="utf-8-sig", newline="") as f:
-        prior = {r["task_id"].casefold(): r["status"] for r in csv.DictReader(f)}
     workbook = next((p for p in previous.glob("*.xlsx") if p.name != "run_summary.xlsx"), None)
     project = next(iter(previous.glob("*.egp")), None)
     if not workbook or not project: raise FileNotFoundError("Continuation folder must contain its scheduler workbook and EGP")
-    tasks = load_schedule(workbook)
-    # Produce a temporary continuation workbook by marking successful rows as skipped.
-    _, load_workbook, _, _, _ = require_openpyxl(); wb = load_workbook(workbook)
-    ws = wb["Schedule"] if "Schedule" in wb.sheetnames else wb[wb.sheetnames[0]]
-    headers = [str(c.value or "").strip().casefold() for c in ws[1]]; skip_col = headers.index("skip") + 1
-    for task in tasks:
-        if not task["always_run"] and prior.get(task["task_id"].casefold()) in FINAL_OK: ws.cell(task["excel_row"], skip_col).value = 1
-    temp = ROOT_DIR / f"{workbook.stem}__next.xlsx"; wb.save(temp); wb.close()
-    forwarded = argparse.Namespace(workbook=str(temp), project=str(project), workers=args.workers, no_notify=args.no_notify,
-                                   cancel_file=getattr(args, "cancel_file", None))
-    try: return schedule_run(forwarded)
-    finally:
-        try: temp.unlink()
-        except OSError: pass
+    forwarded = argparse.Namespace(workbook=str(workbook), project=str(project), workers=args.workers, no_notify=args.no_notify,
+                                   cancel_file=getattr(args, "cancel_file", None), _resume_dir=previous,
+                                   prior_elapsed=getattr(args, "prior_elapsed", None))
+    return schedule_run(forwarded)
 
 
 # ---------------------------------------------------------------------------
@@ -1403,6 +1488,7 @@ def parser() -> argparse.ArgumentParser:
     schedule.add_argument("run_dir", nargs="?"); schedule.add_argument("--workbook"); schedule.add_argument("--project")
     schedule.add_argument("--workers", "--max-parallel", type=int, default=None, help="Maximum parallel runs (workbook max_parallel, otherwise 10)"); schedule.add_argument("--no-notify", action="store_true")
     schedule.add_argument("--cancel-file", help=argparse.SUPPRESS)
+    schedule.add_argument("--prior-elapsed", type=float, help="Known active seconds for continuing a legacy run")
     schedule.set_defaults(func=lambda a: schedule_continue(a) if a.action == "continue" else schedule_run(a))
     return p
 

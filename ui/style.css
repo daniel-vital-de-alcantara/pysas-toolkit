@@ -13,3 +13,12 @@
 .preview-actions{display:flex;gap:8px;flex-shrink:0}#copy-status{margin:0;padding:8px 20px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.preview-heading{gap:12px}.preview-heading strong{overflow-wrap:anywhere;min-width:0}
 
 .catalog-issues{margin:16px 0;padding:14px;border:1px solid #e5cd95;border-radius:6px;background:#fffcf5}.catalog-issues summary{cursor:pointer;font-weight:600}.catalog-issues .hint{margin:12px 0}.catalog-issues td{white-space:normal;overflow-wrap:anywhere}
+
+/* Key hints use the dialog's top layer when an inspector/confirmation is open. */
+.keytips{position:fixed;inset:0;z-index:10000;pointer-events:none}
+.keytip{position:fixed;background:#fff4c2;color:#172c42;border:1px solid #876824;border-radius:3px;padding:1px 5px;font:700 12px/18px ui-monospace,monospace;box-shadow:0 1px 4px #0003}
+.keytips-help{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);padding:8px 14px;background:#172c42;color:white;border-radius:5px;font-size:12px;white-space:nowrap}
+:focus-visible{outline:3px solid #007bc3;outline-offset:3px}
+.file-actions{display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0}
+.file-action-status{max-width:36em}.file-actions button{white-space:nowrap}
+progress{width:min(100%,420px);accent-color:#007bc3}

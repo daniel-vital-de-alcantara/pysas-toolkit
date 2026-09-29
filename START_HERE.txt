@@ -1,10 +1,10 @@
-PySAS Workbench 0.4.0-preview.23
+PySAS Workbench 0.4.0-preview.24
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
 2. Place your EGP project, SAS programs, Schedule.xlsx, and _*.sas init files
    beside pysas.py in that folder. You can also copy the UI files into your
-   existing workspace, including the updated pysas.py 0.3.12. Keep your SAS,
+   existing workspace, including the updated pysas.py 0.3.13. Keep your SAS,
    EGP and Excel files. The updated engine remains a standalone single file.
 3. Double-click START_PYSAS.bat. PySAS opens in its own app-style window.
 4. The terminal closes after startup. Closing the app stops the watcher
@@ -50,7 +50,7 @@ What is included
 - Scheduler task statuses, individual task clocks, and total schedule duration.
 - Run history, searchable statuses, console, SAS logs/code and file downloads.
 - Excel previews (up to 100 data rows, 30 columns and 10 sheets per workbook).
-- Standalone pysas.py 0.3.12; existing CLI commands still work.
+- Standalone pysas.py 0.3.13; existing CLI commands still work.
 - Blue styling and saved code folders for repeated bundle operations.
 - Always-run shared setup is prepended before every scheduled program.
 - Watcher _*.sas files are shared initialization, never queued as jobs.
@@ -190,7 +190,7 @@ Estimate time reads successful past runs by program and section/row selection.
 Schedule totals account for dependencies and parallelism. A + means some work
 has unknown timing. Estimates are approximate total durations, not a guarantee.
 Inspect any saved run to download its entire folder as a ZIP.
-Existing execution behavior is retained; the single-file engine is now 0.3.12.
+Existing execution behavior is retained; the single-file engine is now 0.3.13.
 
 Parameters editor (preview.19)
 ------------------------------
@@ -235,3 +235,13 @@ On macOS/Linux use Download. This replaces preview.21's text-copy behavior.
 
 Servers refresh is best effort: inaccessible tables/libraries are listed as skipped,
 readable results are retained, and incomplete totals show At least or Unknown.
+
+Preview.24: keyboard and saved-run controls
+- Tap Alt or F10, then type a displayed hint. Esc cancels; Tab works normally.
+- Copy file is beside bundle/log/catalog downloads and prepared ZIP downloads.
+- Files & folders: prepare a full saved-data ZIP or configs-only ZIP, with progress
+  and nearby errors; then Download or Copy file. ZIP caches last until restart.
+- Completed runs shows saved storage. History offers reviewed cleanup of failed
+  runs or all finished runs, protecting active and unknown runs.
+- Continue keeps one schedule folder, successful task outputs and active elapsed
+  time. Retries archive failed evidence separately and rebuild one final log.

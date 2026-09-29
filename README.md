@@ -1,12 +1,12 @@
 # PySAS Toolkit
 
-**PySAS 0.3.12** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
+**PySAS 0.3.13** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
 
 It grew out of day-to-day model-development and consulting work where large SAS processes were difficult to inspect, rerun, parallelise, move between environments and review consistently. The current implementation brings those workflows together in one portable `pysas.py` utility.
 
 ## What it does
 
-| Component | Status in 0.3.12 | Purpose |
+| Component | Status in 0.3.13 | Purpose |
 | --- | --- | --- |
 | SAS bundle utility | Implemented | Pack, verify and safely unpack SAS source trees with SHA-256 integrity metadata and backups |
 | EGP tools | Implemented | Inspect EGP archives, extract embedded SAS programs and conservatively repack them into an EGP template |
@@ -38,11 +38,11 @@ is required. Inaccessible members are skipped; readable results are saved as a p
 with warnings and incomplete storage totals. Saved snapshots remain available offline and travel with saved-data
 backups; missing metadata is shown as unknown.
 
-The command-line toolkit is version 0.3.12; the UI preview is 0.4.0-preview.23.
+The command-line toolkit is version 0.3.13; the UI preview is 0.4.0-preview.24.
 
 ## Requirements
 
-PySAS 0.3.12 is designed for controlled Windows environments with:
+PySAS 0.3.13 is designed for controlled Windows environments with:
 
 - Python 3.9+ recommended;
 - SAS Enterprise Guide installed and configured for the target SAS environment;
@@ -246,7 +246,7 @@ Continue a previous run with:
 py pysas.py schedule continue runs\20260908_120000__schedule
 ```
 
-PySAS reads the prior summary, temporarily marks previously successful normal tasks as skipped (shared setup stays enabled unless explicitly skipped in the workbook) and launches a new isolated schedule run for the remaining work.
+PySAS continues in the selected schedule folder. Successful task outputs are retained, failed/unfinished tasks are retried with shared setup, and the original workbook skip rules remain unchanged. The main `tasks/` folder and `schedule.log` contain one current result per task. Earlier failed evidence is kept under `attempts/`. `schedule_state.json` records each attempt and total active elapsed time, excluding pauses between parts. A per-schedule lock prevents simultaneous continuation.
 
 ## Files, uploads and keeping the PC awake
 
@@ -300,7 +300,7 @@ Important limitations include:
 
 ## Version
 
-Current published implementation: **0.3.12**.
+Current published implementation: **0.3.13**.
 
 ```powershell
 py pysas.py version

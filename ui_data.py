@@ -26,7 +26,7 @@ def safe_files(folder):
     if folder.is_symlink():
         return
     for base, dirs, names in os.walk(folder, followlinks=False):
-        dirs[:] = sorted(d for d in dirs if not (Path(base) / d).is_symlink())
+        dirs[:] = sorted(d for d in dirs if d != ".schedule-locks" and not (Path(base) / d).is_symlink())
         for name in sorted(names):
             p = Path(base) / name
             if not p.is_symlink() and p.is_file():
@@ -49,26 +49,49 @@ def archive_folder(root, relative):
         raise
 
 
-def export_backup(app):
-    out = tempfile.TemporaryFile()
+def write_archive(out, entries, progress=None, manifest=None):
+    """Preflight limits and report bytes while compressing, without buffering the ZIP in RAM."""
+    entries = [(p, name, p.stat().st_size) for p, name in entries]
+    total = sum(size for _, _, size in entries)
+    if total > LIMIT or len(entries) > 199999:
+        raise ValueError('Saved data exceeds the 10 GB / 200,000 file backup limit. Download individual run folders instead.')
+    done = 0
+    if progress: progress(done, total, 'Compressing files')
+    with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED, compresslevel=1) as z:
+        if manifest is not None:
+            raw = json.dumps(manifest, ensure_ascii=False).encode('utf-8')
+            if len(raw) > 32 * 1024**2: raise ValueError('Backup command history exceeds 32 MB.')
+            if total + len(raw) > LIMIT: raise ValueError('Saved data including its manifest exceeds the 10 GB backup limit.')
+            z.writestr('manifest.json', raw)
+        for p, name, size in entries:
+            info = zipfile.ZipInfo.from_file(p, name, strict_timestamps=False)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            with p.open('rb') as source, z.open(info, 'w', force_zip64=True) as target:
+                remaining = size
+                while remaining:
+                    chunk = source.read(min(1024*1024, remaining))
+                    if not chunk: raise ValueError('A saved file changed while exporting. Please retry after it finishes.')
+                    target.write(chunk); remaining -= len(chunk); done += len(chunk)
+                    if progress: progress(done, total, 'Compressing ' + name)
+    out.seek(0)
+
+
+def export_backup(app, configs_only=False, progress=None, destination=None):
+    out = open(destination, 'w+b') if destination else tempfile.TemporaryFile()
     try:
-        with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
-            manifest = dict(format=FORMAT, workspace=str(app.root), folders=app.folders(),
-                            bundle_settings=app.bundle_settings(), commands=list(app.commands.values()),
-                            parameters_settings=ui_parameters.settings(app.storage))
-            z.writestr('manifest.json', json.dumps(manifest, ensure_ascii=False))
-            for base in (app.root / 'runs', app.root / 'runner/runs', app.storage / 'artifacts', app.storage / 'parameters'):
-                for p in safe_files(base):
-                    z.write(p, p.relative_to(app.root).as_posix())
+        if progress: progress(0, 0, 'Scanning saved files')
+        manifest = dict(format=FORMAT, scope='configs' if configs_only else 'all', workspace=str(app.root), folders=app.folders(),
+                        bundle_settings=app.bundle_settings(), commands=[] if configs_only else list(app.commands.values()),
+                        parameters_settings=ui_parameters.settings(app.storage))
+        bases = [app.storage / 'parameters']
+        if not configs_only: bases += [app.root / 'runs', app.root / 'runner/runs', app.storage / 'artifacts']
+        entries = [(p, p.relative_to(app.root).as_posix()) for base in bases for p in safe_files(base) if p.name not in {'.schedule.lock', '_cancel.request'}]
+        if not configs_only:
             for identifier in app.commands:
                 p = app.storage / (identifier + '.txt')
-                if p.is_file() and not p.is_symlink():
-                    z.write(p, p.relative_to(app.root).as_posix())
-        with zipfile.ZipFile(out) as check:
-            if len(check.infolist()) > 200000 or sum(i.file_size for i in check.infolist()) > LIMIT or check.getinfo('manifest.json').file_size > 32 * 1024**2:
-                raise ValueError('Saved data exceeds the 10 GB / 200,000 file backup limit. Download individual run folders instead.')
-        out.seek(0)
-        return out, 'PySAS-saved-data.zip'
+                if p.is_file() and not p.is_symlink(): entries.append((p, p.relative_to(app.root).as_posix()))
+        write_archive(out, entries, progress, manifest)
+        return out, 'PySAS-configs.zip' if configs_only else 'PySAS-saved-data.zip'
     except BaseException:
         out.close()
         raise

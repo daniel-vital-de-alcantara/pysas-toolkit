@@ -1,7 +1,7 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.23 is a separate browser UI for the standalone PySAS
-0.3.12 command-line engine. Download the Python ZIP from GitHub Releases, extract
+The Workbench 0.4.0-preview.24 is a separate browser UI for the standalone PySAS
+0.3.13 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
 
@@ -74,8 +74,13 @@ explicit `--lib` override. Watcher and scheduler execution are unchanged.
 
 ## Saved-data backups and run ZIPs
 
-In **Files & folders**, use **Download saved data ZIP** after finishing all jobs
-and stopping the watcher. Restore that ZIP in the new version or PC using
+In **Files & folders**, use **Prepare saved data ZIP** after finishing all jobs
+and stopping the watcher. Progress and errors appear beside the button while a
+background job builds the ZIP. Once ready, choose **Download ZIP** or **Copy file**.
+Preparing a ZIP no longer holds the UI lock during compression.
+**Prepare configs-only ZIP** includes folder settings, bundle shortcuts and saved
+parameter files; it excludes runs, logs, project inputs and metadata snapshots.
+Configs can be exported while jobs run. Both ZIP types use the same Restore form. Restore that ZIP in the new version or PC using
 **Restore saved data**. Backups include `runs`, `runner/runs`, saved command
 history and consoles, downloadable bundles, folder settings and bundle paths.
 They contain your saved code, logs, results and project/workbook snapshots.
@@ -94,10 +99,10 @@ app files into the existing workspace, keeping `.pysas-ui`, `runs` and
 `runner/runs`. You can then export a backup. Alternatively copy those three
 data locations into the newly extracted app before launching it.
 
-**Inspect → Download entire run folder ZIP** downloads all files beneath that
-run, including logs, code, results and schedule snapshots. It is independent
-of the inspector's 1,000-file display limit. A ZIP of an active run contains
-only the output available at download time. These ZIPs are for accessing run
+**Inspect → Prepare entire run folder ZIP** creates a downloadable/copyable ZIP
+with progress after that run finishes. It includes all files beneath the run,
+including logs, code, results, schedule snapshots and earlier attempts. It is
+independent of the inspector's 1,000-file display limit. These ZIPs are for accessing run
 files; use the saved-data backup for importing settings and command history.
 
 ## Expected duration
@@ -380,3 +385,38 @@ Windows integration tests use a separate Python writer process and a .NET file
 clipboard reader after the writer exits, checking Unicode filenames, unchanged
 binary content, no text clipboard format, and copy rather than move semantics.
 See [Microsoft's shell clipboard formats](https://learn.microsoft.com/en-us/windows/win32/shell/clipboard).
+
+
+## Keyboard, storage and continued schedules (preview.24)
+
+Tap **Alt** or **F10** to show letter hints beside visible controls, then type the
+hint to activate a button or focus a field. **Esc** cancels hints. Scroll to expose
+more controls, or use normal Tab / Shift+Tab navigation. Hints also work inside
+Inspect and confirmation dialogs. Choosing a navigation button shows hints on the
+new page. Text editing and AltGr combinations remain available outside hint mode.
+
+**Copy file** accompanies bundle, schedule-log, metadata JSON and prepared ZIP
+downloads on Windows. It places a real file attachment on the clipboard; paste
+support depends on the destination app. Prepared ZIPs are session caches and are
+removed when the app restarts, so paste or download them first.
+
+The Completed runs card shows saved-data storage and prepared ZIP cache size.
+Measurements run in the background and refresh about every 30 seconds. **Run
+history → Clean up saved runs** offers failed/stopped runs or all finished runs.
+Review the count and bytes, then confirm deletion. Cleanup removes run folders
+and associated command records/artifacts. Input code and configs are preserved.
+Active runs, locked schedules, and unmonitored runs with unknown status are
+protected. Deleting a failed schedule also deletes its earlier successful task
+outputs, so it cannot then be continued.
+
+**Continue schedule** now updates the selected folder. Successful outputs stay
+in `tasks/`; retries replace failed results there and preserve the earlier failed
+files under `attempts/part-NNN/`. The regenerated main `schedule.log` contains each
+task once, with a warning if the schedule was completed in multiple parts. Inspect
+opens this consolidated log first; earlier attempts are listed separately.
+Total elapsed time sums active attempts and excludes the gap while stopped.
+`pysas.py schedule continue` uses the same behaviour and remains a standalone file.
+For legacy runs without attempt timings, the app uses its saved elapsed time;
+CLI-only legacy timings are estimated from the longest saved task and labelled.
+Already-split older continuation folders cannot invent logs that were never saved
+in that selected folder. Keep their earlier folders if you need that evidence.

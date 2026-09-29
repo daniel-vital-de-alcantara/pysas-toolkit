@@ -280,6 +280,40 @@ class SchedulerParityTests(unittest.TestCase):
                 if process.poll() is None: process.kill(); process.wait()
             app.awake.close()
 
+    def test_ui_continue_reuses_folder_consolidates_logs_and_active_time(self):
+        import openpyxl
+        (self.root/'pysas.py').write_text((ROOT/'pysas.py').read_text(encoding='utf-8') + '\nVBS = ' + repr(self.current), encoding='utf-8')
+        project = self.project(log='ERROR: first attempt')
+        book = openpyxl.Workbook(); ws = book.active; headers = sorted(engine.REQUIRED_COLUMNS); ws.append(headers)
+        for task in self.setups + [definition(section='Realised', task_id='target')]:
+            ws.append([','.join(task[h]) if h=='depends_on' else task[h] for h in headers])
+        workbook = self.root/'Schedule.xlsx'; book.save(workbook); book.close()
+        app = ui.Workbench(self.root)
+        def wait(identifier):
+            app.processes[identifier].wait(timeout=30)
+            deadline=time.monotonic()+10
+            while identifier in app.processes and time.monotonic()<deadline: time.sleep(.05)
+            self.assertNotIn(identifier, app.processes)
+            return app.commands[identifier]
+        try:
+            first=wait(app.launch(dict(action='schedule',workbook=str(workbook),project=str(project)))['id'])
+            self.assertEqual(first['status'],'FAILED')
+            folder=self.root/first['path']; snapshot=next(folder.glob('*.egp'))
+            document=ET.parse(snapshot);document.getroot().set('log','NOTE: retry completed');document.write(snapshot,encoding='utf-8')
+            second=wait(app.launch(dict(action='continue',run_dir=first['path']))['id'])
+            self.assertEqual(second['status'],'SUCCESS')
+            self.assertEqual(second['path'],first['path'])
+            self.assertEqual(second['elapsed_base'],first['elapsed'])
+            self.assertGreaterEqual(second['elapsed'],first['elapsed'])
+            log=(self.root/second['schedule_log']).read_text(encoding='utf-8')
+            self.assertIn('2 parts',log);self.assertIn('NOTE: retry completed',log);self.assertNotIn('ERROR: first attempt',log)
+            self.assertTrue(list((folder/'attempts/part-001/tasks/target/logs').glob('*.log')))
+            self.assertEqual(len(second['tasks']['target']['setup']),3)
+        finally:
+            for process in list(app.processes.values()):
+                if process.poll() is None: process.kill(); process.wait()
+            app.awake.close()
+
     def test_ui_stops_whole_schedule_and_preserves_other_schedule(self):
         import openpyxl
         (self.root/'pysas.py').write_text((ROOT/'pysas.py').read_text(encoding='utf-8') + '\nVBS = ' + repr(self.current), encoding='utf-8')

@@ -400,6 +400,34 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(status, 200, body)
         self.assertIsNone(json.loads(body)['seconds'])
 
+    def test_background_export_download_copy_and_cleanup_http(self):
+        headers={'X-PySAS-Token':self.server.token}
+        body=json.dumps({'scope':'configs'})
+        self.assertEqual(self.request('POST','/api/export',body)[0],403)
+        status,body,_=self.request('POST','/api/export',body,headers)
+        self.assertEqual(status,200,body);identifier=json.loads(body)['id']
+        deadline=time.monotonic()+5
+        while time.monotonic()<deadline:
+            status,body,_=self.request('GET','/api/export-status?id='+identifier)
+            job=json.loads(body)
+            if job['status']!='WORKING':break
+            time.sleep(.02)
+        self.assertEqual(job['status'],'READY',job)
+        status,body,_=self.request('GET','/api/download?export='+identifier)
+        self.assertEqual(status,200)
+        with zipfile.ZipFile(io.BytesIO(body)) as z:self.assertEqual(json.loads(z.read('manifest.json'))['scope'],'configs')
+        with patch.object(ui.windows_clipboard,'copy_file') as copy:
+            status,body,_=self.request('POST','/api/copy-file',json.dumps({'export':identifier}),headers)
+            self.assertEqual(status,200,body);copy.assert_called_once()
+        folder=self.root/'runner/runs/failed';folder.mkdir(parents=True);(folder/'status.txt').write_text('status=FAILED\n')
+        self.assertEqual(self.request('POST','/api/cleanup',json.dumps({'mode':'failed'}))[0],403)
+        status,body,_=self.request('POST','/api/cleanup',json.dumps({'mode':'failed'}),headers)
+        self.assertEqual(status,200,body);plan=json.loads(body);self.assertEqual(plan['runs'],1)
+        self.assertTrue(folder.exists())
+        status,body,_=self.request('POST','/api/cleanup',json.dumps({'token':plan['token']}),headers)
+        self.assertEqual(status,200,body);self.assertFalse(folder.exists())
+        self.assertEqual(self.request('GET','/keyboard.js')[0],200)
+
     def test_combined_schedule_log_download_is_complete(self):
         folder = self.root/'runs'/'combined'; folder.mkdir(parents=True)
         body = ('NOTE: schedule log\n'*30000 + 'LAST LINE café\n').encode('utf-8')

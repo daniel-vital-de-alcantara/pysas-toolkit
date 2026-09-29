@@ -22,14 +22,15 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
-from pysas import text_encoding
+from pysas import text_encoding, schedule_state
 from ui_data import archive_folder, export_backup, restore_backup, duration_history, estimate_task, estimate_schedule, index_samples
 import ui_parameters
 import ui_servers
+import ui_storage
 import windows_clipboard
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.23"
+VERSION = "0.4.0-preview.24"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 TEXT_SUFFIXES = {".sas", ".log", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".xml"}
@@ -104,6 +105,9 @@ class Workbench:
         self.awake = KeepAwake()
         self.upload_lock = threading.Lock()
         self.uploading = False
+        self.storage_busy = False
+        self.exports = ui_storage.Exports(self)
+        self.cleanup_plans = {}
         for path in sorted(self.storage.glob("*.json")):
             item = read_json(path)
             if not isinstance(item, dict) or "id" not in item:
@@ -132,6 +136,7 @@ class Workbench:
 
     def update_folders(self, data):
         with self.lock:
+            if self.storage_busy: raise ValueError("Wait for the saved-data operation to finish.")
             if self.uploading or any(c["status"] in ACTIVE for c in self.commands.values()):
                 raise ValueError("Let active commands finish and stop the watcher before changing folders.")
             settings = self.folders()
@@ -173,7 +178,9 @@ class Workbench:
         if destination == "init" and not name.startswith("_"):
             raise ValueError("Shared initialization filenames must start with an underscore.")
         with self.upload_lock:
-            self.uploading = True
+            with self.lock:
+                if self.storage_busy: raise ValueError("Wait for the saved-data operation to finish.")
+                self.uploading = True
             try:
                 return receive_upload(folder, name, stream, length)
             finally:
@@ -184,12 +191,14 @@ class Workbench:
 
     def save_parameters(self, data):
         with self.lock:
+            if self.storage_busy: raise ValueError("Wait for the saved-data operation to finish.")
             result = ui_parameters.save_parameters(self.storage, data)
             atomic_json(self.storage / "parameters-settings.json", {"last": result["name"], "enabled": True})
             return result
 
     def select_parameters(self, name):
         with self.lock:
+            if self.storage_busy: raise ValueError("Wait for the saved-data operation to finish.")
             result = ui_parameters.load_parameters(self.storage, name)
             atomic_json(self.storage / "parameters-settings.json", {"last": result["name"], "enabled": True})
             return result
@@ -212,6 +221,7 @@ class Workbench:
         if operation not in {"save", "remove"}:
             raise ValueError("Unknown saved-path action.")
         with self.lock:
+            if self.storage_busy: raise ValueError("Wait for the saved-data operation to finish.")
             settings = self.bundle_settings()
             if operation == "save":
                 path = str(self.code_root(data.get("path")))
@@ -318,6 +328,8 @@ class Workbench:
         action, args = self.arguments(data)
         script = self.script
         with self.lock:
+            if self.storage_busy:
+                raise ValueError("Wait for the saved-data operation to finish before starting another command.")
             if getattr(self, "closing", False):
                 raise ValueError("PySAS is closing and finishing its active jobs.")
             if action == "watch" and any(c["action"] == "watch" and c["status"] in ACTIVE for c in self.commands.values()):
@@ -328,6 +340,16 @@ class Workbench:
                     "code_root": str(self.code_root(data.get("code_root"))) if action.startswith("bundle-") else None,
                     "started": time.time(), "finished": None, "status": "RUNNING", "tasks": {}, "message": "",
                     "can_cancel_file": True}
+            if action == "continue":
+                previous = self.input_path(data["run_dir"])
+                item["resume_path"] = self.relative(previous)
+                item["elapsed_base"] = schedule_state(previous).get("elapsed", 0)
+                if previous in ui_storage.protected_runs(self): raise ValueError("This schedule is still running.")
+                if not (previous / "schedule_state.json").is_file():
+                    saved = sorted((c for c in self.commands.values() if c.get("path") == item["resume_path"] and c.get("elapsed") is not None), key=lambda c:c["started"], reverse=True)
+                    if saved:
+                        item["elapsed_base"] = saved[0]["elapsed"]
+                        args.extend(["--prior-elapsed", str(saved[0]["elapsed"])]); item["args"] = list(args)
             if action == "server-refresh":
                 token = identifier[:12]
                 libraries = ui_servers.library_filter(data.get("libraries", ""))
@@ -407,7 +429,19 @@ class Workbench:
 
     def event(self, item, event):
         kind = event.get("event")
-        if kind == "worker":
+        if kind == "schedule-state":
+            record = event["schedule_state"]
+            item["path"] = self.relative(event["path"])
+            item["parts"] = len(record["attempts"])
+            item["timing_estimated"] = any(a.get("estimated") for a in record["attempts"])
+            attempt = record["attempts"][-1]
+            if attempt["status"] == "RUNNING":
+                item["elapsed_base"] = record["elapsed"]
+                item["started"] = attempt["started"]
+            else:
+                item["schedule_elapsed"] = record["elapsed"]
+                item["elapsed"] = record["elapsed"]
+        elif kind == "worker":
             item["runtime"] = {k: v for k, v in event.items() if k != "event"}
         elif kind == "plan":
             for task in event["tasks"]:
@@ -512,7 +546,7 @@ class Workbench:
         with self.lock:
             item = self.commands[identifier]
             item["finished"] = time.time()
-            item["elapsed"] = item["finished"] - item["started"]
+            item["elapsed"] = item.get("schedule_elapsed", item.get("elapsed_base", 0) + item["finished"] - item["started"])
             item["exit_code"] = rc
             if rc == 0 and item["action"] == "bundle-pack" and item.get("artifact"):
                 source = within(Path(item["code_root"]), item["artifact"])
@@ -620,13 +654,13 @@ class Workbench:
                         return sorted(paths)
         return sorted(paths)
 
-    def history(self):
+    def history(self, limit=500):
         records = []
         for root, kind in [(self.root / "runner" / "runs", "file"), (self.root / "runs", "schedule")]:
             if not root.exists():
                 continue
             for path in root.iterdir():
-                if not path.is_dir() or not path.resolve().is_relative_to(self.root):
+                if path.name.startswith(".") or path.is_symlink() or not path.is_dir() or not path.resolve().is_relative_to(self.root):
                     continue
                 row = {"path": self.relative(path), "name": path.name, "kind": kind,
                        "status": "UNKNOWN", "elapsed": None, "started": path.stat().st_mtime}
@@ -645,7 +679,7 @@ class Workbench:
                     row["tasks"] = len(tasks)
                     if row["status"] == "UNKNOWN": row["status"] = "SUCCESS" if all(t["status"] in {"SUCCESS", "SKIPPED_SUCCESS", "SKIPPED_PREVIOUS", "ALWAYS_RUN_DEFINITION"} for t in tasks) else "FAILED"
                 records.append(row)
-        return sorted(records, key=lambda x: x["started"], reverse=True)[:500]
+        return sorted(records, key=lambda x: x["started"], reverse=True)[:limit]
 
     def state(self, refresh=False):
         if refresh:
@@ -654,9 +688,9 @@ class Workbench:
             commands = json.loads(json.dumps(sorted(self.commands.values(), key=lambda x: x["started"], reverse=True)[:200]))
         history = [dict(row) for row in self.cached_listing("history", self.history, 15)]
         paths = {h["path"]: h for h in history}
-        for command in commands:
+        for command in reversed(commands):
             if command.get("path") in paths:
-                paths[command["path"]].update(elapsed=command.get("elapsed"), started=command["started"])
+                paths[command["path"]].update(status=command["status"], elapsed=command.get("elapsed"), elapsed_base=command.get("elapsed_base", 0), started=command["started"])
             for task in command.get("tasks", {}).values():
                 if task.get("path") in paths:
                     paths[task["path"]].update(status=task["status"], elapsed=task.get("elapsed"), started=task.get("started") or paths[task["path"]]["started"])
@@ -676,6 +710,7 @@ class Workbench:
                 "openpyxl": importlib.util.find_spec("openpyxl") is not None,
                 "files": self.cached_listing("inventory", self.inventory, 30), "commands": commands[:200], "history": history,
                 "folders": self.folders(), "awake": self.awake.status(),
+                "saved_storage": self.cached_listing("storage", lambda: ui_storage.storage_usage(self), 30) or None,
                 "initialization_files": self.cached_listing("init", lambda: sorted({str(p.resolve()) for folder in {Path(self.folders()["init"]), inbox} for p in folder.glob("_*") if p.is_file() and p.suffix.casefold() == ".sas"}), 5),
                 "queued_estimates": {name: estimate_task({"name": name}, samples) for name in queued},
                 "server_snapshots": self.server_snapshots(),
@@ -716,19 +751,33 @@ class Workbench:
             return estimate_schedule(load_schedule(workbook), int(data.get("workers") or 10), samples)
         return estimate_task({"name": data.get("program", "")}, samples)
 
-    def backup(self, stream=None, length=0):
+    def backup(self, stream=None, length=0, configs_only=False):
         # Hold the launch lock so a command cannot start halfway through a snapshot.
         with self.lock:
+            if self.storage_busy:
+                raise ValueError("Wait for the current saved-data operation to finish.")
             if self.uploading or self.processes or any(c.get("status") in ACTIVE for c in self.commands.values()):
                 raise ValueError("Finish active commands and stop the watcher before transferring saved data.")
-            return restore_backup(self, stream, length) if stream is not None else export_backup(self)
+            return restore_backup(self, stream, length) if stream is not None else export_backup(self, configs_only)
+
+    def cleanup(self, data):
+        with self.lock:
+            if self.storage_busy or self.uploading: raise ValueError("Wait for the current saved-data operation to finish.")
+            if data.get("token"):
+                plan = self.cleanup_plans.pop(data["token"], None)
+                if not plan: raise ValueError("Review cleanup before confirming deletion.")
+                return ui_storage.delete_runs(self, plan)
+            plan = ui_storage.cleanup_plan(self, data.get("mode"))
+            token = uuid.uuid4().hex
+            self.cleanup_plans = {token: plan}
+            return {**plan, "token": token}
 
     def details(self, relative):
         path = within(self.root, relative)
         if not path.is_dir() or not relative:
             raise ValueError("Choose a run folder.")
         files = []
-        for file in sorted(path.rglob("*")):
+        for file in sorted(path.rglob("*"), key=lambda p: (p.relative_to(path).parts[0] == "attempts", str(p))):
             if file.is_file() and file.resolve().is_relative_to(self.root):
                 files.append({"path": self.relative(file), "name": str(file.relative_to(path)), "size": file.stat().st_size})
             if len(files) >= 1000:
@@ -744,8 +793,17 @@ class Workbench:
                     break
         return {"files": files, "tasks": tasks}
 
-    def copy_file(self, relative):
-        path = self.input_path(relative)
+    def copy_file(self, relative=None, command=None, export=None):
+        if command:
+            item = self.commands.get(command, {})
+            if not item.get("download"): raise ValueError("No completed file is available.")
+            path = within(self.storage / "artifacts", item["download"])
+        elif export:
+            job = self.exports.get(export)
+            if job["status"] != "READY": raise ValueError("Wait for the ZIP to finish.")
+            path = within(self.root, job["path"])
+        else:
+            path = self.input_path(relative)
         if not path.is_file():
             raise ValueError("Select an existing file to copy.")
         windows_clipboard.copy_file(path)
@@ -825,6 +883,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if url.path == "/api/state":
                 self.respond({**self.server.app.state(refresh=value("refresh") == "1"), "token": self.server.token})
+            elif url.path == "/api/export-status":
+                self.respond(self.server.app.exports.get(value("id")))
             elif url.path == "/api/run-zip":
                 self.send_archive(archive_folder(self.server.app.root, value("path")))
             elif url.path == "/api/backup":
@@ -857,7 +917,11 @@ class Handler(BaseHTTPRequestHandler):
                             console += "\n\n--- " + str(task.get("name", task.get("key", "File"))) + " ---\n" + read_text(stage, limit=8000, tail=True)
                 self.respond({"text": console})
             elif url.path == "/api/download":
-                if value("command"):
+                if value("export"):
+                    job = self.server.app.exports.get(value("export"))
+                    if job["status"] != "READY": raise ValueError("Wait for the ZIP to finish.")
+                    path = within(self.server.app.root, job["path"])
+                elif value("command"):
                     item = self.server.app.commands.get(value("command"), {})
                     if item.get("action") != "bundle-pack" or item.get("status") != "SUCCESS" or not item.get("download"):
                         raise ValueError("No completed bundle is available for this command.")
@@ -876,7 +940,7 @@ class Handler(BaseHTTPRequestHandler):
                     while chunk := f.read(256 * 1024):
                         self.wfile.write(chunk)
             else:
-                name = {"/": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/icon.svg": "icon.svg"}.get(url.path)
+                name = {"/": "index.html", "/app.js": "app.js", "/keyboard.js": "keyboard.js", "/style.css": "style.css", "/icon.svg": "icon.svg"}.get(url.path)
                 if not name:
                     self.respond({"error": "Not found."}, 404)
                     return
@@ -923,8 +987,12 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/quit":
                 self.respond({"message": "Closing PySAS after active jobs finish."})
                 threading.Thread(target=self.server.request_close, daemon=True).start()
+            elif self.path == "/api/export":
+                self.respond(self.server.app.exports.start(data.get("scope"), data.get("path", "")))
+            elif self.path == "/api/cleanup":
+                self.respond(self.server.app.cleanup(data))
             elif self.path == "/api/copy-file":
-                self.respond(self.server.app.copy_file(data.get("path", "")))
+                self.respond(self.server.app.copy_file(data.get("path", ""), data.get("command"), data.get("export")))
             elif self.path == "/api/parameters/select":
                 self.respond(self.server.app.select_parameters(data.get("name")))
             elif self.path == "/api/parameters/save":
@@ -961,7 +1029,7 @@ class LocalServer(ThreadingHTTPServer):
                 self.app.stop(key)
             except (OSError, ValueError):
                 pass
-        while self.app.processes:
+        while self.app.processes or getattr(self.app, "storage_busy", False):
             time.sleep(.2)
         self.shutdown()
 

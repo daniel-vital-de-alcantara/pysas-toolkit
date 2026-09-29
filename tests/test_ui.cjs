@@ -12,7 +12,7 @@ const snapshot = {now:100,windows:false,openpyxl:true,files:[],commands:[],histo
 const context = {
   document:{getElementById:node,querySelectorAll:()=>[],addEventListener(){},modelContext:{registerTool(t){registered.push(t)}}},
   window:{addEventListener(){}}, location:{hash:''},history:{replaceState(){}},
-  fetch:async()=>({ok:true,json:async()=>snapshot}),setInterval(){},AbortController,Date,console
+  URLSearchParams,fetch:async()=>({ok:true,json:async()=>snapshot}),setInterval(){},AbortController,Date,console
 };
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={catalogIssues,setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
@@ -190,4 +190,44 @@ test('partial catalogs expose escaped skip reasons and incomplete totals',()=>{
   assert.equal(h.storageSize(1024,1),'At least 1 KB');
   assert.equal(h.storageSize(0,1),'Unknown');
   assert.match(h.catalogIssues({issues:Array.from({length:101},()=>({message:'Missing'}))}), /first 100 warnings/);
+});
+
+test('continued schedule timer includes saved active seconds and identifies multiple parts',()=>{
+  const item={status:'RUNNING',started:h.clockSeconds()-5,elapsed_base:3600};
+  assert.match(h.elapsed(item),/^01:00:0[56]$/);
+  assert.match(h.timer(item),/data-base="3600"/);
+  assert.match(h.commandCards([{id:'resume',name:'Schedule',...item,parts:3,tasks:{}}]),/Continued in 3 parts/);
+});
+test('bundle and schedule downloads offer actual-file copy actions',()=>{
+  const html=h.commandCards([{id:'bundle',name:'Bundle',status:'SUCCESS',download:'bundle/source.txt',schedule_log:'runs/x/schedule.log',tasks:{}}]);
+  assert.equal((html.match(/data-copy-target=/g)||[]).length,2);
+  assert.match(html,/&quot;command&quot;:&quot;bundle&quot;/);
+  assert.match(html,/&quot;path&quot;:&quot;runs\/x\/schedule.log&quot;/);
+});
+
+// Exercise the real keyboard controller with focused, hidden, and disabled controls.
+function keyboardFixture(count=2){
+  const listeners={},controls=Array.from({length:count},(_,i)=>({
+    isConnected:true,disabled:false,dataset:{},type:'button',clicked:0,focused:0,
+    closest(){return null;},getClientRects(){return [1];},getBoundingClientRect(){return {left:10,top:10+i,bottom:30+i,right:100};},
+    focus(){this.focused++;},click(){this.clicked++;},matches(){return false;}
+  }));
+  function element(){return {children:[],style:{},setAttribute(){},append(child){this.children.push(child)},remove(){}};}
+  const doc={body:element(),createElement:element,getElementById(){return null},querySelectorAll(q){return q==='dialog[open]'?[]:controls;},addEventListener(k,f){listeners[k]=f;}};
+  const ctx={document:doc,window:{addEventListener(){}},innerWidth:1200,innerHeight:900,requestAnimationFrame:f=>f()};
+  vm.createContext(ctx);vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/keyboard.js'),'utf8'),ctx);
+  function key(type,value,options={}){listeners[type]({key:value,preventDefault(){},stopPropagation(){},...options});}
+  return {api:ctx.PySASKeys,controls,key};
+}
+test('Alt shows keyboard hints, letter activates target, Escape cancels, fields focus',()=>{
+  const f=keyboardFixture();f.key('keydown','Alt');f.key('keyup','Alt');assert.equal(f.api.active,true);
+  f.key('keydown','B');assert.equal(f.controls[1].clicked,1);assert.equal(f.api.active,false);
+  f.controls[0].matches=()=>true;f.key('keydown','F10');f.key('keydown','A');assert.equal(f.controls[0].focused,1);assert.equal(f.controls[0].clicked,0);
+  f.api.show();f.key('keydown','Escape');assert.equal(f.api.active,false);
+});
+test('keyboard codes are unique and prefix-free, ignore disabled controls and AltGr',()=>{
+  const f=keyboardFixture(30);const codes=f.api.codes(30);
+  assert.equal(new Set(codes).size,30);assert.ok(codes.every(c=>c.length===2));
+  f.controls[0].disabled=true;f.api.show();f.key('keydown','A');f.key('keydown','A');assert.equal(f.controls[1].clicked,1);assert.equal(f.controls[0].clicked,0);
+  f.key('keydown','Alt',{ctrlKey:true});f.key('keyup','Alt');assert.equal(f.api.active,false);
 });

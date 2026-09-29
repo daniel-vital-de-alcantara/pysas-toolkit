@@ -101,8 +101,12 @@ def observe(engine):
         def task_result(result):
             original_result(result)
             emit("finish", key=result["task_id"], name=result["program"], kind="task",
-                 status=result["status"], elapsed=result["elapsed"], message=result["message"])
+                 status=result["status"], elapsed=result["elapsed"], message=result["message"], path=result.get("task_dir"))
         engine.report_task_result = task_result
+    if hasattr(engine, "report_schedule_state"):
+        def schedule_state(path, state):
+            emit("schedule-state", path=path, schedule_state=state)
+        engine.report_schedule_state = schedule_state
     original_summary = engine.write_summary
     @functools.wraps(original_summary)
     def summary(path, results):
