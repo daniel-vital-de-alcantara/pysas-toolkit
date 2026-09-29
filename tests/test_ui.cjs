@@ -15,7 +15,7 @@ const context = {
   URLSearchParams,fetch:async()=>({ok:true,json:async()=>snapshot}),setInterval(){},AbortController,Date,console
 };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={catalogIssues,setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={putMarkup,catalogIssues,setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
 const h = context.helpers;
 test('elapsed formatting supports seconds, hours, and runs longer than a day',()=>{
   assert.equal(h.duration(65.9),'00:01:05');
@@ -206,14 +206,15 @@ test('bundle and schedule downloads offer actual-file copy actions',()=>{
 });
 
 // Exercise the real keyboard controller with focused, hidden, and disabled controls.
-function keyboardFixture(count=2){
+function keyboardFixture(count=2,onlyDialog=false){
   const listeners={},controls=Array.from({length:count},(_,i)=>({
     isConnected:true,disabled:false,dataset:{},type:'button',clicked:0,focused:0,
     closest(){return null;},getClientRects(){return [1];},getBoundingClientRect(){return {left:10,top:10+i,bottom:30+i,right:100};},
     focus(){this.focused++;},click(){this.clicked++;},matches(){return false;}
   }));
   function element(){return {children:[],style:{},setAttribute(){},append(child){this.children.push(child)},remove(){}};}
-  const doc={body:element(),createElement:element,getElementById(){return null},querySelectorAll(q){return q==='dialog[open]'?[]:controls;},addEventListener(k,f){listeners[k]=f;}};
+  const dialog={...element(),querySelectorAll(){return controls.slice(1);}};
+  const doc={body:element(),createElement:element,getElementById(){return null},querySelectorAll(q){return q==='dialog[open]'?(onlyDialog?[dialog]:[]):controls;},addEventListener(k,f){listeners[k]=f;}};
   const ctx={document:doc,window:{addEventListener(){}},innerWidth:1200,innerHeight:900,requestAnimationFrame:f=>f()};
   vm.createContext(ctx);vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/keyboard.js'),'utf8'),ctx);
   function key(type,value,options={}){listeners[type]({key:value,preventDefault(){},stopPropagation(){},...options});}
@@ -230,4 +231,17 @@ test('keyboard codes are unique and prefix-free, ignore disabled controls and Al
   assert.equal(new Set(codes).size,30);assert.ok(codes.every(c=>c.length===2));
   f.controls[0].disabled=true;f.api.show();f.key('keydown','A');f.key('keydown','A');assert.equal(f.controls[1].clicked,1);assert.equal(f.controls[0].clicked,0);
   f.key('keydown','Alt',{ctrlKey:true});f.key('keyup','Alt');assert.equal(f.api.active,false);
+});
+
+test('keyboard hints target the open dialog only',()=>{
+  const f=keyboardFixture(2,true);f.api.show();f.key('keydown','A');
+  assert.equal(f.controls[0].clicked,0);assert.equal(f.controls[1].clicked,1);
+});
+test('unchanged inspector markup preserves focused controls and copy feedback',()=>{
+  h.putMarkup('file-list','<button>Copy file</button>');
+  node('file-list').innerHTML='<button>Copy file</button><span>Copied</span>';
+  h.putMarkup('file-list','<button>Copy file</button>');
+  assert.match(node('file-list').innerHTML,/Copied/);
+  h.putMarkup('file-list','<button>Different file</button>');
+  assert.doesNotMatch(node('file-list').innerHTML,/Copied/);
 });
