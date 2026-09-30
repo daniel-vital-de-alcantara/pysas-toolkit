@@ -149,7 +149,7 @@ $("restore-form").addEventListener("submit",async event=>{
       request.onload=()=>{try{const result=JSON.parse(request.responseText);if(request.status===200)resolve(result);else reject(new Error(result.error||"Restore failed"));}catch(e){reject(e);}};
       request.onerror=()=>reject(new Error("Connection interrupted. Check history before retrying the restore."));request.send(file);
     });
-    foldersInitialized=false;bundlePathsInitialized=false;parametersInitialized=false;await refresh(true);
+    foldersInitialized=false;bundlePathsInitialized=false;parametersInitialized=false;sharedWorkInitialized=false;await refresh(true);
     $("restore-status").textContent=`Restored ${result.runs} run folders and ${result.commands} commands. Existing runs were preserved.`+(result.missing_folders.length?` Review folder settings: ${result.missing_folders.join(", ")} used the new workspace defaults because their old locations are unavailable.`:"");
   }catch(e){$("restore-status").textContent=e.message;}finally{button.disabled=false;$("restore-progress").hidden=true;}
 });

@@ -1,4 +1,4 @@
-PySAS Workbench 0.4.0-preview.27
+PySAS Workbench 0.4.0-preview.28
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
@@ -255,7 +255,7 @@ Preview.25: mnemonic shortcuts and list navigation
 - Esc closes Inspect and returns focus to the run. Fields keep native arrow keys.
 
 
-NEW IN PREVIEW.27
+NEW IN PREVIEW.28
 - Runner: shared WORK via an existing SAS session path (default library VDI).
   Get it with %put %sysfunc(pathname(work)); and keep that session open.
   Save settings, then restart an existing watcher to apply them.

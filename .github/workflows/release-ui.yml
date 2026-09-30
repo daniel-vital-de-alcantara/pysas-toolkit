@@ -49,7 +49,7 @@ jobs:
           body: |
             Shared WORK, remaining-time estimates, and easier library discovery.
 
-            Download PySAS-Workbench-Python-0.4.0-preview.27.zip, extract fully and open START_PYSAS.bat.
+            Download PySAS-Workbench-Python-0.4.0-preview.28.zip, extract fully and open START_PYSAS.bat.
 
             - Runner: paste the WORK path from an existing SAS session, enable shared WORK and save. Default library is VDI. PySAS assigns it and sets USER for new file runs, watchers, schedules and server refreshes.
             - Keep the owning SAS session open. All participating sessions must access the same server directory. Explicit WORK.table references remain local; one-level table names use VDI. Restart existing watchers after changing settings.
