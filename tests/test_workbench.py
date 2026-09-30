@@ -322,6 +322,19 @@ class HttpTests(unittest.TestCase):
         connection.close()
         return result
 
+    def test_shared_work_settings_http_and_state(self):
+        body = json.dumps(dict(enabled=True, path='/server/work', libref='vdi'))
+        headers = {'X-PySAS-Token': self.server.token}
+        self.assertEqual(self.request('POST', '/api/shared-work', body)[0], 403)
+        status, payload, _ = self.request('POST', '/api/shared-work', body, headers)
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(json.loads(payload)['libref'], 'VDI')
+        status, payload, _ = self.request('GET', '/api/state')
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(payload)['shared_work']['path'], '/server/work')
+        self.assertIn('remaining', json.loads(payload))
+        self.assertEqual(self.request('POST', '/api/shared-work', json.dumps(dict(enabled=True, path='')), headers)[0], 400)
+
     def test_parameter_editor_http_save_load_and_legacy_import(self):
         headers = {'X-PySAS-Token': self.server.token}
         status, body, _ = self.request('POST', '/api/parameters/save', json.dumps({'name':'_cases.sas','text':'%let ids=1;'}), headers)

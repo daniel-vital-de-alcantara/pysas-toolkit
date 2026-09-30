@@ -1,7 +1,7 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.25 is a separate browser UI for the standalone PySAS
-0.3.13 command-line engine. Download the Python ZIP from GitHub Releases, extract
+The Workbench 0.4.0-preview.26 is a separate browser UI for the standalone PySAS
+0.3.14 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
 
@@ -433,3 +433,48 @@ For legacy runs without attempt timings, the app uses its saved elapsed time;
 CLI-only legacy timings are estimated from the longest saved task and labelled.
 Already-split older continuation folders cannot invent logs that were never saved
 in that selected folder. Keep their earlier folders if you need that evidence.
+
+
+## Shared WORK, remaining time and library discovery (preview.26)
+
+In Runner, enable Shared WORK, paste the server-side directory from an existing
+SAS session and save. Get that directory in the owning session with
+`%put %sysfunc(pathname(work));`. The default libref is VDI; you can change it.
+Keep the owning session open. This version uses an existing session's path;
+it does not launch or own a persistent SAS session. Sessions must access the
+same server directory with the same permissions. Parallel jobs should use
+unique table names to avoid ordinary SAS locks and overwrites.
+
+New runs, watchers, schedules, continuations and server refreshes capture these
+settings at launch. Restart a watcher after changes. The single-file engine
+assigns the library and sets `options user=VDI` before initialization and again
+before parameters/target code. Initialization can therefore use shared tables.
+A failed library assignment aborts that SAS execution. One-level table names
+use the shared library; explicit WORK.table references remain session-local.
+Submitted code and command history retain the exact assignment used.
+
+Both backup types include this configuration. Restore preserves the path and
+libref but turns it off until you confirm the owning session is still available.
+The standalone CLI also supports `PYSAS_SHARED_WORK_PATH` and the optional
+`PYSAS_SHARED_WORK_LIBREF` environment variable, without UI dependencies.
+Ordinary CLI use with neither variable is unchanged.
+
+The Running files card shows time remaining for current commands, including
+remaining schedule dependencies and the current watcher queue. It subtracts
+elapsed running time, respects each command's worker limit, and treats independent
+commands as concurrent. Future watcher arrivals are excluded. Missing history,
+blocked dependencies or overruns are shown as unknown or a partial `+` estimate;
+actual timing still depends on SAS load and data volume. The timer updates locally
+without rebuilding task lists on every tick.
+
+Servers defaults to Auto connection: the last successful EGP connection, otherwise
+the only EGP in the input folder. When several projects exist and none has been used,
+choose one once. This reuses an existing EGP; it does not fabricate a server profile.
+Discover libraries queries only assigned librefs, engines and paths. Check the
+libraries you want, then Refresh snapshot for table metadata and storage totals.
+With no selection, the full snapshot includes all assigned libraries except
+WORK, SASHELP and SASUSER. Shared VDI is included when enabled. Discovery-only
+snapshots display no misleading zero-byte table totals. Existing best-effort
+handling for inaccessible tables remains in the full snapshot.
+
+SAS semantics: [USER library documentation](https://support.sas.com/documentation/cdl/en/lrcon/62955/HTML/default/a002120511.htm).

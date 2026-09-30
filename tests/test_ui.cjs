@@ -15,7 +15,7 @@ const context = {
   URLSearchParams,fetch:async()=>({ok:true,json:async()=>snapshot}),setInterval(){},AbortController,Date,console
 };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={focusTarget,putMarkup,catalogIssues,setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={remainingText,focusTarget,putMarkup,catalogIssues,setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
 const h = context.helpers;
 test('elapsed formatting supports seconds, hours, and runs longer than a day',()=>{
   assert.equal(h.duration(65.9),'00:01:05');
@@ -287,4 +287,12 @@ test('restoring an inspected run chooses its original page, not a hidden duplica
   const old=context.document.querySelectorAll;context.document.querySelectorAll=()=>[hidden,shown];
   try{assert.equal(h.focusTarget({el:{isConnected:false},data:JSON.stringify(shown.dataset),tag:'BUTTON',list:'Run history',scope:'page-history'}),shown);}
   finally{context.document.querySelectorAll=old;}
+});
+
+test('remaining label counts down and distinguishes unknown, overrun and idle',()=>{
+  assert.equal(h.remainingText({active:false},100),'No files running');
+  assert.match(h.remainingText({active:true,seconds:3660,observed:100,unknown:0},160),/~1h 0m until finished/);
+  assert.match(h.remainingText({active:true,seconds:60,observed:100,unknown:1},100),/~1m\+/);
+  assert.match(h.remainingText({active:true,seconds:null,unknown:1},100),/unknown/);
+  assert.match(h.remainingText({active:true,seconds:5,observed:100,unknown:1},110),/unknown/);
 });

@@ -125,12 +125,12 @@ class ServerWorkbenchTests(unittest.TestCase):
         self.app.awake.close()
         self.temp.cleanup()
 
-    def refresh(self, records=RECORDS, rc=0, truncated=False, no_catalog=False, task_status=None):
+    def refresh(self, records=RECORDS, rc=0, truncated=False, no_catalog=False, task_status=None, libraries_only=False):
         process = Mock(stdin=None); process.wait.return_value = rc
         # Only skip platform gating: use the real launch, arguments are covered
         # by the real Windows/cscript integration test in test_scheduler_parity.
         with patch.object(self.app, 'arguments', return_value=('server-refresh', ['runner','run','--no-notify'])), patch.object(ui.subprocess, 'Popen', return_value=process), patch.object(ui.threading, 'Thread'):
-            identifier = self.app.launch(dict(action='server-refresh', template='connection.egp', label='Production', libraries='DATA'))['id']
+            identifier = self.app.launch(dict(action='server-refresh', template='connection.egp', label='Production', libraries='DATA', libraries_only=libraries_only))['id']
         item = self.app.commands[identifier]
         folder = self.root/'runner/runs'/identifier
         (folder/'logs').mkdir(parents=True)
@@ -141,6 +141,13 @@ class ServerWorkbenchTests(unittest.TestCase):
         item['tasks']['source'] = dict(status=task_status or ('SUCCESS' if rc == 0 else 'FAILED'), path=self.app.relative(folder))
         self.app.complete_worker(identifier, process)
         return identifier
+
+    def test_discovery_snapshot_retains_mode_for_nonzero_table_counts_ui(self):
+        identifier = self.refresh(records=RECORDS[:3], libraries_only=True)
+        catalog = self.app.server_catalog(identifier)
+        self.assertTrue(catalog['libraries_only'])
+        self.assertEqual(len(catalog['libraries']), 2)
+        self.assertFalse(catalog['tables'])
 
     def test_completed_refresh_retains_script_metadata_and_old_success_on_failure(self):
         identifier = self.refresh()

@@ -22,15 +22,15 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
-from pysas import text_encoding, schedule_state
-from ui_data import archive_folder, export_backup, restore_backup, duration_history, estimate_task, estimate_schedule, index_samples
+from pysas import text_encoding, schedule_state, shared_work_settings
+from ui_data import archive_folder, export_backup, restore_backup, duration_history, estimate_task, estimate_schedule, index_samples, remaining_work
 import ui_parameters
 import ui_servers
 import ui_storage
 import windows_clipboard
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.25"
+VERSION = "0.4.0-preview.26"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 TEXT_SUFFIXES = {".sas", ".log", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".xml"}
@@ -238,6 +238,30 @@ class Workbench:
             atomic_json(self.storage / "bundle-paths.json", settings)
             return settings
 
+    def shared_work(self):
+        return shared_work_settings(read_json(self.storage / "shared-work.json", {}))
+
+    def update_shared_work(self, data):
+        settings = shared_work_settings(data)
+        with self.lock:
+            if self.storage_busy: raise ValueError("Wait for the saved-data operation to finish.")
+            atomic_json(self.storage / "shared-work.json", settings)
+        return settings
+
+    def server_template(self, value=""):
+        if value: return str(self.input_path(value))
+        # Reuse the last working connection, then the only available project.
+        for command in sorted(self.commands.values(), key=lambda c:c.get("started", 0), reverse=True):
+            if command.get("status") not in {"SUCCESS", "PARTIAL"}: continue
+            args = command.get("args", [])
+            for flag in ("--template", "--project"):
+                if flag in args and args.index(flag) + 1 < len(args):
+                    candidate = self.input_path(args[args.index(flag)+1])
+                    if candidate.is_file(): return str(candidate)
+        projects = sorted(Path(self.folders()["inputs"]).glob("*.egp"))
+        if len(projects) == 1: return str(projects[0].resolve())
+        raise ValueError("Auto connection needs one EGP in the input folder or a previously successful run. Choose a connection once if you use several servers.")
+
     def arguments(self, data):
         action = data.get("action", "")
         choices = {
@@ -255,8 +279,7 @@ class Workbench:
         data = dict(data)
         if action == "server-refresh":
             ui_servers.library_filter(data.get("libraries", ""))
-            if not str(data.get("template", "")).strip():
-                raise ValueError("Select the EGP connection to refresh.")
+            data["template"] = self.server_template(data.get("template", ""))
             if len(str(data.get("label", ""))) > 100:
                 raise ValueError("Connection names must be 100 characters or fewer.")
         folders = self.folders()
@@ -325,6 +348,9 @@ class Workbench:
         return action, args
 
     def launch(self, data):
+        data = dict(data)
+        if data.get("action") == "server-refresh":
+            data["template"] = self.server_template(data.get("template", ""))
         action, args = self.arguments(data)
         script = self.script
         with self.lock:
@@ -357,12 +383,12 @@ class Workbench:
                 label = str(data.get("label", "")).strip() or Path(template).stem
                 source = self.storage / "artifacts" / identifier / "server_catalog.sas"
                 source.parent.mkdir(parents=True, exist_ok=True)
-                source.write_text(ui_servers.catalog_code(token, libraries), encoding="utf-8")
+                source.write_text(ui_servers.catalog_code(token, libraries, data.get("libraries_only") is True), encoding="utf-8")
                 args.append(str(source))
                 item["args"] = list(args)
                 item["name"] = "Refresh server · " + label
                 item["server"] = {"token": token, "label": label, "template": template,
-                                  "libraries": libraries, "lib": str(data.get("lib") or "")}
+                                  "libraries": libraries, "lib": str(data.get("lib") or ""), "libraries_only": data.get("libraries_only") is True}
             if action == "run":
                 enabled = data.get("use_parameters") is True
                 if enabled:
@@ -386,6 +412,13 @@ class Workbench:
             env = os.environ.copy()
             env.update(PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
             env.pop("PYSAS_LIVE_LOG", None)
+            shared = self.shared_work()
+            env.pop("PYSAS_SHARED_WORK_PATH", None)
+            env.pop("PYSAS_SHARED_WORK_LIBREF", None)
+            if shared["enabled"] and action in {"run", "watch", "schedule", "continue", "server-refresh"}:
+                env["PYSAS_SHARED_WORK_PATH"] = shared["path"]
+                env["PYSAS_SHARED_WORK_LIBREF"] = shared["libref"]
+                item["shared_work"] = shared
             isolation = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {"start_new_session": True}
             if os.name == "nt" and action in {"run", "watch", "schedule", "continue", "server-refresh"}:
                 # Keep the same console semantics as terminal Python, without a visible window.
@@ -533,7 +566,7 @@ class Workbench:
                     for library in catalog["libraries"]:
                         library["incomplete"] = True
                 snapshot_status = "PARTIAL" if catalog["partial"] else "SUCCESS"
-                catalog.update(captured=time.time(), label=item["server"]["label"], template=item["server"]["template"])
+                catalog.update(captured=time.time(), label=item["server"]["label"], template=item["server"]["template"], libraries_only=item["server"].get("libraries_only", False))
                 snapshot = self.storage / "artifacts" / identifier / "server-catalog.json"
                 atomic_json(snapshot, catalog)
                 item["server"]["snapshot"] = self.relative(snapshot)
@@ -709,7 +742,8 @@ class Workbench:
         return {"version": VERSION, "workspace": str(self.root), "windows": os.name == "nt",
                 "openpyxl": importlib.util.find_spec("openpyxl") is not None,
                 "files": self.cached_listing("inventory", self.inventory, 30), "commands": commands[:200], "history": history,
-                "folders": self.folders(), "awake": self.awake.status(),
+                "folders": self.folders(), "awake": self.awake.status(), "shared_work": self.shared_work(),
+                "remaining": remaining_work(commands, queued, samples, time.time()),
                 "saved_storage": self.cached_listing("storage", lambda: ui_storage.storage_usage(self), 30) or None,
                 "initialization_files": self.cached_listing("init", lambda: sorted({str(p.resolve()) for folder in {Path(self.folders()["init"]), inbox} for p in folder.glob("_*") if p.is_file() and p.suffix.casefold() == ".sas"}), 5),
                 "queued_estimates": {name: estimate_task({"name": name}, samples) for name in queued},
@@ -997,6 +1031,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(self.server.app.select_parameters(data.get("name")))
             elif self.path == "/api/parameters/save":
                 self.respond(self.server.app.save_parameters(data))
+            elif self.path == "/api/shared-work":
+                self.respond(self.server.app.update_shared_work(data))
             elif self.path == "/api/estimate":
                 self.respond(self.server.app.estimate(data))
             elif self.path == "/api/launch":

@@ -22,7 +22,7 @@ def library_filter(value):
     return names
 
 
-def catalog_code(token, libraries):
+def catalog_code(token, libraries, libraries_only=False):
     if not re.fullmatch(r"[a-f0-9]{12}", token):
         raise ValueError("Invalid snapshot token.")
     libraries = library_filter(",".join(libraries))
@@ -36,6 +36,17 @@ def catalog_code(token, libraries):
         return "\n".join(parts + [f"  put '{prefix}|E';", "run;"])
 
     emit_libraries = records("_psc_libraries", "library", [("libname", "libname"), ("engine", "engine"), ("path", "path")])
+    if libraries_only:
+        return f"""/* Discover assigned libraries without opening table metadata. */
+options linesize=256 nosyntaxcheck noerrorabend;
+data _null_; put '{prefix}|BEGIN'; run;
+proc sql;
+  create table work._psc_libraries as
+  select libname, engine, path from dictionary.libnames where {where};
+quit;
+{emit_libraries}
+data _null_; put '{prefix}|DONE'; run;
+"""
     emit_table = records("_psc_one", "table", [
         ("libname", "libname"), ("name", "memname"), ("kind", "memtype"), ("label", "memlabel"),
         ("rows", "strip(put(nobs,best32.))"), ("columns", "strip(put(nvar,best32.))"),

@@ -3,11 +3,12 @@ const $ = (id) => document.getElementById(id);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 let state = null, page = "overview", selectedCommand = null, selectedPath = null, selectedPreview = null, inspectingFolder = false, pendingUnpack = null, polling = false, clockAnchor = null, renderSignature = null, bundlePathsInitialized = false, foldersInitialized = false, parametersInitialized = false, parameterLoading = false, parameterRevision = null, parameterLoadedName = "";
 let copyTarget=null, copyBusy=false, detailsReturnFocus=null;
+let sharedWorkInitialized=false;
 let serverCatalog=null, serverLoadedId=null, serverLoadingId=null, serverPage=0;
 const monotonic = () => globalThis.performance?.now?.() ?? Date.now();
 function syncClock(now) { if(clockAnchor===null)clockAnchor={server:now,local:monotonic()}; }
 function clockSeconds() { return clockAnchor ? clockAnchor.server+(monotonic()-clockAnchor.local)/1000 : Date.now()/1000; }
-function renderIfChanged() { if(globalThis.PySASKeys?.active)return; const {now,token,...stable}=state; const signature=JSON.stringify(stable);if(signature!==renderSignature){renderSignature=signature;render();} }
+function renderIfChanged() { if(globalThis.PySASKeys?.active)return; const {now,token,remaining,...stable}=state; const signature=JSON.stringify(stable);if(signature!==renderSignature){renderSignature=signature;render();} }
 const active = c => ["RUNNING", "STOPPING", "CANCELLING"].includes(c.status);
 const titles = {servers:"Servers & libraries", overview:"Workspace overview", runner:"Runner & watcher", scheduler:"Dependency scheduler", tools:"Bundles & EGP", history:"Run history", files:"Files & folders"};
 function duration(seconds) { if (seconds == null || !Number.isFinite(Number(seconds))) return "—"; seconds = Math.max(0, Math.floor(seconds)); return `${String(Math.floor(seconds/3600)).padStart(2,"0")}:${String(Math.floor(seconds%3600/60)).padStart(2,"0")}:${String(seconds%60).padStart(2,"0")}`; }
@@ -55,7 +56,7 @@ function fileActions(target, label="file") {
   return `<span class="file-actions"><a class="subtle" href="/api/download?${query}" download>Download ${esc(label)} ↓</a><button type="button" class="subtle" data-copy-target="${esc(JSON.stringify(target))}" ${state?.windows?"":"disabled"} title="Copy the actual file to the Windows clipboard">Copy file</button><span class="hint file-action-status" role="status"></span></span>`;
 }
 function scheduleLogLink(command) { return command?.schedule_log?fileActions({path:command.schedule_log},"schedule log"):""; }
-function commandCards(commands, showTasks=false) { if(!commands.length)return empty("No command activity", "Commands launched from this workbench will appear here.");return commands.map(c=>`<article class="command-card"><div class="command-head"><div><strong>${esc(c.name)}</strong>${badge(c.status,c.status==="STOPPING"&&["schedule","continue"].includes(c.action)?"Stopping schedule":null)}${timer(c)}${c.estimate?estimateMarkup(c.estimate):""}<small>${date(c.started)}${c.code_root?` · ${esc(c.code_root)}`:""}${c.parameters?` · Parameters: ${esc(c.parameters.name)}`:""}</small></div>${scheduleStopControl(c)}<button class="subtle" data-command="${esc(c.id)}">Console →</button></div>${c.parts>1?`<p class="hint">Continued in ${c.parts} parts · total active time excludes pauses${c.timing_estimated?" · earlier time estimated":""}. Final task outputs and consolidated log are in one folder.</p>`:""}${c.message?`<p class="empty-small">${esc(c.message)}</p>`:""}${c.download?fileActions({command:c.id},"bundle"):""}${scheduleLogLink(c)}${showTasks&&Object.keys(c.tasks).length?taskTable(Object.values(c.tasks),c.id):""}</article>`).join(""); }
+function commandCards(commands, showTasks=false) { if(!commands.length)return empty("No command activity", "Commands launched from this workbench will appear here.");return commands.map(c=>`<article class="command-card"><div class="command-head"><div><strong>${esc(c.name)}</strong>${badge(c.status,c.status==="STOPPING"&&["schedule","continue"].includes(c.action)?"Stopping schedule":null)}${timer(c)}${c.estimate?estimateMarkup(c.estimate):""}<small>${date(c.started)}${c.code_root?` · ${esc(c.code_root)}`:""}${c.parameters?` · Parameters: ${esc(c.parameters.name)}`:""}${c.shared_work?` · Shared WORK: ${esc(c.shared_work.libref)}`:""}</small></div>${scheduleStopControl(c)}<button class="subtle" data-command="${esc(c.id)}">Console →</button></div>${c.parts>1?`<p class="hint">Continued in ${c.parts} parts · total active time excludes pauses${c.timing_estimated?" · earlier time estimated":""}. Final task outputs and consolidated log are in one folder.</p>`:""}${c.message?`<p class="empty-small">${esc(c.message)}</p>`:""}${c.download?fileActions({command:c.id},"bundle"):""}${scheduleLogLink(c)}${showTasks&&Object.keys(c.tasks).length?taskTable(Object.values(c.tasks),c.id):""}</article>`).join(""); }
 function focusIdentity(){const el=document.activeElement;return el?{el,id:el.id,data:JSON.stringify(el.dataset||{}),tag:el.tagName,list:el.closest?.("[data-key-list]")?.getAttribute("aria-label"),scope:el.closest?.("dialog,.page")?.id}:null;}
 function focusTarget(saved){return !saved?null:saved.el.isConnected?saved.el:saved.id?$(saved.id):saved.data!=="{}"?Array.from(document.querySelectorAll("button,a[href]")).find(el=>el.tagName===saved.tag&&JSON.stringify(el.dataset)===saved.data&&(!saved.scope||el.closest?.("dialog,.page")?.id===saved.scope)&&(!saved.list||el.closest?.("[data-key-list]")?.getAttribute("aria-label")===saved.list)):null;}
 function restoreFocus(saved){if(saved&&!saved.el.isConnected)focusTarget(saved)?.focus({preventScroll:true});}
@@ -67,7 +68,7 @@ if(page==="scheduler")$("schedule-activity").innerHTML=commandCards(state.comman
 if(page==="servers")renderServers();
 if(page==="tools")$("tools-activity").innerHTML=commandCards(state.commands.filter(c=>c.action.startsWith("bundle-")||c.action.startsWith("egp-")).slice(0,10));
 if(page==="history"){let records=state.history;const q=$("history-search").value.toLowerCase(), filter=$("history-filter").value;records=records.filter(h=>(h.name+" "+h.path).toLowerCase().includes(q)&&(filter==="all"||filter==="errors"&&/FAIL|ERROR|LOST|BLOCKED/.test(h.status)||h.status===filter));$("all-history").innerHTML=historyTable(records);$("commands-history").innerHTML=commandCards(state.commands);}}
-async function refresh(force=false) { if(polling)return; polling=true;try{state=await api(force?"/api/state?refresh=1":"/api/state");if($("error").textContent.startsWith("The local server is unavailable"))error("");syncClock(state.now);$("workspace").textContent=state.workspace;$("version").textContent=`v${state.version} · This computer only`;$("connection").textContent="Connected locally";$("connection-dot").className="online";const notices=[];if(!state.windows)notices.push("SAS execution requires Windows with Enterprise Guide. You can use file tools and inspect history on this computer.");if(!state.openpyxl)notices.push("Install openpyxl for schedules and Excel table previews (see START_HERE.txt).");$("notice").textContent=notices.join(" ");$("notice").hidden=!notices.length;document.querySelectorAll(".sas-action").forEach(b=>b.disabled=!state.windows);files();await initializeParameters();renderIfChanged();if($("details-dialog").open&&!globalThis.PySASKeys?.active){if(selectedCommand)await refreshConsole();else if(inspectingFolder&&selectedPath)await showPath(selectedPath,true);}}catch(e){$("connection").textContent="Connection lost";$("connection-dot").className="offline";error("The local server is unavailable. The app may have closed. Displayed job states may be stale.");}finally{polling=false;}}
+async function refresh(force=false) { if(polling)return; polling=true;try{state=await api(force?"/api/state?refresh=1":"/api/state");if($("error").textContent.startsWith("The local server is unavailable"))error("");syncClock(state.now);initializeSharedWork();renderRemaining();$("workspace").textContent=state.workspace;$("version").textContent=`v${state.version} · This computer only`;$("connection").textContent="Connected locally";$("connection-dot").className="online";const notices=[];if(!state.windows)notices.push("SAS execution requires Windows with Enterprise Guide. You can use file tools and inspect history on this computer.");if(!state.openpyxl)notices.push("Install openpyxl for schedules and Excel table previews (see START_HERE.txt).");$("notice").textContent=notices.join(" ");$("notice").hidden=!notices.length;document.querySelectorAll(".sas-action").forEach(b=>b.disabled=!state.windows);files();await initializeParameters();renderIfChanged();if($("details-dialog").open&&!globalThis.PySASKeys?.active){if(selectedCommand)await refreshConsole();else if(inspectingFolder&&selectedPath)await showPath(selectedPath,true);}}catch(e){$("connection").textContent="Connection lost";$("connection-dot").className="offline";error("The local server is unavailable. The app may have closed. Displayed job states may be stale.");}finally{polling=false;}}
 function formData(form) { const data=Object.fromEntries(new FormData(form));form.querySelectorAll('input[type="checkbox"]').forEach(c=>data[c.name]=c.checked);return data; }
 async function launch(data, form) { if(data.action==="run"&&data.use_parameters&&parameterLoading){error("Wait for the parameter file to finish loading.");return;}const button=form?.querySelector('[type="submit"]');if(button)button.disabled=true;error("");try{const result=await api("/api/launch",data);await refresh();await showCommand(result.id);}catch(e){error(e.message);}finally{if(button)button.disabled=false;}}
 function bindForm(id, action) { $(id).addEventListener("submit",event=>{event.preventDefault();launch({...formData(event.currentTarget),action},event.currentTarget);}); }
@@ -87,7 +88,7 @@ $("egp-form").addEventListener("submit",e=>{e.preventDefault();const data=formDa
 $("preview-schedule").addEventListener("click",async()=>{const path=$("schedule-form").elements.workbook.value;if(!path){error("Select a schedule workbook first.");return;}inspectingFolder=false;selectedCommand=null;selectedPath=path;openDialog("Schedule workbook");$("detail-meta").textContent=path;await preview(path);});
 $("close-details").addEventListener("click",()=>$("details-dialog").close());$("details-dialog").addEventListener("close",()=>{selectedCommand=null;selectedPath=null;focusTarget(detailsReturnFocus)?.focus({preventScroll:true});detailsReturnFocus=null;globalThis.PySASKeys?.refreshLists();});
 $("bundle-action").addEventListener("change",toolFields);$("egp-action").addEventListener("change",toolFields);$("history-search").addEventListener("input",render);$("history-filter").addEventListener("change",render);$("refresh").addEventListener("click",()=>{error("");refresh(true);});
-function tick(){$("clock").textContent=new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"});if($("connection-dot").className!=="online")return;document.querySelectorAll("[data-start]").forEach(el=>{const value=duration((Number(el.dataset.base)||0)+clockSeconds()-Number(el.dataset.start));if(el.textContent!==value)el.textContent=value;});}
+function tick(){renderRemaining();$("clock").textContent=new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"});if($("connection-dot").className!=="online")return;document.querySelectorAll("[data-start]").forEach(el=>{const value=duration((Number(el.dataset.base)||0)+clockSeconds()-Number(el.dataset.start));if(el.textContent!==value)el.textContent=value;});}
 toolFields();navigate(location.hash.slice(1)||"overview");refresh();tick();setInterval(refresh,2000);setInterval(tick,200);
 
 // Optional read-only integration for browsers that expose a page tool registry.
@@ -224,7 +225,7 @@ async function renderServers() {
   const selected=snapshots.find(s=>s.id===select.value && s.snapshot) || snapshots.find(s=>s.snapshot);
   $("server-activity").innerHTML=commandCards(state.commands.filter(c=>c.action==="server-refresh").slice(0,3));
   $("server-reuse").disabled=!selected;$("server-download").hidden=!selected;$("server-copy").hidden=!selected;$("server-copy").disabled=!state.windows;
-  if(!selected){serverCatalog=null;serverLoadedId=null;serverLoadingId=null;$("server-library-list").innerHTML=empty("No server snapshot yet","Select an EGP connection and refresh to discover its assigned libraries.");$("server-table-list").innerHTML="";$("server-summary").textContent="";$("server-issues").innerHTML="";$("server-snapshot-status").textContent="No readable snapshot has been saved.";return;}
+  if(!selected){serverCatalog=null;serverLoadedId=null;serverLoadingId=null;$("server-library-list").innerHTML=empty("No server snapshot yet","Click Discover libraries to list the assignments for your automatic EGP connection.");$("server-table-list").innerHTML="";$("server-summary").textContent="";$("server-issues").innerHTML="";$("server-snapshot-status").textContent="No readable snapshot has been saved.";return;}
   $("server-download").href=`/api/download?path=${encodeURIComponent(selected.snapshot)}`;$("server-copy").dataset.copyTarget=JSON.stringify({path:selected.snapshot});
   if(serverLoadedId!==selected.id){
     if(serverLoadingId===selected.id)return;
@@ -232,6 +233,8 @@ async function renderServers() {
     try{const catalog=await api(`/api/server-catalog?id=${encodeURIComponent(id)}`);if(serverLoadingId!==id)return;
       serverCatalog=catalog;serverLoadedId=id;serverPage=0;
       fillSelect($("server-library"),catalog.libraries.map(l=>l.name));
+      const chosen=new Set($("server-libraries").value.toUpperCase().split(/[,\s]+/));
+      $("server-library-choices").innerHTML=catalog.libraries.map(l=>`<label class="check"><input type="checkbox" value="${esc(l.name)}" ${chosen.has(l.name)?"checked":""}>${esc(l.name)} · ${esc(l.engines.join(", "))}</label>`).join("");
       $("server-snapshot-status").textContent=`${catalog.label} · ${catalog.partial?"Partial snapshot · ":""}captured ${date(catalog.captured)}. Refresh to update; this is not a live view.`;
       renderCatalog();
     }catch(e){if(serverLoadingId===id)$("server-snapshot-status").textContent=e.message;}
@@ -245,6 +248,12 @@ function catalogIssues(catalog){
 function renderCatalog(){
   if(!serverCatalog)return;
   const libs=serverCatalog.libraries;
+  if(serverCatalog.libraries_only){
+    $("server-summary").textContent=`${libs.length} assigned libraries discovered. Select libraries above, then refresh the full snapshot for table sizes and dates.`;
+    $("server-issues").innerHTML=catalogIssues(serverCatalog);
+    $("server-library-list").innerHTML=table(["Library","Engine","Location"],libs.map(l=>`<tr><td>${esc(l.name)}</td><td>${esc(l.engines.join(", "))}</td><td>${l.paths.map(esc).join("<br>")}</td></tr>`));
+    $("server-table-list").innerHTML="";$("server-page").textContent="Library discovery only — table metadata was not requested.";$("server-prev").disabled=true;$("server-next").disabled=true;return;
+  }
   $("server-issues").innerHTML=catalogIssues(serverCatalog);
   $("server-summary").textContent=`${libs.length} libraries · ${libs.reduce((n,l)=>n+l.tables,0)} tables · ${libs.reduce((n,l)=>n+l.views,0)} ${libs.reduce((n,l)=>n+l.views,0)===1?"view":"views"}. ${serverCatalog.partial?"Partial metadata: skipped items are listed below. ":""}Storage totals are per library; aliases can overlap.`;
   $("server-library-list").innerHTML=libs.length?table(["Library / engine","Table storage","Tables / views","Location"],libs.map(l=>`<tr><td><button type="button" class="text-button" data-server-library="${esc(l.name)}">${esc(l.name)}</button><small>${esc(l.engines.join(", "))}</small></td><td>${esc(storageSize(l.known_bytes,l.unknown_sizes+(l.incomplete?1:0)))}${l.unknown_sizes?`<small>${l.unknown_sizes} ${l.unknown_sizes===1?"table size":"table sizes"} unavailable</small>`:""}</td><td>${l.tables} / ${l.views}${l.incomplete?`<small>${l.skipped_members?`${l.skipped_members} skipped members`:"Incomplete library metadata"}</small>`:""}</td><td class="server-location">${l.paths.map(esc).join("<br>") || "—"}</td></tr>`)):empty("No libraries returned","Check your initialization assignments and library filter in the refresh console.");
@@ -342,4 +351,37 @@ $("confirm-cleanup").addEventListener("click",async()=>{
   try{const result=await api("/api/cleanup",{token:cleanupPlan.token});$("cleanup-dialog").close();cleanupPlan=null;$("cleanup-status").textContent=`Deleted ${result.runs} runs · ${storageSize(result.bytes)} removed.`;await refresh(true);}
   catch(e){$("cleanup-dialog-status").textContent=e.message;}
   finally{$("confirm-cleanup").disabled=false;}
+});
+
+function initializeSharedWork(){
+  if(sharedWorkInitialized||!state?.shared_work)return;
+  const value=state.shared_work;
+  $("shared-work-enabled").checked=value.enabled;
+  $("shared-work-path").value=value.path;
+  $("shared-work-libref").value=value.libref;
+  $("shared-work-summary").textContent=value.enabled?`Shared WORK · ${value.libref} enabled for new runs`:"Shared WORK · use an open SAS session";
+  sharedWorkInitialized=true;
+}
+$("shared-work-form").addEventListener("submit",async event=>{
+  event.preventDefault();const button=event.currentTarget.querySelector('[type="submit"]');button.disabled=true;
+  try{const saved=await api("/api/shared-work",formData(event.currentTarget));state.shared_work=saved;sharedWorkInitialized=false;initializeSharedWork();
+    $("shared-work-status").textContent=saved.enabled?`Saved: ${saved.libref} will be the default library for new runs. Restart an existing watcher to apply this change.`:"Shared WORK disabled for new runs. Restart an existing watcher to apply this change.";
+  }catch(e){$("shared-work-status").textContent=e.message;}finally{button.disabled=false;}
+});
+function remainingText(value, now){
+  if(!value?.active)return "No files running";
+  if(value.seconds==null)return "Finish time unknown · waiting for timings";
+  const seconds=Math.max(0,value.seconds-Math.max(0,now-value.observed));
+  if(seconds<1)return value.unknown?"Finish time unknown · estimate exceeded or incomplete":"Finishing current work…";
+  const minutes=Math.ceil(seconds/60), hours=Math.floor(minutes/60);
+  return `~${hours?hours+"h ":""}${minutes%60}m${value.unknown?"+":""} until finished${value.unknown?" · some timings unknown":""}`;
+}
+function renderRemaining(){
+  if(!state)return;
+  $("running-remaining").textContent=remainingText(state.remaining,clockSeconds());
+  $("running-remaining").title="Current runs, remaining schedule tasks and the current watcher queue. Historical estimate; future arrivals are excluded. Parallel commands run independently.";
+}
+$("discover-libraries").addEventListener("click",()=>launch({...formData($("server-form")),action:"server-refresh",libraries:"",libraries_only:true},$("server-form")));
+$("server-library-choices").addEventListener("change",()=>{
+  $("server-libraries").value=Array.from($("server-library-choices").querySelectorAll('input:checked')).map(input=>input.value).join(", ");
 });

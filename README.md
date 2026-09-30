@@ -1,12 +1,12 @@
 # PySAS Toolkit
 
-**PySAS 0.3.13** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
+**PySAS 0.3.14** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
 
 It grew out of day-to-day model-development and consulting work where large SAS processes were difficult to inspect, rerun, parallelise, move between environments and review consistently. The current implementation brings those workflows together in one portable `pysas.py` utility.
 
 ## What it does
 
-| Component | Status in 0.3.13 | Purpose |
+| Component | Status in 0.3.14 | Purpose |
 | --- | --- | --- |
 | SAS bundle utility | Implemented | Pack, verify and safely unpack SAS source trees with SHA-256 integrity metadata and backups |
 | EGP tools | Implemented | Inspect EGP archives, extract embedded SAS programs and conservatively repack them into an EGP template |
@@ -38,11 +38,11 @@ is required. Inaccessible members are skipped; readable results are saved as a p
 with warnings and incomplete storage totals. Saved snapshots remain available offline and travel with saved-data
 backups; missing metadata is shown as unknown.
 
-The command-line toolkit is version 0.3.13; the UI preview is 0.4.0-preview.25.
+The command-line toolkit is version 0.3.14; the UI preview is 0.4.0-preview.26.
 
 ## Requirements
 
-PySAS 0.3.13 is designed for controlled Windows environments with:
+PySAS 0.3.14 is designed for controlled Windows environments with:
 
 - Python 3.9+ recommended;
 - SAS Enterprise Guide installed and configured for the target SAS environment;
@@ -300,7 +300,7 @@ Important limitations include:
 
 ## Version
 
-Current published implementation: **0.3.13**.
+Current published implementation: **0.3.14**.
 
 ```powershell
 py pysas.py version

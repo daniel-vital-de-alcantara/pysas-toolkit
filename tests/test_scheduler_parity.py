@@ -6,6 +6,7 @@ server binding, cscript process completion and (in the UI case) worker events ar
 from pathlib import Path
 import contextlib
 import io
+import os
 import shutil
 import subprocess
 import sys
@@ -67,6 +68,18 @@ class SchedulerParityTests(unittest.TestCase):
         path = self.root/'project.egp'
         ET.ElementTree(root).write(path, encoding='utf-8')
         return path
+
+    def test_shared_work_is_in_real_bridge_before_setup_and_target(self):
+        project = self.project()
+        task = dict(definition(section='Realised', task_id='target'), _always_run=self.setups)
+        with patch.dict(os.environ, {'PYSAS_SHARED_WORK_PATH': "/server/a'b", 'PYSAS_SHARED_WORK_LIBREF': 'VDI'}), patch.object(engine, 'VBS', self.current):
+            result = engine.scheduler_task(task, project, self.root/'shared')
+        self.assertEqual(result['status'], 'SUCCESS')
+        code = engine.read_text(next((self.root/'shared/target/code').glob('*.sas')))
+        self.assertIn("libname('VDI', '/server/a''b')", code)
+        self.assertLess(code.index('options user=VDI;'), code.index('libname café;'))
+        self.assertLess(code.index('libname café;'), code.rindex('options user=VDI;'))
+        self.assertLess(code.rindex('options user=VDI;'), code.index('data realised;'))
 
     def compare(self, task, setups=None, attrs=None):
         setups = self.setups if setups is None else setups

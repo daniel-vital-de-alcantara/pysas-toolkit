@@ -82,7 +82,7 @@ def export_backup(app, configs_only=False, progress=None, destination=None):
         if progress: progress(0, 0, 'Scanning saved files')
         manifest = dict(format=FORMAT, scope='configs' if configs_only else 'all', workspace=str(app.root), folders=app.folders(),
                         bundle_settings=app.bundle_settings(), commands=[] if configs_only else list(app.commands.values()),
-                        parameters_settings=ui_parameters.settings(app.storage))
+                        parameters_settings=ui_parameters.settings(app.storage), shared_work=app.shared_work())
         bases = [app.storage / 'parameters']
         if not configs_only: bases += [app.root / 'runs', app.root / 'runner/runs', app.storage / 'artifacts']
         entries = [(p, p.relative_to(app.root).as_posix()) for base in bases for p in safe_files(base) if p.name not in {'.schedule.lock', '_cancel.request'}]
@@ -247,6 +247,11 @@ def restore_backup(app, stream, length):
         settings = {'folders.json': folders, 'bundle-paths.json': remap(manifest.get('bundle_settings', {}))}
         if parameter_settings is not None:
             settings['parameters-settings.json'] = parameter_settings
+        if 'shared_work' in manifest:
+            from pysas import shared_work_settings
+            shared = shared_work_settings(manifest['shared_work'])
+            shared['enabled'] = False  # A restored WORK path may belong to an expired session.
+            settings['shared-work.json'] = shared
         previous = {name: (app.storage / name).read_bytes() if (app.storage / name).exists() else None for name in settings}
         completed = []
         try:
@@ -382,3 +387,53 @@ def estimate_schedule(tasks, workers, samples):
     known = any(t['estimate']['samples'] for t in tasks)
     return {'seconds': (max(work / workers, max(critical.values(), default=0)) if unknown else now) if known or not unknown else None,
             'unknown': unknown, 'tasks': tasks, 'workers': workers}
+
+
+def remaining_work(commands, queued, samples, now):
+    """Forecast current workloads, with running tasks occupying their worker slots."""
+    forecasts = []
+    for command in commands:
+        if command.get('status') not in {'RUNNING', 'STOPPING'}: continue
+        if command.get('action') not in {'run', 'watch', 'schedule', 'continue', 'server-refresh'}: continue
+        args = command.get('args', [])
+        workers = int(args[args.index('--workers')+1]) if '--workers' in args else 1
+        tasks = [dict(t) for t in command.get('tasks', {}).values()]
+        if command.get('action') == 'watch' and command['status'] == 'RUNNING':
+            current = {t.get('name') for t in tasks if t.get('status') in {'RUNNING', 'CANCELLING'}}
+            tasks += [dict(key='queue:'+name, name=name, status='PENDING') for name in queued if name not in current]
+        if command.get('action') == 'watch' and not any(t.get('status') in {'RUNNING', 'CANCELLING', 'PENDING'} for t in tasks): continue
+        ends, pending, heap = set(), {}, []
+        unknown = known = 0
+        for index, task in enumerate(tasks):
+            key = str(task.get('key') or task.get('task_id') or index).casefold()
+            status = task.get('status')
+            if status in {'SUCCESS', 'SKIPPED_SUCCESS', 'SKIPPED_PREVIOUS', 'ALWAYS_RUN_DEFINITION'}:
+                ends.add(key); continue
+            if status not in {'RUNNING', 'CANCELLING', 'PENDING'}: continue
+            if command['status'] == 'STOPPING' and status == 'PENDING': continue
+            seconds = 0 if task.get('skip') else estimate_task(task, samples)['seconds']
+            running = status in {'RUNNING', 'CANCELLING'}
+            if seconds is not None and running:
+                seconds -= max(0, now - (task.get('started') or now))
+                if seconds <= 0: seconds = None  # Do not announce zero while SAS still runs.
+            unknown += seconds is None
+            known += seconds is not None and not task.get('skip')
+            if running: heapq.heappush(heap, (max(0, seconds or 0), key))
+            else: pending[key] = (task, seconds or 0)
+        elapsed = 0
+        while pending or heap:
+            for key, (task, seconds) in list(pending.items()):
+                if len(heap) >= workers: break
+                if all(str(dep).casefold() in ends for dep in task.get('depends_on', [])):
+                    del pending[key]
+                    heapq.heappush(heap, (elapsed + seconds, key))
+            if not heap:
+                unknown += len(pending); break
+            elapsed, key = heapq.heappop(heap); ends.add(key)
+            while heap and heap[0][0] == elapsed:
+                _, key = heapq.heappop(heap); ends.add(key)
+        if not tasks and command['status'] == 'RUNNING' and command.get('action') != 'watch': unknown += 1
+        forecasts.append(dict(seconds=elapsed, unknown=unknown, known=known))
+    unknown = sum(f['unknown'] for f in forecasts)
+    return dict(seconds=max((f['seconds'] for f in forecasts), default=0) if not unknown or any(f['known'] for f in forecasts) else None,
+                unknown=unknown, active=bool(forecasts), observed=now)

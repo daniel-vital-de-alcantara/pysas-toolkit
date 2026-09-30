@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PySAS 0.3.13 — portable SAS Enterprise Guide command-line utilities.
+"""PySAS 0.3.14 — portable SAS Enterprise Guide command-line utilities.
 
 Keep this file beside the EGP, scheduler workbook and any top-level _*.sas
 initialisation files it should use.  Python 3.9+ is recommended.  ``rich`` is
@@ -31,7 +31,7 @@ from typing import Any, Iterable
 from xml.etree import ElementTree as ET
 
 
-VERSION = "0.3.13"
+VERSION = "0.3.14"
 ROOT_DIR = Path(__file__).resolve().parent
 CODEBASE_FILE = "codebase.sasbundle.txt"
 BACKUP_FOLDER = "_codebase_backups"
@@ -683,7 +683,9 @@ Else
   piece = GetSelectedText(programName, RangeText(rowStart, rowEnd), section)
   text = "options iomlogautoflush;" & vbCrLf
   If stopProgram = "1" Then text = "options iomlogautoflush errorabend errorcheck=strict;" & vbCrLf
+  If WScript.Arguments.Count > 11 Then text = text & ReadAll(WScript.Arguments(11)) & vbCrLf
   If initText <> "" Then text = text & "/* ALWAYS_RUN_INITIALIZATION_START */" & vbCrLf & initText & vbCrLf & "/* ALWAYS_RUN_INITIALIZATION_END */" & vbCrLf
+  If WScript.Arguments.Count > 11 Then text = text & ReadAll(WScript.Arguments(11)) & vbCrLf
   text = text & "/* SCHEDULED_TARGET_START */" & vbCrLf & piece & vbCrLf & "/* SCHEDULED_TARGET_END */"
   Set sourceCode = FindProgram(programName)
 End If
@@ -755,10 +757,37 @@ def notify(title: str, message: str, error: bool = False, flash: bool = False) -
         pass
 
 
+def shared_work_settings(value):
+    if not isinstance(value, dict):
+        raise ValueError("Shared WORK settings must be an object.")
+    enabled = value.get("enabled") is True
+    path = str(value.get("path") or "").strip()
+    libref = str(value.get("libref") or "VDI").strip().upper()
+    if not re.fullmatch(r"[A-Z_][A-Z0-9_]{0,7}", libref) or libref in {"WORK", "SASHELP", "SASUSER", "USER"}:
+        raise ValueError("Choose a library name of up to 8 letters, digits or underscores, such as VDI.")
+    if len(path) > 2048 or any(ord(c) < 32 for c in path):
+        raise ValueError("Enter a SAS server directory on one line (up to 2048 characters).")
+    if enabled and not path:
+        raise ValueError("Enter the WORK path from your open SAS session.")
+    return {"enabled": enabled, "path": path, "libref": libref}
+
+
+def shared_work_code():
+    path = os.environ.get("PYSAS_SHARED_WORK_PATH", "")
+    if not path: return ""
+    config = shared_work_settings({"enabled": True, "path": path, "libref": os.environ.get("PYSAS_SHARED_WORK_LIBREF", "VDI")})
+    literal = "'" + config["path"].replace("'", "''") + "'"
+    lib = config["libref"]
+    return ("/* PYSAS_SHARED_WORK_START */\n"
+            f"data _null_; if libname('{lib}', {literal}) ne 0 then do; put 'ERROR: PySAS shared WORK is unavailable. Keep its owning session open and check the server path.'; abort abend; end; run;\n"
+            f"options user={lib};\n"
+            "/* PYSAS_SHARED_WORK_END */\n")
+
+
 def compose_sas(source: Path, result_dir: Path, explicit_lib: Path | None = None,
                 init_dir: Path | None = None, extra_init_dir: Path | None = None,
                 parameters: Path | None = None, parameter_source: Path | None = None) -> str:
-    parts = ["options iomlogautoflush;\n",
+    parts = ["options iomlogautoflush;\n", shared_work_code(),
              f"%let PYSAS_RESULT_DIR=\"{result_dir.as_posix()}\";\n",
              "/* PYSAS_LIB_START */\n"]
     selected_parameters = (parameter_source or parameters).resolve() if parameters is not None else None
@@ -767,7 +796,7 @@ def compose_sas(source: Path, result_dir: Path, explicit_lib: Path | None = None
             continue  # A selected _*.sas parameter file belongs after initialization.
         parts += [f"/* PYSAS_INIT_FILE_START: {path.name} */\n", normalized(read_text(path)),
                   f"/* PYSAS_INIT_FILE_END: {path.name} */\n"]
-    parts += ["/* PYSAS_LIB_END */\n"]
+    parts += ["/* PYSAS_LIB_END */\n", shared_work_code()]
     if parameters is not None:
         parts += ["/* PYSAS_PARAMETERS_START */\n", normalized(read_text(parameters)), "/* PYSAS_PARAMETERS_END */\n"]
     parts += [f"/* PYSAS_JOB_START: {source.name} */\n",
@@ -855,6 +884,9 @@ def execute_eg(mode: str, project: Path, sas_path: Path, program: str, row_start
     command = [str(cscript_path()), "//nologo", str(vbs_path), mode, str(project), str(sas_path),
                program, str(row_start), str(row_end), str(log_path), str(code_path), str(results),
                str(manifest) if tables else "", str(temp_prefix)]
+    shared_path = run_dir / "_shared_work.sas"
+    shared_path.write_text(shared_work_code(), encoding="utf-8")
+    command.append(str(shared_path))
     console_path = run_dir / "console.txt"
     rc = 127
     try:
