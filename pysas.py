@@ -884,9 +884,11 @@ def execute_eg(mode: str, project: Path, sas_path: Path, program: str, row_start
     command = [str(cscript_path()), "//nologo", str(vbs_path), mode, str(project), str(sas_path),
                program, str(row_start), str(row_end), str(log_path), str(code_path), str(results),
                str(manifest) if tables else "", str(temp_prefix)]
-    shared_path = run_dir / "_shared_work.sas"
-    shared_path.write_text(shared_work_code(), encoding="utf-8")
-    command.append(str(shared_path))
+    shared_text = shared_work_code()
+    if shared_text and mode.upper() != "RUNFILE":
+        shared_path = run_dir / "_shared_work.sas"
+        shared_path.write_text(shared_text, encoding="utf-8")
+        command.append(str(shared_path))
     console_path = run_dir / "console.txt"
     rc = 127
     try:

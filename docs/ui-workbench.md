@@ -1,6 +1,6 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.26 is a separate browser UI for the standalone PySAS
+The Workbench 0.4.0-preview.27 is a separate browser UI for the standalone PySAS
 0.3.14 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
@@ -435,7 +435,7 @@ Already-split older continuation folders cannot invent logs that were never save
 in that selected folder. Keep their earlier folders if you need that evidence.
 
 
-## Shared WORK, remaining time and library discovery (preview.26)
+## Shared WORK, remaining time and library discovery (preview.27)
 
 In Runner, enable Shared WORK, paste the server-side directory from an existing
 SAS session and save. Get that directory in the owning session with
