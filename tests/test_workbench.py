@@ -322,6 +322,19 @@ class HttpTests(unittest.TestCase):
         connection.close()
         return result
 
+    def test_log_summary_and_context_http(self):
+        log=self.root/'sample.log';log.write_text('ERROR: first\nNOTE: done\nWARNING: last\n')
+        status,body,_=self.request('GET','/api/log-summary?path=sample.log')
+        self.assertEqual(status,200,body)
+        result=json.loads(body)
+        self.assertEqual(result['counts'],dict(error=1,warning=1))
+        from urllib.parse import urlencode
+        status,body,_=self.request('GET','/api/log-summary?'+urlencode(dict(path='sample.log',issue=0,revision=result['revision'])))
+        self.assertEqual(status,200,body)
+        self.assertEqual(json.loads(body)['context']['selected_line'],1)
+        for query in ['path=../outside.log','path=pysas.py','path=sample.log&kind=invalid']:
+            self.assertEqual(self.request('GET','/api/log-summary?'+query)[0],400)
+
     def test_shared_work_settings_http_and_state(self):
         body = json.dumps(dict(enabled=True, path='/server/work', libref='vdi'))
         headers = {'X-PySAS-Token': self.server.token}

@@ -26,11 +26,12 @@ from pysas import text_encoding, schedule_state, shared_work_settings
 from ui_data import archive_folder, export_backup, restore_backup, duration_history, estimate_task, estimate_schedule, index_samples, remaining_work
 import ui_parameters
 import ui_servers
+from ui_logs import LogIndex
 import ui_storage
 import windows_clipboard
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.28"
+VERSION = "0.4.0-preview.29"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 TEXT_SUFFIXES = {".sas", ".log", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".xml"}
@@ -98,6 +99,7 @@ class Workbench:
         self.lock = threading.RLock()
         self.processes = {}
         self.commands = {}
+        self.logs = LogIndex()
         self.list_cache = {}
         self.cache_loading = set()
         self.cache_generation = 0
@@ -929,6 +931,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(ui_parameters.load_parameters(self.server.app.storage, value("name")))
             elif url.path == "/api/details":
                 self.respond(self.server.app.details(value("path")))
+            elif url.path == "/api/log-summary":
+                self.respond(self.server.app.logs.summary(self.server.app.input_path(value("path")), value("kind") or "all", value("offset") or 0, value("issue") if value("issue") else None, value("revision")))
             elif url.path == "/api/preview":
                 self.respond(self.server.app.preview(value("path")))
             elif url.path == "/api/console":

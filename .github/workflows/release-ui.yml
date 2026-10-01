@@ -47,18 +47,18 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'preview') }}
           fail_on_unmatched_files: true
           body: |
-            Shared WORK, remaining-time estimates, and easier library discovery.
+            SAS log summaries in the run inspector.
 
-            Download PySAS-Workbench-Python-0.4.0-preview.28.zip, extract fully and open START_PYSAS.bat.
+            Download PySAS-Workbench-Python-0.4.0-preview.29.zip, extract fully and open START_PYSAS.bat.
 
-            - Runner: paste the WORK path from an existing SAS session, enable shared WORK and save. Default library is VDI. PySAS assigns it and sets USER for new file runs, watchers, schedules and server refreshes.
-            - Keep the owning SAS session open. All participating sessions must access the same server directory. Explicit WORK.table references remain local; one-level table names use VDI. Restart existing watchers after changing settings.
-            - Running files shows estimated time remaining, accounting for dependencies, parallel workers, elapsed task time and the current watcher queue. Unknown or overdue timings remain clearly marked.
-            - Servers automatically reuses a successful EGP connection or the only input EGP. With several unused connections, choose once. Discover libraries lists assignments without scanning tables; check libraries before refreshing table metadata.
-            - Saved-data and configuration backups include shared WORK settings. Restored paths are disabled until re-enabled for a valid session.
-            - Standalone engine 0.3.14 retains existing terminal workflows. Alt navigation, file clipboard, backups and consolidated schedule continuation remain included.
+            - Open any SAS .log or consolidated schedule.log to see error and warning counts across the whole saved file, including outside the normal preview.
+            - First error and First warning show the issue with surrounding log lines.
+            - Browse all issues, filter errors or warnings, and page through every match. Line numbers and keyboard navigation help you move quickly.
+            - Latest log output returns to the usual preview. Download and Copy file still use the original complete log.
+            - Changed logs are rescanned; stale issue context is never silently reused. Live summaries include only content already saved by Enterprise Guide.
+            - The standalone SAS engine remains 0.3.14. Shared WORK, library discovery and previous features remain included.
 
-            Automated Python, JavaScript and Windows bridge checks run before publishing. Real SAS server execution requires verification in your environment; it is unavailable on the development Mac.
+            Automated tests cover full-file scanning, numbered diagnostics, source-echo exclusion, pagination, UTF-16/ANSI text, changed logs, HTTP access and safe rendering. Desktop visual verification was unavailable because the development Mac was locked.
 
           files: |
             release/PySAS-Workbench-Python-*.zip

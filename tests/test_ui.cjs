@@ -15,7 +15,7 @@ const context = {
   URLSearchParams,fetch:async()=>({ok:true,json:async()=>snapshot}),setInterval(){},AbortController,Date,console
 };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={remainingText,focusTarget,putMarkup,catalogIssues,setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={logSummaryMarkup,logContextMarkup,remainingText,focusTarget,putMarkup,catalogIssues,setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
 const h = context.helpers;
 test('elapsed formatting supports seconds, hours, and runs longer than a day',()=>{
   assert.equal(h.duration(65.9),'00:01:05');
@@ -295,4 +295,22 @@ test('remaining label counts down and distinguishes unknown, overrun and idle',(
   assert.match(h.remainingText({active:true,seconds:60,observed:100,unknown:1},100),/~1m\+/);
   assert.match(h.remainingText({active:true,seconds:null,unknown:1},100),/unknown/);
   assert.match(h.remainingText({active:true,seconds:5,observed:100,unknown:1},110),/unknown/);
+});
+
+test('log summary escapes messages, shows counts and offers first-error and warning navigation',()=>{
+  const result={counts:{error:1,warning:0},lines:100,first:{error:0,warning:null},issues:[{index:0,severity:'error',line:42,message:'ERROR: <script>bad</script>'}],total:1,offset:0,page_size:50};
+  const html=h.logSummaryMarkup(result,'all');
+  assert.match(html,/1 errors · 0 warnings/);
+  assert.match(html,/data-log-issue="0"/);
+  assert.match(html,/disabled>First warning/);
+  assert.match(html,/Line 42/);
+  assert.match(html,/&lt;script&gt;/);
+  assert.doesNotMatch(html,/<script>/);
+  assert.match(html,/data-key-list/);
+});
+test('log context shows real file line numbers and safely highlights the selected diagnostic',()=>{
+  const html=h.logContextMarkup({start:40,selected_line:42,lines:['code;','run;','ERROR: <bad>','next']});
+  assert.match(html,/lines 40–43/);
+  assert.equal((html.match(/log-selected-line/g)||[]).length,1);
+  assert.match(html,/&lt;bad&gt;/);
 });

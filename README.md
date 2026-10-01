@@ -38,7 +38,7 @@ is required. Inaccessible members are skipped; readable results are saved as a p
 with warnings and incomplete storage totals. Saved snapshots remain available offline and travel with saved-data
 backups; missing metadata is shown as unknown.
 
-The command-line toolkit is version 0.3.14; the UI preview is 0.4.0-preview.28.
+The command-line toolkit is version 0.3.14; the UI preview is 0.4.0-preview.29.
 
 ## Requirements
 

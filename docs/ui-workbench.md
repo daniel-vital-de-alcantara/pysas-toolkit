@@ -1,6 +1,6 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.28 is a separate browser UI for the standalone PySAS
+The Workbench 0.4.0-preview.29 is a separate browser UI for the standalone PySAS
 0.3.14 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
@@ -478,3 +478,25 @@ snapshots display no misleading zero-byte table totals. Existing best-effort
 handling for inaccessible tables remains in the full snapshot.
 
 SAS semantics: [USER library documentation](https://support.sas.com/documentation/cdl/en/lrcon/62955/HTML/default/a002120511.htm).
+
+
+## SAS log summaries (preview.29)
+
+Choose any .log in Inspect, including a consolidated schedule.log. The summary
+scans the whole saved file, including content outside the normal tail preview.
+It counts ERROR: and WARNING: messages and numbered SAS diagnostics such as
+ERROR 180-322:. Numbered source echoes and NOTE lines mentioning errors are
+excluded. This is a diagnostic index, not a determination of root cause or success.
+
+First error / First warning shows the matched line with up to 11 preceding and
+25 following lines. Browse all errors and warnings expands a list with All,
+Errors and Warnings filters, 50 matches per page. Line numbers refer to the saved
+log; long list messages are shortened, while the full file remains downloadable.
+Alt/F10 shows hints (E first error, W first warning, I issue list); inside the
+list, use arrows and Enter. Latest log output restores the normal preview.
+
+The index is cached locally while the file is unchanged. If the file changes,
+the summary rescans and asks you to reselect the issue before showing context,
+so an old line cannot silently point to a different error. Live summaries can
+only include log content Enterprise Guide has already saved. Download and Copy
+file always operate on the original file; no SAS execution behavior is changed.

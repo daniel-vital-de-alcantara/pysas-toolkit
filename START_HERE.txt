@@ -1,4 +1,4 @@
-PySAS Workbench 0.4.0-preview.28
+PySAS Workbench 0.4.0-preview.29
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
@@ -263,3 +263,10 @@ NEW IN PREVIEW.28
   watcher files finish. Unknown/overdue timings stay clearly marked.
 - Servers: Auto connection reuses a working EGP or the only input EGP.
   Discover libraries first, tick the desired libraries, then refresh metadata.
+
+NEW IN PREVIEW.29
+- Open Inspect and choose a .log: see whole-file error and warning counts.
+- First error / First warning opens the issue with surrounding log lines.
+- Browse all errors and warnings, filter by type, and page through every match.
+- Latest log output returns to the normal log preview. Download and Copy file
+  continue to use the original complete file. The SAS engine is unchanged.

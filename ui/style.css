@@ -25,3 +25,15 @@ progress{width:min(100%,420px);accent-color:#007bc3}
 [data-key-list] tr:focus-within{background:#eaf5fc;outline:2px solid #007bc3;outline-offset:-2px}
 [data-key-list] .file-item:focus{background:#eaf5fc;color:#004d79}
 [data-key-list]:focus-visible{outline:2px solid #007bc3;outline-offset:2px}
+
+#log-summary{padding:14px 20px;border-bottom:1px solid var(--line);background:#f5f9fc}
+.log-summary-head{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;font-size:.9rem}
+.log-summary-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+#log-issues-details summary{cursor:pointer;color:#245f88;font-size:.85rem;padding:8px 0}
+.log-issues{max-height:190px;overflow:auto;display:grid;gap:5px}
+.log-issue{border:1px solid var(--line);border-radius:4px;padding:8px;text-align:left;display:grid;gap:4px;min-width:0}
+.log-issue strong{font-size:.75rem}.log-issue span{font: .8rem/1.5 Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+.log-summary-actions [aria-pressed=true]{background:#dcecf8}
+.log-line-number{display:inline-block;min-width:5em;margin-right:12px;color:var(--muted);user-select:none}
+.log-selected-line{display:block;background:#fff0c7;outline:1px solid #d4ae55}
+#log-summary-status{margin:6px 0;font-size:.75rem}
