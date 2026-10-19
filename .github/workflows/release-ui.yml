@@ -47,18 +47,18 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'preview') }}
           fail_on_unmatched_files: true
           body: |
-            SAS log summaries in the run inspector.
+            PySAS Workbench: task-oriented navigation, richer run inspection and server exploration.
 
-            Download PySAS-Workbench-Python-0.4.0-preview.29.zip, extract fully and open START_PYSAS.bat.
+            Download the attached Python ZIP, extract fully and open START_PYSAS.bat.
 
-            - Open any SAS .log or consolidated schedule.log to see error and warning counts across the whole saved file, including outside the normal preview.
-            - First error and First warning show the issue with surrounding log lines.
-            - Browse all issues, filter errors or warnings, and page through every match. Line numbers and keyboard navigation help you move quickly.
-            - Latest log output returns to the usual preview. Download and Copy file still use the original complete log.
-            - Changed logs are rescanned; stale issue context is never silently reused. Live summaries include only content already saved by Enterprise Guide.
-            - The standalone SAS engine remains 0.3.14. Shared WORK, library discovery and previous features remain included.
+            - Run single files or new/continued schedules; manage global controls in Settings.
+            - Inspect named runs through Files, Logs and Tasks; download or copy original artifacts.
+            - Pack/unpack source bundles with recent folders, verification, backups and accurate counts.
+            - Refresh server libraries, tables and columns progressively, retaining inaccessible-member warnings.
+            - Use bounded read-only previews and incremental dictionary search with CSV/Excel exports.
+            - The standalone SAS execution engine remains 0.3.14.
 
-            Automated tests cover full-file scanning, numbered diagnostics, source-echo exclusion, pagination, UTF-16/ANSI text, changed logs, HTTP access and safe rendering. Desktop visual verification was unavailable because the development Mac was locked.
+            Read docs/next-version/release-notes.md and windows-eg-acceptance.md inside the ZIP for limits, compatibility and verification requirements.
 
           files: |
             release/PySAS-Workbench-Python-*.zip

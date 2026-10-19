@@ -197,7 +197,41 @@
 </div>
 <section id="server-columns" class="panel" hidden><h2 id="server-column-title">Columns</h2>
 <p id="server-column-status" class="hint"></p>
-<button id="refresh-columns" class="secondary" type="button">Refresh columns</button><div id="server-column-list"></div></section></section>
+<button id="refresh-columns" class="secondary" type="button">Refresh columns</button><div id="server-column-list"></div>
+<details class="data-preview-controls"><summary>Preview table data · read only</summary><p>Uses this snapshot’s connection in a fresh session. Refresh complete columns first. Numeric values are SAS raw numbers; formats are shown with column names.</p>
+<form id="table-preview-form">
+<div class="fields">
+<label>Maximum rows<input id="preview-limit" type="number" min="1" max="1000" value="100" required></label><label>Combine filters<select id="preview-join"><option value="AND">Match all · AND</option>
+<option value="OR">Match any · OR</option></select></label>
+</div>
+<div id="preview-filters"></div>
+<div class="actions">
+<button id="add-preview-filter" type="button" class="secondary">Add filter</button><button id="start-table-preview" data-blocked="1" type="submit" class="primary sas-action">Run preview</button>
+</div>
+<p id="table-preview-status" class="hint" role="status"></p>
+</form>
+<p class="hint">Up to 1,000 rows, 100 columns, 256 characters per text cell and a 2 MB log transport budget. No ordering or random sampling is implied. Filters may still scan data on the server. The source is never updated; returned rows are saved locally in the run and backups.</p></details></section><section class="panel" id="table-preview-results"><h2>Saved table previews</h2>
+<label>Preview<select id="server-preview-select"><option value="">Latest preview for this table / connection</option></select></label><p id="preview-result-status" class="hint" role="status"></p>
+<div id="preview-result-actions"></div>
+<div id="preview-result-table"></div>
+<div class="actions">
+<button id="preview-page-prev" class="secondary" type="button">Previous rows</button><span id="preview-result-page" class="hint"></span><button id="preview-page-next" class="secondary" type="button">Next rows</button>
+</div></section><section class="panel" id="dictionary-panel"><h2>Data dictionary</h2>
+<p>Search saved column metadata across libraries. Uncollected, stale and inaccessible metadata stays explicit. Collect missing columns incrementally; each table is a separate cancellable SAS run.</p>
+<div class="fields">
+<label>Libraries (comma-separated; blank means all)<input id="dictionary-libraries" placeholder="DWH, REPORTS" maxlength="900"></label><label>Find a column, label or table<input id="dictionary-search" type="search" maxlength="200" placeholder="For example: case_id"></label>
+</div>
+<div class="actions">
+<button type="button" class="secondary sas-action" data-dictionary-operation="collect">Collect missing columns</button><button id="stop-dictionary" type="button" class="secondary" hidden>Stop collection after current table</button><button type="button" class="secondary" data-dictionary-operation="csv">Export dictionary CSV</button><button type="button" class="secondary" data-dictionary-operation="xlsx">Export dictionary Excel</button>
+</div>
+<p class="hint">Collection is serial, up to 200 tables per batch; repeat to collect the next missing tables. Up to 10,000 columns per table and 100,000 saved columns per connection. Export includes the chosen libraries and search filter, plus rows marking unavailable metadata. CSV escapes formula-like text for spreadsheets.</p>
+<p id="dictionary-job-status" class="hint" role="status"></p>
+<div id="dictionary-job-actions"></div>
+<p id="dictionary-status" class="hint" role="status"></p>
+<div id="dictionary-results"></div>
+<div class="actions">
+<button id="dictionary-prev" type="button" class="secondary">Previous columns</button><span id="dictionary-page" class="hint"></span><button id="dictionary-next" type="button" class="secondary">Next columns</button>
+</div></section></section>
 <section id="page-files" class="page" hidden><details class="panel settings-group" id="settings-folders"><summary>Workspace and folders</summary><p>Current workspace</p>
 <code id="workspace">Connecting to your files…</code><form id="folders-form" class="panel">
 <div class="panel-number">LOCAL FOLDERS</div>

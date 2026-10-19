@@ -389,9 +389,8 @@ See [Microsoft's shell clipboard formats](https://learn.microsoft.com/en-us/wind
 
 ## Keyboard, storage and continued schedules (preview.24)
 
-From preview.25, **Alt** or **F10** opens mnemonic navigation: **O** Overview,
-**R** Runner, **S** Scheduler, **B** Bundles, **H** History, **F** Files and
-**V** Servers. **X** opens commands for the current page; **U** refreshes and **Q**
+In the next-version review build, **Alt** or **F10** opens mnemonic navigation: **O** Overview,
+**R** Run, **P** Projects, **H** History, **V** Servers and **S** Settings. **X** opens commands for the current page; **U** refreshes and **Q**
 quits. Selecting most pages then shows that page's command hints. **Alt → H**
 focuses the run-history list directly (or its search field when empty).
 
@@ -400,9 +399,9 @@ Inspect's file list, **↑ / ↓** moves between items, **Home / End** jumps to 
 first/last, and **Page Up / Down** jumps ten items. **← / →** moves between a row's
 actions. **Enter** opens/activates the focused item; arrows never run an action.
 **Tab / Shift+Tab** leaves the list. Native fields keep their normal arrow keys.
-Inspect's **Esc** closes the dialog and restores focus to the inspected run.
+Inspect's **Esc** goes back to the parent run or closes the inspector and restores focus to the inspected run.
 
-Inside a dialog, Alt shows local hints. Esc first cancels hints; outside a dialog,
+Inside the inspector or a confirmation dialog, Alt shows local hints. Esc first cancels hints; outside a dialog,
 Esc from page hints returns to navigation hints. Scroll to expose more controls.
 Common actions have explicit hints and other controls use letters from their
 labels. Hint assignment includes disabled/off-screen controls so scrolling or
@@ -510,3 +509,7 @@ Header elapsed time belongs to the longest active run and excludes pauses betwee
 The next-version inspector uses the full work area and separates Files, Logs and Tasks. “Copy displayed text” copies only the visible log preview or issue context; “Copy file” copies the original file attachment. Run names can be edited without renaming folders, and continued schedules retain them. History sorts by last activity while retaining the original start date. Projects remembers ten recent code folders, verifies bundles before unpacking and shows actual added/changed counts. Unpack never deletes files absent from a bundle.
 
 Servers now supports independent library, table and column refreshes with saved timestamps. Refreshing one scope preserves completed siblings. Inaccessible tables remain visible with unknown fields and a warning, and can be filtered separately. Column metadata is collected on demand; refreshing table metadata marks older column schemas stale. Connection initialization can be disabled, in which case `_*.sas` and shared WORK assignments are omitted. Each operation opens a fresh session and does not attach to the user's already-open EG session.
+
+Table previews are read only and available after collecting a table's complete current column metadata. Choose Top N (100 default; 1,000 maximum), add typed filters and combine them with AND/OR. Results are bounded to 100 columns, 256 characters per text cell and 2 MB of log transport, then displayed 50 rows at a time. Missing/truncated values and omitted columns are explicit. Numeric values use SAS raw numbers, with formats in the headings. Filters can still scan data on the server. Download/Copy sample CSV or JSON contains only the returned rows. Samples also remain in local run logs/artifacts and saved-data backups.
+
+The dictionary searches saved columns across chosen libraries and includes rows for unavailable/uncollected tables. Collect missing columns serially in batches of up to 200 tables; stop queued collection after the current table or cancel that file through its Console/Tasks control. Column limits are 10,000 per table and 100,000 per saved connection. CSV and Excel exports include the selected libraries and search term, plus metadata status. CSV protects spreadsheet users by prefixing formula-like text; Excel stores strings as text. See [review release notes](next-version/release-notes.md) and [manual acceptance](next-version/windows-eg-acceptance.md).

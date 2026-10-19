@@ -38,7 +38,9 @@ is required. Inaccessible members are skipped; readable results are saved as a p
 with warnings and incomplete storage totals. Saved snapshots remain available offline and travel with saved-data
 backups; missing metadata is shown as unknown.
 
-The command-line toolkit is version 0.3.14; the UI preview is 0.4.0-preview.29.
+The released command-line toolkit is version 0.3.14; the released UI preview is 0.4.0-preview.29.
+
+The next Workbench version is in four stacked draft PRs, identified as `0.4.0-preview.30-dev`. It reorganizes Run/Settings, expands History and Projects, and adds progressive server metadata, bounded read-only table previews and dictionary search/export. See [review release notes](docs/next-version/release-notes.md). This review build requires visual and live Windows/EG acceptance before merge or release.
 
 ## Requirements
 

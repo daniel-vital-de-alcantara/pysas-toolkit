@@ -6,6 +6,7 @@ let inspectorTab="files", inspectorDetail=null, inspectorTrail=[], inspectorRetu
 let copyTarget=null, copyBusy=false, detailsReturnFocus=null;
 let sharedWorkInitialized=false, preferencesInitialized=false, inspectorPolling=false;
 let logView={path:null,kind:"all",offset:0,issue:null,revision:""}, logRequest=0;
+let previewBuilderSignature=null, previewResult=null, previewResultId=null, previewLoadingId=null, previewPage=0, dictionarySignature=null, dictionaryOffset=0, dictionaryTimer=null, dictionaryRequest=0, dictionaryJob=null;
 let selectedServerTable=null;
 let serverCatalog=null, serverLoadedId=null, serverLoadingId=null, serverPage=0;
 const monotonic = () => globalThis.performance?.now?.() ?? Date.now();
@@ -20,12 +21,13 @@ function timer(item) { return `<span class="elapsed" ${active(item)&&item.starte
 function date(value) { return value ? new Date(Number(value)*1000).toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}) : "—"; }
 function badge(status, override) { const label = {PARTIAL:"Partial snapshot",CANCELLED:"Stopped by you",CANCELLING:"Stopping file",RUNNING:"Running",STOPPING:"Finishing files",STOPPED:"Stopped",STOPPED_ON_ERROR:"Stopped after error",SUCCESS:"Success",FAILED:"Failed",SAS_ERROR:"SAS error",CONNECTION_LOST:"Connection lost",ALWAYS_RUN_DEFINITION:"Shared setup",PENDING:"Pending",BLOCKED_DEPENDENCY:"Blocked",SKIPPED_SUCCESS:"Skipped",SKIPPED_PREVIOUS:"Previously completed",UNKNOWN:"Unknown"}[status] || status; const cls = active({status})?"running": status.includes("SUCCESS")||status==="SKIPPED_PREVIOUS"?"success":/FAIL|ERROR|LOST|BLOCKED/.test(status)?"error":["PENDING","PARTIAL"].includes(status)?"pending":""; return `<span class="badge ${cls}">${esc(override || label)}</span>`; }
 function empty(title, text) { return `<div class="empty"><span class="empty-icon" aria-hidden="true">◇</span><strong>${esc(title)}</strong><p>${esc(text)}</p></div>`; }
+function readOnlyTable(headers,rows,label){return table(headers,rows).replace('<div class="table-wrap">',`<div class="table-wrap" tabindex="0" role="region" aria-label="${esc(label)}">`);}
 function table(headers, rows) { return `<div class="table-wrap"><table><thead><tr>${headers.map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`; }
 async function api(path, data) { const response = await fetch(path, data === undefined ? {} : {method:"POST",headers:{"Content-Type":"application/json","X-PySAS-Token":state?.token || ""},body:JSON.stringify(data)}); const result = await response.json(); if (!response.ok) throw new Error(result.error || "Request failed"); return result; }
 function error(message) { $("error").textContent = message; $("error").hidden = !message; }
 function navigate(next) { if($("details-dialog").open)closeInspector(true); if(next==="scheduler"){next="runner";$("run-mode").value="multiple";} page = titles[next] ? next : "overview"; document.querySelectorAll(".page").forEach(p=>p.hidden = p.id !== `page-${page}`); document.querySelectorAll(".nav").forEach(n=>{n.classList.toggle("active", n.dataset.page===page); if(n.dataset.page===page)n.setAttribute("aria-current","page");else n.removeAttribute("aria-current");}); $("page-title").textContent=titles[page]; history.replaceState(null,"",`#${page}`); runFlow(); render(); }
 function fillSelect(select, values) { const signature = JSON.stringify(values); if (select.dataset.signature === signature) return; const current=select.value, first=select.options[0]?.textContent || "Select a file"; select.innerHTML=`<option value="">${esc(first)}</option>` + values.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join(""); if(values.includes(current))select.value=current; select.dataset.signature=signature; }
-function files() { if(globalThis.PySASKeys?.active)return; fillSelect($("parameter-files"),state.parameters_settings?.files || []); if(state.folders && !foldersInitialized){for(const key of ["inputs","init","inbox"])$("folder-"+key).value=state.folders[key];foldersInitialized=true;}const settings=state.bundle_settings || {paths:[],last:""};fillSelect($("saved-bundle-path"),settings.paths);$("recent-code-folders").innerHTML=settings.paths.map(p=>`<option value="${esc(p)}"></option>`).join("");if(!bundlePathsInitialized){$("bundle-code-root").value=settings.last;$("saved-bundle-path").value=settings.paths.includes(settings.last)?settings.last:"";bundlePathsInitialized=true;} document.querySelectorAll("select[data-files]").forEach(s=>fillSelect(s,state.files.filter(f=>f.toLowerCase().endsWith("."+s.dataset.files)))); fillSelect($("previous-schedule"),state.history.filter(h=>h.kind==="schedule"&&!active(h)&&!["UNKNOWN","SUCCESS"].includes(h.status)).map(h=>h.path)); }
+function files() { if(globalThis.PySASKeys?.active)return; fillSelect($("parameter-files"),state.parameters_settings?.files || []); if(state.folders && !foldersInitialized){for(const key of ["inputs","init","inbox"])$("folder-"+key).value=state.folders[key];foldersInitialized=true;}const settings=state.bundle_settings || {paths:[],last:""};fillSelect($("saved-bundle-path"),settings.paths);$("recent-code-folders").innerHTML=settings.paths.map(p=>`<option value="${esc(p)}"></option>`).join("");if(!bundlePathsInitialized){$("bundle-code-root").value=settings.last;$("saved-bundle-path").value=settings.paths.includes(settings.last)?settings.last:"";bundlePathsInitialized=true;} document.querySelectorAll("select[data-files]").forEach(s=>{const values=state.files.filter(f=>f.toLowerCase().endsWith("."+s.dataset.files));if(s.value&&(s.id==="default-egp"||s.id==="default-lib"||s.closest?.("form")?.id==="watch-form")&&!values.includes(s.value))values.push(s.value);fillSelect(s,values);}); fillSelect($("previous-schedule"),state.history.filter(h=>h.kind==="schedule"&&!active(h)&&!["UNKNOWN","SUCCESS"].includes(h.status)).map(h=>h.path)); }
 function taskScope(task) {
   const parts=[];
   if(task.section)parts.push(`Section ${task.section}`);
@@ -67,12 +69,12 @@ function render(){const saved=focusIdentity();renderContents();restoreFocus(save
 function renderContents() { if(!state||globalThis.PySASKeys?.active)return; $("saved-storage").textContent=state.saved_storage?`${storageSize(state.saved_storage.bytes)} saved data${state.saved_storage.export_bytes?` · ${storageSize(state.saved_storage.export_bytes)} prepared ZIPs`:""}`:"Measuring saved storage…";$("saved-storage").title=state.scan_errors?.storage?`Last measurement retained. ${state.scan_errors.storage}`:state.saved_storage?`Last measured ${date(state.saved_storage.measured)}`:"Storage is measured in the background."; if(!state)return;$("watch-inbox-path").textContent=state.folders?.inbox || "runner/inbox";$("keep-awake").checked=!!state.awake?.enabled;$("keep-awake").disabled=!state.awake?.supported;$("awake-status").textContent=state.awake?.error || (state.awake?.enabled?"On · Windows and display idle sleep are prevented.":state.awake?.supported?"Off · Normal power settings apply.":"Available on Windows. No mouse or keyboard input is generated.");uploadDestination(); const watcher=state.commands.find(c=>c.action==="watch"&&active(c)); $("running-count").textContent=state.commands.filter(active).flatMap(c=>Object.values(c.tasks).filter(t=>t.status==="RUNNING")).length; $("queue-count").textContent=state.queued.length; $("completed-count").textContent=state.history.filter(h=>!["RUNNING","UNKNOWN"].includes(h.status)).length; $("watcher-state").textContent=watcher?(watcher.status==="STOPPING"?"Finishing":"Watching"):"Stopped"; $("watcher-time").innerHTML=watcher?`${timer(watcher)} · ${watcher.status==="STOPPING"?"Waiting for active files":"Session elapsed"}`:"Ready when you are"; $("start-watch").disabled=!!watcher||!state.windows; $("stop-watch").disabled=!watcher||watcher.status==="STOPPING";
 document.querySelectorAll("[data-watcher-monitor]").forEach(node=>{node.innerHTML=`<span><strong>Inbox watcher · ${watcher?esc(watcher.status==="STOPPING"?"finishing files":"watching"):"stopped"}</strong><small>${esc(state.folders?.inbox||"")} · ${state.queued.length} queued</small></span>${watcher&&watcher.status!=="STOPPING"?'<button class="secondary" data-watcher-stop>Stop after current files</button>':'<button class="subtle" data-watcher-settings>Watcher settings</button>'}`;});
 if(page==="overview"){$("live-overview").innerHTML=live();$("recent-runs").innerHTML=historyTable(state.history.slice(0,6));$("commands-overview").innerHTML=commandCards(state.commands.slice(0,5));}
-if(page==="runner"){$("init-file-list").innerHTML=state.initialization_files?.length?state.initialization_files.map(p=>`<div class="queue-item"><code>${esc(p)}</code></div>`).join(""):'<p class="hint">No _*.sas files were found in the initialization folder or inbox.</p>';$("live-runner").innerHTML=live();$("inbox").innerHTML=state.queued.length?state.queued.map((name,i)=>`<div class="queue-item"><span class="badge pending">${i+1}</span><span>${esc(name)}</span><small>Waiting · ${esc(expectedText(state.queued_estimates?.[name]))}</small></div>`).join(""):'<p class="hint">The inbox is empty. Add job .sas files through Files & folders or your configured inbox.</p>';}
+$("init-file-list").innerHTML=state.initialization_files?.length?state.initialization_files.map(p=>`<div class="queue-item"><code>${esc(p)}</code></div>`).join(""):'<p class="hint">No _*.sas files were found in the initialization folder or inbox.</p>';if(page==="runner"){$("live-runner").innerHTML=live();$("inbox").innerHTML=state.queued.length?state.queued.map((name,i)=>`<div class="queue-item"><span class="badge pending">${i+1}</span><span>${esc(name)}</span><small>Waiting · ${esc(expectedText(state.queued_estimates?.[name]))}</small></div>`).join(""):'<p class="hint">The inbox is empty. Add job .sas files through Files & folders or your configured inbox.</p>';}
 if(page==="runner")$("schedule-activity").innerHTML=commandCards(state.commands.filter(c=>["schedule","continue"].includes(c.action)).slice(0,10),true);
 if(page==="servers")renderServers();
 if(page==="tools")$("tools-activity").innerHTML=commandCards(state.commands.filter(c=>c.action.startsWith("bundle-")||c.action.startsWith("egp-")).slice(0,10));
 if(page==="history"){let records=state.history;const q=$("history-search").value.toLowerCase(), filter=$("history-filter").value;records=records.filter(h=>(h.name+" "+h.path).toLowerCase().includes(q)&&(filter==="all"||filter==="errors"&&/FAIL|ERROR|LOST|BLOCKED/.test(h.status)||h.status===filter));$("all-history").innerHTML=historyTable(records);$("commands-history").innerHTML=commandCards(state.commands);}}
-async function refresh(force=false) { if(polling)return; polling=true;try{state=await api(force?"/api/state?refresh=1":"/api/state");if($("error").textContent.startsWith("The local server is unavailable"))error("");syncClock(state.now);initializeSharedWork();renderRemaining();$("workspace").textContent=state.workspace;$("version").textContent=`v${state.version} · This computer only`;$("connection").textContent="Connected locally";$("connection-dot").className="online";const notices=[];if(state.startup_error)notices.push(state.startup_error);if(!state.windows)notices.push("SAS execution requires Windows with Enterprise Guide. You can use file tools and inspect history on this computer.");if(!state.openpyxl)notices.push("Install openpyxl for schedules and Excel table previews (see START_HERE.txt).");$("notice").textContent=notices.join(" ");$("notice").hidden=!notices.length;document.querySelectorAll(".sas-action").forEach(b=>b.disabled=!state.windows);files();initializePreferences();runFlow();initializeParameters().catch(e=>{$("parameters-status").textContent=e.message;});renderIfChanged();refreshInspector();}catch(e){$("connection").textContent="Connection lost";$("connection-dot").className="offline";error("The local server is unavailable. The app may have closed. Displayed job states may be stale.");}finally{polling=false;}}
+async function refresh(force=false) { if(polling)return; polling=true;try{state=await api(force?"/api/state?refresh=1":"/api/state");if($("error").textContent.startsWith("The local server is unavailable"))error("");syncClock(state.now);initializeSharedWork();renderRemaining();$("workspace").textContent=state.workspace;$("version").textContent=`v${state.version} · This computer only`;$("connection").textContent="Connected locally";$("connection-dot").className="online";const notices=[];if(state.startup_error)notices.push(state.startup_error);if(!state.windows)notices.push("SAS execution requires Windows with Enterprise Guide. You can use file tools and inspect history on this computer.");if(!state.openpyxl)notices.push("Install openpyxl for schedules and Excel table previews (see START_HERE.txt).");$("notice").textContent=notices.join(" ");$("notice").hidden=!notices.length;document.querySelectorAll(".sas-action").forEach(b=>b.disabled=!state.windows||b.dataset.blocked==="1");files();initializePreferences();runFlow();initializeParameters().catch(e=>{$("parameters-status").textContent=e.message;});renderIfChanged();refreshInspector();}catch(e){$("connection").textContent="Connection lost";$("connection-dot").className="offline";error("The local server is unavailable. The app may have closed. Displayed job states may be stale.");}finally{polling=false;}}
 async function refreshInspector(){
   if(inspectorPolling||!$("details-dialog").open||globalThis.PySASKeys?.active)return;
   inspectorPolling=true;
@@ -259,7 +261,7 @@ async function renderServers() {
   const snapshots=state.server_snapshots || [], select=$("server-snapshots"), previous=select.value;
   select.innerHTML='<option value="">Latest available snapshot</option>'+snapshots.filter(s=>s.snapshot).map(s=>`<option value="${esc(s.id)}">${esc(s.label)} · ${esc(date(s.started))}${s.partial?" · Partial":""}</option>`).join("");select.value=previous;
   const selected=snapshots.find(s=>s.id===select.value && s.snapshot) || snapshots.find(s=>s.snapshot);
-  $("server-activity").innerHTML=commandCards(state.commands.filter(c=>c.action==="server-refresh").slice(0,3));
+  $("server-activity").innerHTML=commandCards(state.commands.filter(c=>c.action==="server-refresh").slice(0,3),true);
   $("server-reuse").disabled=!selected;$("server-download").hidden=!selected;$("server-copy").hidden=!selected;$("server-copy").disabled=!state.windows;
   if(!selected){serverCatalog=null;serverLoadedId=null;serverLoadingId=null;$("server-library-list").innerHTML=empty("No server snapshot yet","Click Discover libraries to list the assignments for your automatic EGP connection.");$("server-table-list").innerHTML="";$("server-summary").textContent="";$("server-issues").innerHTML="";$("server-snapshot-status").textContent="No readable snapshot has been saved.";return;}
   $("server-download").href=`/api/download?path=${encodeURIComponent(selected.snapshot)}`;$("server-copy").dataset.copyTarget=JSON.stringify({path:selected.snapshot});
@@ -277,6 +279,7 @@ async function renderServers() {
     }catch(e){if(serverLoadingId===id)$("server-snapshot-status").textContent=e.message;}
     finally{if(serverLoadingId===id)serverLoadingId=null;}
   }else renderCatalog();
+  refreshDictionary();renderSavedPreviews();
 }
 function catalogIssues(catalog){
   const issues=catalog.issues||[];if(!issues.length)return "";
@@ -504,11 +507,89 @@ function renderColumns(){
   const columns=(serverCatalog.column_details||[]).filter(c=>c.libname===t.libname&&c.table===t.name).sort((a,b)=>(a.position||0)-(b.position||0));
   $("server-column-title").textContent=key+" · columns";
   $("server-column-status").textContent=stamp?`Refreshed ${date(stamp.captured)}${stamp.partial?" · incomplete, inspect the refresh log":""}${columns.some(c=>c.stale)?" · earlier schema retained; refresh before preview":""}`:"Columns have not been collected. Refresh opens a fresh session using this snapshot’s connection.";
-  $("refresh-columns").disabled=!state.windows;
+  initializePreviewBuilder(columns);$("refresh-columns").disabled=!state.windows;
   $("server-column-list").innerHTML=columns.length?table(["Column","Type","Length","Label","Format","Informat"],columns.map(c=>`<tr><td>${esc(c.name)}</td><td>${esc(c.type)}</td><td>${esc(c.length)}</td><td>${esc(c.label)}</td><td>${esc(c.format)}</td><td>${esc(c.informat)}</td></tr>`)):empty("No saved columns","Refresh this table’s columns; inaccessible metadata is recorded in the refresh log.");
 }
 $("refresh-columns").addEventListener("click",()=>refreshServerScope("columns",selectedServerTable.libname,selectedServerTable.name));
 document.addEventListener("click",async e=>{const b=e.target.closest("button");if(!b)return;
   if(b.dataset.refreshLibrary){$("server-library").value=b.dataset.refreshLibrary;await refreshServerScope("tables",b.dataset.refreshLibrary);}
-  if(b.dataset.serverTable){selectedServerTable=JSON.parse(b.dataset.serverTable);renderColumns();$("server-columns").scrollIntoView({block:"start"});}
+  if(b.dataset.serverTable){selectedServerTable=JSON.parse(b.dataset.serverTable);renderColumns();renderSavedPreviews();$("server-columns").scrollIntoView({block:"start"});}
 });
+
+function initializePreviewBuilder(columns){
+  const blocked=!columns.length||columns.some(c=>c.stale)||serverCatalog?.refreshes?.["columns:"+selectedServerTable.libname+"."+selectedServerTable.name]?.partial;
+  $("start-table-preview").dataset.blocked=blocked?"1":"0";$("start-table-preview").disabled=!state.windows||blocked;
+  const signature=JSON.stringify([serverCatalog?.connection,selectedServerTable,columns.map(c=>[c.name,c.type,c.captured,c.stale])]);
+  if(signature===previewBuilderSignature)return;
+  previewBuilderSignature=signature;$("preview-filters").innerHTML="";$("table-preview-status").textContent="";
+}
+function addPreviewFilter(){
+  if($("preview-filters").children.length>=10)return;
+  const columns=(serverCatalog?.column_details||[]).filter(c=>selectedServerTable&&c.libname===selectedServerTable.libname&&c.table===selectedServerTable.name);
+  const row=document.createElement("div");row.className="preview-filter";
+  row.innerHTML=`<label>Column<select data-filter-column>${columns.map(c=>`<option value="${esc(c.name)}">${esc(c.name)} · ${esc(c.type)}</option>`).join("")}</select></label><label>Condition<select data-filter-operator>${[['eq','Equals'],['ne','Does not equal'],['lt','Less than'],['le','At most'],['gt','Greater than'],['ge','At least'],['contains','Contains text'],['starts','Starts with text'],['missing','Missing'],['not_missing','Not missing']].map(([v,label])=>`<option value="${v}">${label}</option>`).join("")}</select></label><label>Value<input data-filter-value maxlength="512"></label><button type="button" class="subtle" data-remove-filter>Remove</button>`;
+  $("preview-filters").append(row);
+}
+$("add-preview-filter").addEventListener("click",addPreviewFilter);
+document.addEventListener("click",e=>{const b=e.target.closest("[data-remove-filter]");if(b)b.closest(".preview-filter").remove();});
+$("table-preview-form").addEventListener("submit",async e=>{
+  e.preventDefault();if(!selectedServerTable||!serverLoadedId)return;
+  const button=$("start-table-preview");button.disabled=true;$("table-preview-status").textContent="Starting bounded preview…";
+  const filters=Array.from($("preview-filters").children).map(row=>({column:row.querySelector("[data-filter-column]").value,operator:row.querySelector("[data-filter-operator]").value,value:row.querySelector("[data-filter-value]").value}));
+  try{const result=await api("/api/launch",{action:"server-refresh",level:"preview",parent_snapshot:serverLoadedId,libraries:selectedServerTable.libname,table:selectedServerTable.name,limit:$("preview-limit").value,join:$("preview-join").value,filters});$("table-preview-status").textContent="Preview running. Its console has a Stop file control; completed rows appear below.";await refresh();await showCommand(result.id);}
+  catch(e){$("table-preview-status").textContent=e.message;}finally{button.disabled=!state.windows||button.dataset.blocked==="1";}
+});
+async function renderSavedPreviews(){
+  const previews=(state?.server_previews||[]).filter(p=>p.sample&&(!serverCatalog?.connection||p.connection===serverCatalog.connection)&&(!selectedServerTable||p.library===selectedServerTable.libname&&p.table===selectedServerTable.name));
+  const select=$("server-preview-select"),previous=select.value;
+  select.innerHTML='<option value="">Latest preview for this table / connection</option>'+previews.map(p=>`<option value="${esc(p.id)}">${esc(p.name)} · ${esc(date(p.started))}</option>`).join("");select.value=previous;
+  const chosen=previews.find(p=>p.id===select.value)||previews[0];
+  if(!chosen){previewResult=null;previewResultId=null;$("preview-result-status").textContent="No completed preview for this selection.";$("preview-result-table").innerHTML="";$("preview-result-actions").innerHTML="";return;}
+  if(previewResultId!==chosen.id){
+    if(previewLoadingId===chosen.id)return;
+    const id=chosen.id;previewLoadingId=id;$("preview-result-status").textContent="Loading bounded saved result…";
+    try{const result=await api('/api/server-preview?id='+encodeURIComponent(id));if(previewLoadingId!==id)return;previewResult=result;previewResultId=id;previewPage=0;}
+    catch(e){if(previewLoadingId===id)$("preview-result-status").textContent=e.message;return;}
+    finally{if(previewLoadingId===id)previewLoadingId=null;}
+  }
+  $("preview-result-actions").innerHTML=fileActions({path:chosen.sample_csv},"sample CSV")+fileActions({path:chosen.sample},"sample JSON");renderPreviewRows();
+}
+function renderPreviewRows(){
+  if(!previewResult)return;
+  const r=previewResult,pages=Math.max(1,Math.ceil(r.rows.length/50));previewPage=Math.max(0,Math.min(previewPage,pages-1));
+  $("preview-result-status").textContent=`${r.library}.${r.table} · ${r.rows.length} saved rows · ${date(r.captured)}${r.more_rows?" · more rows exist":""}${r.transport_limited?" · transport limit reached":""}${r.cells_truncated?" · long text cells truncated":""}${r.omitted_columns?` · ${r.omitted_columns} columns omitted`:""}${r.partial?" · SAS reported errors; inspect its log":""}. Unordered bounded sample; CSV exports these rows only and escapes formula-like text. Numeric dates remain raw SAS values.`;
+  $("preview-result-table").innerHTML=readOnlyTable(r.columns.map(c=>`${esc(c.name)}<small>${esc(c.type)}${c.format?' · '+esc(c.format):''}</small>`),r.rows.slice(previewPage*50,(previewPage+1)*50).map(row=>`<tr>${row.map(v=>`<td>${v===null?'<span class="hint">Missing</span>':esc(v)}</td>`).join("")}</tr>`),"Saved table preview · scroll to see more columns");
+  $("preview-result-page").textContent=`Page ${previewPage+1} of ${pages} · 50 rows per page`;$("preview-page-prev").disabled=previewPage===0;$("preview-page-next").disabled=previewPage===pages-1;
+}
+$("server-preview-select").addEventListener("change",renderSavedPreviews);
+$("preview-page-prev").addEventListener("click",()=>{previewPage--;renderPreviewRows();});$("preview-page-next").addEventListener("click",()=>{previewPage++;renderPreviewRows();});
+async function refreshDictionary(force=false){
+  if(!serverLoadedId)return;
+  const signature=JSON.stringify([serverLoadedId,$("dictionary-libraries").value,$("dictionary-search").value,dictionaryOffset]);
+  if(!force&&signature===dictionarySignature)return;dictionarySignature=signature;
+  const request=++dictionaryRequest;$("dictionary-status").textContent="Reading saved dictionary…";
+  try{const result=await api('/api/dictionary?'+new URLSearchParams({id:serverLoadedId,libraries:$("dictionary-libraries").value,q:$("dictionary-search").value,offset:String(dictionaryOffset)}));if(request!==dictionaryRequest)return;
+    dictionaryOffset=result.offset;$("dictionary-status").textContent=`${result.total.toLocaleString()} matching metadata rows. Unavailable and uncollected tables stay explicit.`;
+    $("dictionary-results").innerHTML=readOnlyTable(result.headers.map(esc),result.rows.map(row=>`<tr>${row.map(v=>`<td>${esc(v)}</td>`).join("")}</tr>`),"Data dictionary · scroll to see more columns");
+    $("dictionary-page").textContent=`${result.total?result.offset+1:0}–${Math.min(result.total,result.offset+result.page_size)} of ${result.total}`;
+    $("dictionary-prev").disabled=dictionaryOffset===0;$("dictionary-next").disabled=dictionaryOffset+result.page_size>=result.total;
+  }catch(e){if(request===dictionaryRequest)$("dictionary-status").textContent=e.message;}
+}
+for(const id of ['dictionary-libraries','dictionary-search'])$(id).addEventListener('input',()=>{clearTimeout(dictionaryTimer);dictionaryOffset=0;dictionaryTimer=setTimeout(()=>refreshDictionary(),350);});
+$("dictionary-prev").addEventListener("click",()=>{dictionaryOffset=Math.max(0,dictionaryOffset-200);refreshDictionary();});$("dictionary-next").addEventListener("click",()=>{dictionaryOffset+=200;refreshDictionary();});
+async function pollDictionaryJob(id){
+  try{const job=await api('/api/metadata-job?id='+encodeURIComponent(id));if(dictionaryJob!==id)return;
+    $("dictionary-job-status").textContent=`${job.done}/${job.total} · ${job.message}`;$("stop-dictionary").hidden=job.operation!=="collect"||job.status!=="WORKING";
+    if(job.status==="WORKING"){setTimeout(()=>pollDictionaryJob(id),1000);return;}
+    $("dictionary-job-actions").innerHTML=job.path?fileActions({path:job.path},"dictionary"):job.snapshot?`<button class="secondary" data-load-snapshot="${esc(job.snapshot)}">View collected metadata</button>`:"";
+    dictionarySignature=null;refreshDictionary();
+  }catch(e){$("dictionary-job-status").textContent=e.message;}
+}
+document.addEventListener("click",async e=>{const b=e.target.closest("button");if(!b)return;
+  if(b.dataset.dictionaryOperation){b.disabled=true;$("dictionary-job-status").textContent="Starting dictionary operation…";
+    try{const job=await api('/api/metadata-job',{snapshot:serverLoadedId,libraries:$("dictionary-libraries").value,query:$("dictionary-search").value,operation:b.dataset.dictionaryOperation});dictionaryJob=job.id;$("dictionary-job-actions").innerHTML="";pollDictionaryJob(job.id);}
+    catch(e){$("dictionary-job-status").textContent=e.message;}finally{b.disabled=b.dataset.dictionaryOperation==="collect"&&!state.windows;}
+  }
+  if(b.dataset.loadSnapshot){$("server-snapshots").value=b.dataset.loadSnapshot;await renderServers();}
+});
+$("stop-dictionary").addEventListener("click",async()=>{if(!dictionaryJob)return;try{await api('/api/metadata-job/stop',{id:dictionaryJob});$("dictionary-job-status").textContent="Stopping after the current table. Use its Stop file control to cancel that file immediately.";}catch(e){$("dictionary-job-status").textContent=e.message;}});

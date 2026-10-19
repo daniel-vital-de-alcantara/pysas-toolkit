@@ -27,12 +27,13 @@ from pysas import text_encoding, schedule_state, shared_work_settings
 from ui_data import archive_folder, export_backup, restore_backup, duration_history, estimate_task, estimate_schedule, index_samples, remaining_work
 import ui_parameters
 import ui_servers
+import ui_explore
 from ui_logs import LogIndex
 import ui_storage
 import windows_clipboard
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.29"
+VERSION = "0.4.0-preview.30-dev"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 TEXT_SUFFIXES = {".sas", ".log", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".xml"}
@@ -102,6 +103,8 @@ class Workbench:
         self.commands = {}
         self.logs = LogIndex()
         self.catalog_lock = threading.RLock()
+        self.catalog_cache = {}
+        self.metadata_jobs = ui_explore.Jobs(self)
         self.list_cache = {}
         self.cache_loading = set()
         self.cache_generation = 0
@@ -411,7 +414,7 @@ class Workbench:
         data = dict(data)
         if data.get("action") == "server-refresh":
             level = data.get("level") or ("libraries" if data.get("libraries_only") else "full")
-            if level not in {"libraries", "tables", "columns", "full"}: raise ValueError("Unknown metadata level.")
+            if level not in {"libraries", "tables", "columns", "full", "preview"}: raise ValueError("Unknown metadata level.")
             data["level"] = level
             if data.get("parent_snapshot"):
                 parent = self.commands.get(data["parent_snapshot"], {}).get("server", {})
@@ -419,11 +422,13 @@ class Workbench:
                 libraries = ui_servers.library_filter(data.get("libraries", ""))
                 if any(name not in {l["name"] for l in catalog["libraries"]} for name in libraries):
                     raise ValueError("Choose a library from this saved connection.")
-                if level == "columns" and (len(libraries) != 1 or not any(t["libname"] == libraries[0] and t["name"] == data.get("table") for t in catalog["tables"])):
+                if level in {"columns", "preview"} and (len(libraries) != 1 or not any(t["libname"] == libraries[0] and t["name"] == data.get("table") for t in catalog["tables"])):
                     raise ValueError("Choose a table from this saved connection.")
                 data.update({k: parent.get(k) for k in ("template", "lib", "label", "use_init")})
-            elif level == "columns": raise ValueError("Choose a table in a saved snapshot first.")
+            elif level in {"columns", "preview"}: raise ValueError("Choose a table in a saved snapshot first.")
             data["template"] = self.server_template(data.get("template", ""))
+            if level == "preview":
+                data["_query"] = ui_explore.request(catalog, libraries[0], data["table"], data.get("limit", 100), data.get("filters"), data.get("join", "AND"))
         action, args = self.arguments(data)
         script = self.script
         with self.lock:
@@ -464,7 +469,12 @@ class Workbench:
                 source = self.storage / "artifacts" / identifier / "server_catalog.sas"
                 source.parent.mkdir(parents=True, exist_ok=True)
                 level = data["level"]
-                code = ui_servers.columns_code(token, libraries[0], data["table"]) if level == "columns" else ui_servers.catalog_code(token, libraries, level == "libraries")
+                query = None
+                if level == "preview":
+                    query = data["_query"]
+                    code = ui_explore.sample_code(token, query)
+                else:
+                    code = ui_servers.columns_code(token, libraries[0], data["table"]) if level == "columns" else ui_servers.catalog_code(token, libraries, level == "libraries")
                 source.write_text(code, encoding="utf-8")
                 args.append(str(source))
                 item["args"] = list(args)
@@ -473,8 +483,13 @@ class Workbench:
                                   "libraries": libraries, "lib": str(data.get("lib") or ""), "libraries_only": level == "libraries",
                                   "level": level, "table": data.get("table", ""), "use_init": data.get("use_init") is not False,
                                   "parent_snapshot": data.get("parent_snapshot")}
+                if query:
+                    item["server"]["query"] = query
+                    item["name"] = "Preview · " + query["library"] + "." + query["table"]
                 context = [template, item["server"]["lib"], item["server"]["use_init"], self.folders()["init"], self.shared_work() if item["server"]["use_init"] else {}]
                 item["server"]["connection"] = hashlib.sha256(json.dumps(context, sort_keys=True).encode()).hexdigest()
+                if level == "preview" and parent.get("connection") and parent["connection"] != item["server"]["connection"]:
+                    raise ValueError("Connection initialization or shared WORK settings changed. Refresh libraries, tables and columns before previewing.")
             if action == "run":
                 enabled = data.get("use_parameters") is True
                 if enabled:
@@ -644,13 +659,28 @@ class Workbench:
         rc = process.wait()
         item = self.commands[identifier]
         snapshot_status = None
-        if item["action"] == "server-refresh":
+        if item["action"] == "server-refresh" and item["server"].get("level") == "preview":
+            try:
+                task = next(t for t in item["tasks"].values() if t.get("path"))
+                result = ui_explore.read_sample(within(self.root, task["path"]), item["server"]["token"], item["server"]["query"])
+                result.update(captured=time.time(),partial=rc != 0 or task.get("status") != "SUCCESS")
+                target = self.storage / "artifacts" / identifier / "table-preview.json"
+                atomic_json(target, result)
+                csv_path = target.with_suffix(".csv")
+                ui_explore.write_csv(csv_path, [c["name"] for c in result["columns"]], result["rows"])
+                item["server"].update(sample=self.relative(target), sample_csv=self.relative(csv_path))
+                snapshot_status = "PARTIAL" if result["partial"] else "SUCCESS"
+                item["message"] = f"Saved {len(result['rows'])} preview rows. This is a bounded result, not a full-table export."
+            except (OSError, ValueError, StopIteration) as exc:
+                rc = 1
+                item["message"] = "Table preview failed: " + (str(exc) or "No result was returned.")
+        elif item["action"] == "server-refresh":
             try:
                 task = next(t for t in item["tasks"].values() if t.get("path") and t.get("status") in {"SUCCESS", "SAS_ERROR", "FAILED"})
                 catalog = ui_servers.read_catalog(within(self.root, task["path"]), item["server"]["token"])
                 if rc != 0 or task.get("status") != "SUCCESS":
                     catalog["partial"] = True
-                    catalog["issues"].append({"scope": "snapshot", "libname": "", "name": "", "message": "SAS or Enterprise Guide reported errors. Readable metadata was retained; inspect the refresh log."})
+                    catalog["issues"].append({"scope": "columns" if item["server"].get("level") == "columns" else "library" if len(item["server"]["libraries"]) == 1 else "snapshot", "libname": item["server"]["libraries"][0] if len(item["server"]["libraries"]) == 1 else "", "name": item["server"].get("table", ""), "message": "SAS or Enterprise Guide reported errors. Readable metadata was retained; inspect the refresh log."})
                     for library in catalog["libraries"]:
                         library["incomplete"] = True
                 catalog = self.store_server_catalog(item, catalog)
@@ -859,6 +889,8 @@ class Workbench:
             self.invalidate_lists()
         with self.lock:
             commands = json.loads(json.dumps(sorted(self.commands.values(), key=lambda x: x["started"], reverse=True)[:200]))
+        for command in commands:
+            if command.get("server"): command["server"].pop("query", None)
         history = [dict(row) for row in self.cached_listing("history", self.history, 15)]
         paths = {h["path"]: h for h in history}
         for command in reversed(commands):
@@ -890,6 +922,7 @@ class Workbench:
                 "initialization_files": self.cached_listing("init", lambda: sorted({str(p.resolve()) for folder in {Path(self.folders()["init"]), inbox} for p in folder.glob("_*") if p.is_file() and p.suffix.casefold() == ".sas"}), 5),
                 "queued_estimates": {name: estimate_task({"name": name}, samples) for name in queued},
                 "server_snapshots": self.server_snapshots(),
+                "server_previews": [{"id": c["id"], "status": c["status"], "name": c["name"], "started": c["started"], "library": (c["server"].get("libraries") or [""])[0], **{k:v for k,v in c["server"].items() if k in {"sample", "sample_csv", "connection", "table"}}} for c in commands if c.get("server", {}).get("level") == "preview"],
                 "parameters_settings": self.parameter_settings(),
                 "queued": queued, "bundle_settings": self.bundle_settings(), "now": time.time()}
 
@@ -901,6 +934,7 @@ class Workbench:
                 candidates = sorted((c for c in self.commands.values() if c.get("server", {}).get("snapshot") and c["server"].get("connection") == config["connection"]), key=lambda c:c["server"].get("captured", c.get("finished") or c["started"]), reverse=True)
             previous = self.server_catalog(candidates[0]["id"]) if candidates else self.server_catalog(config["parent_snapshot"]) if config.get("parent_snapshot") else None
             if previous and previous.get("connection") not in {None, config["connection"]}:
+                previous = json.loads(json.dumps(previous))
                 for row in previous.get("tables", []) + previous.get("column_details", []): row["stale"] = True
             captured = time.time()
             catalog = ui_servers.merge_catalog(previous, catalog, config["level"], config["libraries"], config["table"], captured)
@@ -915,7 +949,7 @@ class Workbench:
             return [{"id": c["id"], "status": c["status"], "started": c["started"],
                      "message": c.get("message", ""), **c["server"]}
                     for c in sorted(self.commands.values(), key=lambda c: c["started"], reverse=True)
-                    if c.get("server")]
+                    if c.get("server") and c["server"].get("level") != "preview"]
 
     def server_catalog(self, identifier):
         with self.lock:
@@ -924,9 +958,13 @@ class Workbench:
         if not snapshot:
             raise ValueError("This refresh has no saved snapshot. Inspect its console for details.")
         path = within(self.storage / "artifacts", self.root / snapshot)
+        stamp = path.stat()
+        key = (str(path), stamp.st_mtime_ns, stamp.st_size)
+        with self.cache_lock:
+            if key in self.catalog_cache: return self.catalog_cache[key]
         result = read_json(path)
-        if not isinstance(result, dict):
-            raise ValueError("Saved snapshot is missing or unreadable.")
+        if not isinstance(result, dict): raise ValueError("Saved snapshot is missing or unreadable.")
+        with self.cache_lock: self.catalog_cache = {key: result}
         return result
 
     def timing_samples(self):
@@ -1118,6 +1156,21 @@ class Handler(BaseHTTPRequestHandler):
                         if stage.is_file():
                             console += "\n\n--- " + str(task.get("name", task.get("key", "File"))) + " ---\n" + read_text(stage, limit=8000, tail=True)
                 self.respond({"text": console})
+            elif url.path == "/api/server-preview":
+                item = self.server.app.commands.get(value("id"), {})
+                sample = item.get("server", {}).get("sample")
+                if not sample: raise ValueError("No completed preview is available.")
+                path = within(self.server.app.storage / "artifacts", self.server.app.root / sample)
+                result = read_json(path)
+                if not isinstance(result, dict): raise ValueError("Saved preview is missing or unreadable.")
+                self.respond(result)
+            elif url.path == "/api/dictionary":
+                catalog = self.server.app.server_catalog(value("id"))
+                rows = ui_explore.dictionary_rows(catalog, value("libraries"), value("q"))
+                offset = min(max(0, int(value("offset") or 0)), max(0, (len(rows)-1)//200*200))
+                self.respond({"headers": ui_explore.DICTIONARY_HEADERS, "rows": rows[offset:offset+200], "offset": offset, "total": len(rows), "page_size": 200})
+            elif url.path == "/api/metadata-job":
+                self.respond(self.server.app.metadata_jobs.get(value("id")))
             elif url.path == "/api/download":
                 if value("export"):
                     job = self.server.app.exports.get(value("export"))
@@ -1199,6 +1252,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(self.server.app.select_parameters(data.get("name")))
             elif self.path == "/api/parameters/save":
                 self.respond(self.server.app.save_parameters(data))
+            elif self.path == "/api/metadata-job":
+                self.respond(self.server.app.metadata_jobs.start(data))
+            elif self.path == "/api/metadata-job/stop":
+                self.respond(self.server.app.metadata_jobs.stop(data.get("id")))
             elif self.path == "/api/run-name":
                 self.respond(self.server.app.rename_run(data))
             elif self.path == "/api/open-folder":
@@ -1239,7 +1296,7 @@ class LocalServer(ThreadingHTTPServer):
                 self.app.stop(key)
             except (OSError, ValueError):
                 pass
-        while self.app.processes or getattr(self.app, "storage_busy", False):
+        while self.app.processes or getattr(self.app, "storage_busy", False) or self.app.metadata_jobs.working():
             time.sleep(.2)
         self.shutdown()
 

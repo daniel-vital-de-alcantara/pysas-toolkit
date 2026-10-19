@@ -15,7 +15,7 @@ const context = {
   URLSearchParams,fetch:async()=>({ok:true,json:async()=>snapshot}),setInterval(){},AbortController,Date,console
 };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={runFlow,logSummaryMarkup,logContextMarkup,remainingText,focusTarget,putMarkup,catalogIssues,setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={setInspectorTab,renderSample:(value)=>{previewResult=value;previewPage=0;renderPreviewRows();},runFlow,logSummaryMarkup,logContextMarkup,remainingText,focusTarget,putMarkup,catalogIssues,setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
 const h = context.helpers;
 test('elapsed formatting supports seconds, hours, and runs longer than a day',()=>{
   assert.equal(h.duration(65.9),'00:01:05');
@@ -206,7 +206,7 @@ test('bundle and schedule downloads offer actual-file copy actions',()=>{
 });
 
 // Exercise the actual event controller with DOM-like controls and a list.
-function keyboardFixture(count=2,onlyDialog=false){
+function keyboardFixture(count=2,onlyDialog=false,fullInspector=false){
   const listeners={},lists=[];let doc;
   function element(){return {children:[],style:{},dataset:{},isConnected:true,disabled:false,
     setAttribute(){},getAttribute(){return null},hasAttribute(){return false},append(child){this.children.push(child)},remove(){},
@@ -219,7 +219,7 @@ function keyboardFixture(count=2,onlyDialog=false){
   controls[0].dataset.page='overview';if(controls[1])controls[1].dataset.page='history';
   const scope={...element(),querySelectorAll(){return [...(onlyDialog?controls.slice(1):controls),...lists]}};
   doc={body:element(),createElement:element,activeElement:null,getElementById(){return null},
-    querySelector(q){if(q.startsWith('.page'))return scope;if(q.startsWith('#all-history'))return lists[0];return null;},
+    querySelector(q){if(q==='#details-dialog:not([hidden])')return fullInspector?scope:null;if(q.startsWith('.page'))return scope;if(q.startsWith('#all-history'))return lists[0];return null;},
     querySelectorAll(q){if(q==='dialog[open]')return onlyDialog?[scope]:[];if(q==='[data-key-list]')return lists;if(q==='[data-page]')return controls.filter(c=>c.dataset.page);return [];},
     addEventListener(k,f){listeners[k]=f;}};
   const ctx={document:doc,window:{addEventListener(){}},innerWidth:1200,innerHeight:900,requestAnimationFrame:f=>f()};
@@ -321,4 +321,24 @@ test('Run flow reveals source options and separates new versus continued schedul
   node('run-source').value='job.sas';h.runFlow();assert.equal(node('single-options').hidden,false);
   node('run-mode').value='multiple';node('schedule-mode').value='continue';h.runFlow();
   assert.equal(node('run-form').hidden,true);assert.equal(node('schedule-form').hidden,true);assert.equal(node('continue-form').hidden,false);
+});
+
+test('history clocks use the active attempt while preserving original start',()=>{
+  const item={status:'RUNNING',started:1,active_started:h.clockSeconds()-5,elapsed_base:3600};
+  assert.match(h.elapsed(item),/^01:00:0[56]$/);assert.doesNotMatch(h.timer(item),/data-start="1"/);
+});
+test('inspector tabs isolate tasks from file previews',()=>{
+  h.setInspectorTab('tasks');assert.equal(node('detail-tasks').hidden,false);assert.equal(node('inspector-files').hidden,true);
+  h.setInspectorTab('logs');assert.equal(node('detail-tasks').hidden,true);assert.equal(node('inspector-files').hidden,false);
+});
+test('bounded preview renders one page and exposes limits with escaped data',()=>{
+  h.renderSample({library:'DATA',table:'Cases',columns:[{name:'<id>',type:'char'}],rows:Array.from({length:75},()=>['<script>']),captured:1,more_rows:true,transport_limited:true,cells_truncated:true,omitted_columns:2});
+  assert.equal((node('preview-result-table').innerHTML.match(/&lt;script&gt;/g)||[]).length,50);
+  assert.doesNotMatch(node('preview-result-table').innerHTML,/<script>/);
+  assert.match(node('preview-result-status').textContent,/transport limit/);assert.match(node('preview-result-status').textContent,/2 columns omitted/);
+  assert.equal(node('preview-page-prev').disabled,true);assert.equal(node('preview-page-next').disabled,false);
+});
+test('Alt hints scope to the full-pane inspector',()=>{
+  const fixture=keyboardFixture(3,false,true);fixture.api.showPage();assert.equal(fixture.api.active,true);
+  assert.equal(fixture.controls[2].clicked,0);
 });
