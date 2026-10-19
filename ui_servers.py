@@ -409,6 +409,11 @@ def merge_catalog(previous, patch, level, libraries, table, captured):
         old=[c for c in result['column_details'] if (c['libname'],c['table']) != scope]
         if not incoming and patch['partial']:
             old += [dict(c,stale=True) for c in result['column_details'] if (c['libname'],c['table']) == scope]
+        room=max(0,100000-len(old))
+        if len(incoming)>room:
+            incoming=incoming[:room]
+            patch=copy.deepcopy(patch);patch['partial']=True
+            patch['issues'].append(dict(scope='columns',libname=libraries[0],name=table,message='The connection reached its 100,000-column metadata budget. Choose a narrower connection/library scope.'))
         result['column_details']=old+[dict(c,captured=captured) for c in incoming]
         result['refreshes']['columns:'+libraries[0]+'.'+table]=dict(captured=captured,partial=patch['partial'])
     else:

@@ -45,7 +45,7 @@ class LifecycleTests(unittest.TestCase):
 
     def test_close_stops_watcher_and_waits_for_active_jobs(self):
         app = SimpleNamespace(lock=threading.RLock(), processes={'watcher': object(), 'job': object()},
-                              commands={'watcher': {'action': 'watch'}, 'job': {'action': 'run'}}, stop=Mock())
+                              commands={'watcher': {'action': 'watch'}, 'job': {'action': 'run'}}, stop=Mock(), metadata_jobs=SimpleNamespace(working=lambda:False))
         server = SimpleNamespace(app=app, shutdown=Mock())
         thread = threading.Thread(target=LocalServer.request_close, args=(server,))
         thread.start()

@@ -54,11 +54,11 @@ What is included
 - Blue styling and saved code folders for repeated bundle operations.
 - Always-run shared setup is prepended before every scheduled program.
 - Watcher _*.sas files are shared initialization, never queued as jobs.
-- Files & folders: input locations, multi-file uploads and Keep PC awake.
+- Settings: input locations, multi-file uploads and Keep PC awake.
 
 Folders, uploads and keep-awake
 ------------------------------
-Use Files & folders to set existing folders for project inputs, shared _*.sas
+Use Settings to set existing folders for project inputs, shared _*.sas
 initialization files and the watcher inbox. Finish jobs and stop the watcher
 before changing folders. Leave the defaults to keep your previous workflow.
 
@@ -81,8 +81,8 @@ skip disables a definition. Continuation keeps shared setup enabled.
 
 Bundle folders
 --------------
-In Bundles & EGP, paste a full code-folder path and click Save path. Choose
-between your saved folders using the dropdown. Pack reads SAS files there;
+In Projects, paste a full code-folder path. The ten most recent valid folders
+are remembered automatically and suggested as you type. Pack reads SAS files there;
 verify compares against that folder; unpack restores into it with backups.
 Relative bundle/output filenames are resolved in the selected code folder.
 Leave the code-folder field blank to use the workspace. Remove saved path
@@ -180,7 +180,7 @@ Preview.17 changes
 
 Saved data and timing estimates (preview.18)
 ------------------------------------------
-Files & folders now exports/restores saved-data ZIPs. Finish active jobs and
+Settings now exports/restores saved-data ZIPs. Finish active jobs and
 stop the watcher first. Restores preserve existing run folders and replace
 folder settings. External input folders and queued jobs are not included.
 For your first upgrade, copy the new app files into your existing workspace
@@ -194,7 +194,7 @@ Existing execution behavior is retained; the single-file engine is now 0.3.14.
 
 Parameters editor (preview.19)
 ------------------------------
-In Runner & watcher > Run a SAS program, enable "Use parameters for this run".
+In Run > Run a SAS program, enable "Use parameters for this run".
 Type or paste your SAS macro definitions, or load a .sas file into the editor.
 The order is shared initialization, then the editor contents, then your program.
 Run program uses the current editor text, including unsaved edits.
@@ -239,7 +239,7 @@ readable results are retained, and incomplete totals show At least or Unknown.
 Preview.24: keyboard and saved-run controls
 - Tap Alt or F10, then type a displayed hint. Esc cancels; Tab works normally.
 - Copy file is beside bundle/log/catalog downloads and prepared ZIP downloads.
-- Files & folders: prepare a full saved-data ZIP or configs-only ZIP, with progress
+- Settings: prepare a full saved-data ZIP or configs-only ZIP, with progress
   and nearby errors; then Download or Copy file. ZIP caches last until restart.
 - Completed runs shows saved storage. History offers reviewed cleanup of failed
   runs or all finished runs, protecting active and unknown runs.
@@ -247,8 +247,8 @@ Preview.24: keyboard and saved-run controls
   time. Retries archive failed evidence separately and rebuild one final log.
 
 Preview.25: mnemonic shortcuts and list navigation
-- Alt, then O Overview / R Runner / S Scheduler / B Bundles / H History /
-  F Files / V Servers. X shows current-page commands. F10 also opens hints.
+- Alt, then O Overview / R Run / P Projects / H History / V Servers /
+  S Settings in the next-version review build. X shows current-page commands. F10 also opens hints.
 - Alt H focuses history directly. Use Up/Down, Home/End or Page Up/Down to
   browse; Enter opens the item. Left/Right selects another action in a row.
 - The same arrows work in task lists and Inspect's file list. Tab leaves a list.
@@ -270,3 +270,13 @@ NEW IN PREVIEW.29
 - Browse all errors and warnings, filter by type, and page through every match.
 - Latest log output returns to the normal log preview. Download and Copy file
   continue to use the original complete file. The SAS engine is unchanged.
+
+Next-version review build (0.4.0-preview.30-dev)
+----------------------------------------------
+Run offers Single file or Multiple files (New / Continue Excel schedule).
+Settings contains watcher, shared WORK, defaults, folders, cleanup and backups.
+History names do not change folder names; Inspect has Files / Logs / Tasks.
+Servers supports progressive library/table/column metadata, bounded read-only
+previews, and dictionary search/export. Read docs/next-version/release-notes.md
+and windows-eg-acceptance.md. Review and live Windows/EG acceptance are pending;
+this build has not been published as a release.
