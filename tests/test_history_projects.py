@@ -17,7 +17,9 @@ class HistoryProjectsTests(unittest.TestCase):
         (folder/'status.txt').write_text('status=FAILED\nstarted=2020-01-01T00:00:00\nelapsed_seconds=40\n')
         self.app.rename_run({'path':'runs/old','name':'Quarter end'})
         self.app.commands['resume']=dict(id='resume',started=2000000000,action='continue',name='x',path='runs/old',status='RUNNING',elapsed_base=40,tasks={})
-        self.app.list_cache['history']=(float('inf'),self.app.history())
+        portable=self.app.history()
+        portable[0]['path']='./runs/old'  # equivalent portable path must overlay native Windows history too
+        self.app.list_cache['history']=(float('inf'),portable)
         with patch.object(self.app,'cached_listing',side_effect=lambda name,loader,ttl:self.app.list_cache['history'][1] if name=='history' else []):
             record=self.app.state()['history'][0]
         self.assertEqual(record['name'],'Quarter end')

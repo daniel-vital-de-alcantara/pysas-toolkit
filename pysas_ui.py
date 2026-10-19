@@ -829,7 +829,7 @@ class Workbench:
             if self.exports.protects(folder): raise ValueError("Wait for this run’s ZIP to finish before renaming it.")
             atomic_json(folder / "run-display.json", {"name": name})
             for item in self.commands.values():
-                matches = item.get("path") == self.relative(folder) or (item.get("action") == "run" and any(t.get("path") == self.relative(folder) for t in item.get("tasks", {}).values()))
+                matches = self.history_key(item.get("path")) == self.history_key(self.relative(folder)) or (item.get("action") == "run" and any(self.history_key(t.get("path")) == self.history_key(self.relative(folder)) for t in item.get("tasks", {}).values()))
                 if matches:
                     item["display_name"] = name
                     item["name"] = name or item.get("default_name", folder.name)
@@ -852,6 +852,14 @@ class Workbench:
         if os.name != "nt": raise ValueError("Opening folders is available in the Windows app.")
         os.startfile(str(folder))
         return {"ok": True}
+
+    def history_key(self, value):
+        """Match native and portable saved paths without accepting paths outside the workspace."""
+        if not isinstance(value, str) or not value: return None
+        try:
+            return os.path.normcase(self.relative(within(self.root, value)))
+        except (ValueError, OSError):
+            return None
 
     def history(self, limit=500):
         records = []
@@ -892,13 +900,15 @@ class Workbench:
         for command in commands:
             if command.get("server"): command["server"].pop("query", None)
         history = [dict(row) for row in self.cached_listing("history", self.history, 15)]
-        paths = {h["path"]: h for h in history}
+        paths = {self.history_key(h["path"]): h for h in history}
         for command in reversed(commands):
-            if command.get("path") in paths:
-                paths[command["path"]].update(status=command["status"], elapsed=command.get("elapsed"), elapsed_base=command.get("elapsed_base", 0), active_started=command["started"], finished=command.get("finished"), updated=command.get("updated") or command.get("finished") or command["started"])
+            key = self.history_key(command.get("path"))
+            if key in paths:
+                paths[key].update(status=command["status"], elapsed=command.get("elapsed"), elapsed_base=command.get("elapsed_base", 0), active_started=command["started"], finished=command.get("finished"), updated=command.get("updated") or command.get("finished") or command["started"])
             for task in command.get("tasks", {}).values():
-                if task.get("path") in paths:
-                    paths[task["path"]].update(status=task["status"], elapsed=task.get("elapsed"), active_started=task.get("started"), finished=task.get("finished"), updated=task.get("finished") or task.get("started") or paths[task["path"]]["updated"])
+                key = self.history_key(task.get("path"))
+                if key in paths:
+                    paths[key].update(status=task["status"], elapsed=task.get("elapsed"), active_started=task.get("started"), finished=task.get("finished"), updated=task.get("finished") or task.get("started") or paths[key]["updated"])
         history.sort(key=lambda row: row.get("updated", row["started"]), reverse=True)
         samples = index_samples(self.cached_listing("timings", self.timing_samples, 30))
         for command in commands:
@@ -1022,7 +1032,7 @@ class Workbench:
                 if candidate.is_relative_to(path): task["path"] = self.relative(candidate)
         with self.lock:
             for command in sorted(self.commands.values(), key=lambda c:c.get("started", 0), reverse=True):
-                if command.get("path") == self.relative(path) or command.get("resume_path") == self.relative(path):
+                if self.history_key(self.relative(path)) in {self.history_key(command.get("path")), self.history_key(command.get("resume_path"))}:
                     if not tasks: tasks = [dict(t, task_id=t.get("key"), program=t.get("name")) for t in command.get("tasks", {}).values()]
                     for task in tasks:
                         saved = command.get("tasks", {}).get(task["task_id"], {})
