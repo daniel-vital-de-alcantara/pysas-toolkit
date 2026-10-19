@@ -2,6 +2,7 @@
 from __future__ import annotations
 import argparse
 import csv
+import hashlib
 import importlib.util
 import io
 import json
@@ -100,6 +101,7 @@ class Workbench:
         self.processes = {}
         self.commands = {}
         self.logs = LogIndex()
+        self.catalog_lock = threading.RLock()
         self.list_cache = {}
         self.cache_loading = set()
         self.cache_generation = 0
@@ -346,6 +348,10 @@ class Workbench:
         args = choices[action].copy()
         if action in {"run", "watch", "server-refresh"}:
             init_dir = Path(folders["init"])
+            if action == "server-refresh" and data.get("use_init") is False:
+                init_dir = self.storage / "empty-init"
+                init_dir.mkdir(exist_ok=True)
+                data.pop("lib", None)
             if not init_dir.is_dir():
                 raise ValueError("The configured initialization folder is unavailable.")
             args.extend(["--init-dir", str(init_dir)])
@@ -404,6 +410,19 @@ class Workbench:
     def launch(self, data):
         data = dict(data)
         if data.get("action") == "server-refresh":
+            level = data.get("level") or ("libraries" if data.get("libraries_only") else "full")
+            if level not in {"libraries", "tables", "columns", "full"}: raise ValueError("Unknown metadata level.")
+            data["level"] = level
+            if data.get("parent_snapshot"):
+                parent = self.commands.get(data["parent_snapshot"], {}).get("server", {})
+                catalog = self.server_catalog(data["parent_snapshot"])
+                libraries = ui_servers.library_filter(data.get("libraries", ""))
+                if any(name not in {l["name"] for l in catalog["libraries"]} for name in libraries):
+                    raise ValueError("Choose a library from this saved connection.")
+                if level == "columns" and (len(libraries) != 1 or not any(t["libname"] == libraries[0] and t["name"] == data.get("table") for t in catalog["tables"])):
+                    raise ValueError("Choose a table from this saved connection.")
+                data.update({k: parent.get(k) for k in ("template", "lib", "label", "use_init")})
+            elif level == "columns": raise ValueError("Choose a table in a saved snapshot first.")
             data["template"] = self.server_template(data.get("template", ""))
         action, args = self.arguments(data)
         script = self.script
@@ -444,12 +463,18 @@ class Workbench:
                 label = str(data.get("label", "")).strip() or Path(template).stem
                 source = self.storage / "artifacts" / identifier / "server_catalog.sas"
                 source.parent.mkdir(parents=True, exist_ok=True)
-                source.write_text(ui_servers.catalog_code(token, libraries, data.get("libraries_only") is True), encoding="utf-8")
+                level = data["level"]
+                code = ui_servers.columns_code(token, libraries[0], data["table"]) if level == "columns" else ui_servers.catalog_code(token, libraries, level == "libraries")
+                source.write_text(code, encoding="utf-8")
                 args.append(str(source))
                 item["args"] = list(args)
                 item["name"] = "Refresh server · " + label
                 item["server"] = {"token": token, "label": label, "template": template,
-                                  "libraries": libraries, "lib": str(data.get("lib") or ""), "libraries_only": data.get("libraries_only") is True}
+                                  "libraries": libraries, "lib": str(data.get("lib") or ""), "libraries_only": level == "libraries",
+                                  "level": level, "table": data.get("table", ""), "use_init": data.get("use_init") is not False,
+                                  "parent_snapshot": data.get("parent_snapshot")}
+                context = [template, item["server"]["lib"], item["server"]["use_init"], self.folders()["init"], self.shared_work() if item["server"]["use_init"] else {}]
+                item["server"]["connection"] = hashlib.sha256(json.dumps(context, sort_keys=True).encode()).hexdigest()
             if action == "run":
                 enabled = data.get("use_parameters") is True
                 if enabled:
@@ -476,7 +501,7 @@ class Workbench:
             shared = self.shared_work()
             env.pop("PYSAS_SHARED_WORK_PATH", None)
             env.pop("PYSAS_SHARED_WORK_LIBREF", None)
-            if shared["enabled"] and action in {"run", "watch", "schedule", "continue", "server-refresh"}:
+            if shared["enabled"] and action in {"run", "watch", "schedule", "continue", "server-refresh"} and not (action == "server-refresh" and data.get("use_init") is False):
                 env["PYSAS_SHARED_WORK_PATH"] = shared["path"]
                 env["PYSAS_SHARED_WORK_LIBREF"] = shared["libref"]
                 item["shared_work"] = shared
@@ -628,11 +653,8 @@ class Workbench:
                     catalog["issues"].append({"scope": "snapshot", "libname": "", "name": "", "message": "SAS or Enterprise Guide reported errors. Readable metadata was retained; inspect the refresh log."})
                     for library in catalog["libraries"]:
                         library["incomplete"] = True
+                catalog = self.store_server_catalog(item, catalog)
                 snapshot_status = "PARTIAL" if catalog["partial"] else "SUCCESS"
-                catalog.update(captured=time.time(), label=item["server"]["label"], template=item["server"]["template"], libraries_only=item["server"].get("libraries_only", False))
-                snapshot = self.storage / "artifacts" / identifier / "server-catalog.json"
-                atomic_json(snapshot, catalog)
-                item["server"]["snapshot"] = self.relative(snapshot)
                 item["server"]["partial"] = catalog["partial"]
                 item["message"] = f"{'Partial snapshot' if catalog['partial'] else 'Snapshot'} saved: {len(catalog['libraries'])} libraries, {len(catalog['tables'])} tables and views." + (f" {len(catalog['issues'])} skipped-item or refresh warnings; see Servers." if catalog["issues"] else "")
             except (OSError, ValueError, StopIteration) as exc:
@@ -870,6 +892,23 @@ class Workbench:
                 "server_snapshots": self.server_snapshots(),
                 "parameters_settings": self.parameter_settings(),
                 "queued": queued, "bundle_settings": self.bundle_settings(), "now": time.time()}
+
+    def store_server_catalog(self, item, catalog):
+        # Serialize incremental merges so concurrent sibling refreshes cannot overwrite one another.
+        with self.catalog_lock:
+            config = item["server"]
+            with self.lock:
+                candidates = sorted((c for c in self.commands.values() if c.get("server", {}).get("snapshot") and c["server"].get("connection") == config["connection"]), key=lambda c:c["server"].get("captured", c.get("finished") or c["started"]), reverse=True)
+            previous = self.server_catalog(candidates[0]["id"]) if candidates else self.server_catalog(config["parent_snapshot"]) if config.get("parent_snapshot") else None
+            if previous and previous.get("connection") not in {None, config["connection"]}:
+                for row in previous.get("tables", []) + previous.get("column_details", []): row["stale"] = True
+            captured = time.time()
+            catalog = ui_servers.merge_catalog(previous, catalog, config["level"], config["libraries"], config["table"], captured)
+            catalog.update(label=config["label"], template=config["template"], use_init=config["use_init"], connection=config["connection"])
+            snapshot = self.storage / "artifacts" / item["id"] / "server-catalog.json"
+            atomic_json(snapshot, catalog)
+            config.update(snapshot=self.relative(snapshot), captured=captured)
+            return catalog
 
     def server_snapshots(self):
         with self.lock:

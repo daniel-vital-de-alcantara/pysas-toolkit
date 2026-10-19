@@ -6,6 +6,7 @@ let inspectorTab="files", inspectorDetail=null, inspectorTrail=[], inspectorRetu
 let copyTarget=null, copyBusy=false, detailsReturnFocus=null;
 let sharedWorkInitialized=false, preferencesInitialized=false, inspectorPolling=false;
 let logView={path:null,kind:"all",offset:0,issue:null,revision:""}, logRequest=0;
+let selectedServerTable=null;
 let serverCatalog=null, serverLoadedId=null, serverLoadingId=null, serverPage=0;
 const monotonic = () => globalThis.performance?.now?.() ?? Date.now();
 function syncClock(now) { if(clockAnchor===null)clockAnchor={server:now,local:monotonic()}; }
@@ -266,6 +267,7 @@ async function renderServers() {
     if(serverLoadingId===selected.id)return;
     const id=selected.id;serverLoadingId=id;serverCatalog=null;serverLoadedId=null;$("server-library-list").innerHTML="";$("server-table-list").innerHTML="";$("server-summary").textContent="";$("server-issues").innerHTML="";$("server-snapshot-status").textContent="Loading saved catalog…";
     try{const catalog=await api(`/api/server-catalog?id=${encodeURIComponent(id)}`);if(serverLoadingId!==id)return;
+      if(selectedServerTable&&!catalog.tables.some(t=>t.libname===selectedServerTable.libname&&t.name===selectedServerTable.name))selectedServerTable=null;
       serverCatalog=catalog;serverLoadedId=id;serverPage=0;
       fillSelect($("server-library"),catalog.libraries.map(l=>l.name));
       const chosen=new Set($("server-libraries").value.toUpperCase().split(/[,\s]+/));
@@ -283,29 +285,23 @@ function catalogIssues(catalog){
 function renderCatalog(){
   if(!serverCatalog)return;
   const libs=serverCatalog.libraries;
-  if(serverCatalog.libraries_only){
-    $("server-summary").textContent=`${libs.length} assigned libraries discovered. Select libraries above, then refresh the full snapshot for table sizes and dates.`;
-    $("server-issues").innerHTML=catalogIssues(serverCatalog);
-    $("server-library-list").innerHTML=table(["Library","Engine","Location"],libs.map(l=>`<tr><td>${esc(l.name)}</td><td>${esc(l.engines.join(", "))}</td><td>${l.paths.map(esc).join("<br>")}</td></tr>`));
-    $("server-table-list").innerHTML="";$("server-page").textContent="Library discovery only — table metadata was not requested.";$("server-prev").disabled=true;$("server-next").disabled=true;return;
-  }
   $("server-issues").innerHTML=catalogIssues(serverCatalog);
   $("server-summary").textContent=`${libs.length} libraries · ${libs.reduce((n,l)=>n+l.tables,0)} tables · ${libs.reduce((n,l)=>n+l.views,0)} ${libs.reduce((n,l)=>n+l.views,0)===1?"view":"views"}. ${serverCatalog.partial?"Partial metadata: skipped items are listed below. ":""}Storage totals are per library; aliases can overlap.`;
-  $("server-library-list").innerHTML=libs.length?table(["Library / engine","Table storage","Tables / views","Location"],libs.map(l=>`<tr><td><button type="button" class="text-button" data-server-library="${esc(l.name)}">${esc(l.name)}</button><small>${esc(l.engines.join(", "))}</small></td><td>${esc(storageSize(l.known_bytes,l.unknown_sizes+(l.incomplete?1:0)))}${l.unknown_sizes?`<small>${l.unknown_sizes} ${l.unknown_sizes===1?"table size":"table sizes"} unavailable</small>`:""}</td><td>${l.tables} / ${l.views}${l.incomplete?`<small>${l.skipped_members?`${l.skipped_members} skipped members`:"Incomplete library metadata"}</small>`:""}</td><td class="server-location">${l.paths.map(esc).join("<br>") || "—"}</td></tr>`)):empty("No libraries returned","Check your initialization assignments and library filter in the refresh console.");
-  const rows=catalogRows(serverCatalog,$("server-library").value,$("server-search").value,$("server-sort").value);
+  $("server-library-list").innerHTML=libs.length?table(["Library / engine","Table storage","Tables / views","Location"],libs.map(l=>`<tr><td><button type="button" class="text-button" data-server-library="${esc(l.name)}">${esc(l.name)}</button><button type="button" class="subtle" data-refresh-library="${esc(l.name)}" ${state.windows?"":"disabled"}>Refresh tables</button><small>${l.tables_refreshed?`Tables refreshed ${date(l.tables_refreshed.captured)}${l.tables_refreshed.partial?" · partial":""}`:"Tables not collected"}</small><small>${esc(l.engines.join(", "))}</small></td><td>${esc(l.tables_refreshed?storageSize(l.known_bytes,l.unknown_sizes+(l.incomplete?1:0)):"Not collected")}${l.unknown_sizes?`<small>${l.unknown_sizes} ${l.unknown_sizes===1?"table size":"table sizes"} unavailable</small>`:""}</td><td>${l.tables} / ${l.views}${l.incomplete?`<small>${l.skipped_members?`${l.skipped_members} skipped members`:"Incomplete library metadata"}</small>`:""}</td><td class="server-location">${l.paths.map(esc).join("<br>") || "—"}</td></tr>`)):empty("No libraries returned","Check your initialization assignments and library filter in the refresh console.");
+  const rows=catalogRows(serverCatalog,$("server-library").value,$("server-search").value,$("server-sort").value).filter(t=>$("server-availability").value==="unavailable"?t.readable===false:$("server-availability").value==="readable"?t.readable!==false:true);
   const pages=Math.max(1,Math.ceil(rows.length/100));serverPage=Math.max(0,Math.min(serverPage,pages-1));
-  $("server-table-list").innerHTML=rows.length?table(["Table / label","Type","Storage","Rows / columns","Created","Changed"],rows.slice(serverPage*100,(serverPage+1)*100).map(t=>`<tr><td><strong>${esc(t.libname)}.${esc(t.name)}</strong><small>${esc(t.label)}</small></td><td>${t.kind==="VIEW"?"View":"Table"}</td><td>${t.kind==="VIEW"?"—":esc(storageSize(t.bytes))}</td><td>${t.rows==null?"Unknown":esc(t.rows.toLocaleString())} / ${t.columns==null?"Unknown":esc(t.columns.toLocaleString())}</td><td>${esc(t.created?.replace("T"," ")||"Unknown")}</td><td>${esc(t.modified?.replace("T"," ")||"Unknown")}</td></tr>`)):empty("No matching tables","Choose another library or change your search.");
-  $("server-page").textContent=`${rows.length} ${rows.length===1?"match":"matches"} · page ${serverPage+1} of ${pages}`;$("server-prev").disabled=serverPage===0;$("server-next").disabled=serverPage===pages-1;
+  $("server-table-list").innerHTML=rows.length?table(["Table / label","Type","Storage","Rows / columns","Created","Changed"],rows.slice(serverPage*100,(serverPage+1)*100).map(t=>`<tr><td><button class="text-button" type="button" data-server-table="${esc(JSON.stringify({libname:t.libname,name:t.name}))}">${esc(t.libname)}.${esc(t.name)}</button><small>${esc(t.label)}</small>${t.readable===false?`<small class="log-warning">Metadata unavailable · ${esc(t.warning||"Inspect refresh log")}</small>`:""}${t.stale?"<small>Retained from an earlier partial refresh</small>":""}<small>${t.captured?`Tables refreshed ${date(t.captured)}`:""}</small></td><td>${t.kind==="VIEW"?"View":t.kind==="UNKNOWN"?"Unknown":"Table"}</td><td>${t.kind==="VIEW"?"—":esc(storageSize(t.bytes))}</td><td>${t.rows==null?"Unknown":esc(t.rows.toLocaleString())} / ${t.columns==null?"Unknown":esc(t.columns.toLocaleString())}</td><td>${esc(t.created?.replace("T"," ")||"Unknown")}</td><td>${esc(t.modified?.replace("T"," ")||"Unknown")}</td></tr>`)):empty("No matching tables","Choose another library or change your search.");
+  $("server-page").textContent=`${rows.length} ${rows.length===1?"match":"matches"} · page ${serverPage+1} of ${pages}`;$("server-prev").disabled=serverPage===0;$("server-next").disabled=serverPage===pages-1;renderColumns();
 }
 bindForm("server-form","server-refresh");
 $("server-snapshots").addEventListener("change",renderServers);
-for(const id of ["server-library","server-search","server-sort"])$(id).addEventListener("input",()=>{serverPage=0;renderCatalog();});
+for(const id of ["server-library","server-search","server-sort","server-availability"])$(id).addEventListener("input",()=>{serverPage=0;renderCatalog();});
 $("server-prev").addEventListener("click",()=>{serverPage--;renderCatalog();});
 $("server-next").addEventListener("click",()=>{serverPage++;renderCatalog();});
 document.addEventListener("click",e=>{const button=e.target.closest("[data-server-library]");if(button){$("server-library").value=button.dataset.serverLibrary;serverPage=0;renderCatalog();}});
 $("server-reuse").addEventListener("click",()=>{
   const saved=(state.server_snapshots||[]).find(s=>s.id===serverLoadedId);if(!saved)return;
-  $("server-label").value=saved.label;$("server-libraries").value=saved.libraries.join(", ");
+  $("server-use-init").checked=saved.use_init!==false;$("server-label").value=saved.label;$("server-libraries").value=saved.libraries.join(", ");
   for(const [id,value] of [["server-template",saved.template],["server-init",saved.lib]]){
     const select=$(id), matching=state.files.find(f=>f===value || `${state.workspace}/${f}`===value || `${state.workspace}\\${f}`===value);
     if(value && !matching){error("The saved EGP or initialization path is unavailable. Select its location on this computer.");select.value="";}else select.value=matching||"";
@@ -421,7 +417,7 @@ function renderRemaining(){
   $("running-remaining").textContent=remainingText(state.remaining,clockSeconds());
   $("running-remaining").title="Current runs, remaining schedule tasks and the current watcher queue. Historical estimate; future arrivals are excluded. Parallel commands run independently.";
 }
-$("discover-libraries").addEventListener("click",()=>launch({...formData($("server-form")),action:"server-refresh",libraries:"",libraries_only:true},$("server-form")));
+$("discover-libraries").addEventListener("click",()=>launch({...formData($("server-form")),action:"server-refresh",level:"tables"},$("server-form")));
 $("server-library-choices").addEventListener("change",()=>{
   $("server-libraries").value=Array.from($("server-library-choices").querySelectorAll('input:checked')).map(input=>input.value).join(", ");
 });
@@ -495,3 +491,24 @@ $("open-run-folder").addEventListener("click",async()=>{try{await api("/api/open
 $("rename-run").addEventListener("submit",async e=>{e.preventDefault();try{const saved=await api("/api/run-name",{path:selectedPath,name:$("run-display-name").value});$("detail-title").textContent=saved.name||selectedPath.split(/[\\/]/).pop();$("inspector-status").textContent="Name saved.";await refresh(true);}catch(e){$("inspector-status").textContent=e.message;}});
 $("copy-log-text").addEventListener("click",async()=>{try{await navigator.clipboard.writeText($("file-preview").innerText);$("copy-status").hidden=false;$("copy-status").textContent="Displayed log text copied (current preview or issue context only). Download or Copy file includes the full saved log.";}catch(e){$("copy-status").hidden=false;$("copy-status").textContent="Text copy failed: "+e.message;}});
 $("verify-bundle").addEventListener("click",()=>launch({...formData($("bundle-form")),action:"bundle-verify"},$("bundle-form")));
+
+async function refreshServerScope(level,libraries,table=""){
+  if(!serverLoadedId)return;
+  await launch({action:"server-refresh",parent_snapshot:serverLoadedId,level,libraries,table},$("server-form"));
+  $("server-snapshots").value="";
+}
+function renderColumns(){
+  $("server-columns").hidden=!selectedServerTable;if(!selectedServerTable||!serverCatalog)return;
+  const t=selectedServerTable,key=t.libname+"."+t.name;
+  const stamp=serverCatalog.refreshes?.['columns:'+key];
+  const columns=(serverCatalog.column_details||[]).filter(c=>c.libname===t.libname&&c.table===t.name).sort((a,b)=>(a.position||0)-(b.position||0));
+  $("server-column-title").textContent=key+" · columns";
+  $("server-column-status").textContent=stamp?`Refreshed ${date(stamp.captured)}${stamp.partial?" · incomplete, inspect the refresh log":""}${columns.some(c=>c.stale)?" · earlier schema retained; refresh before preview":""}`:"Columns have not been collected. Refresh opens a fresh session using this snapshot’s connection.";
+  $("refresh-columns").disabled=!state.windows;
+  $("server-column-list").innerHTML=columns.length?table(["Column","Type","Length","Label","Format","Informat"],columns.map(c=>`<tr><td>${esc(c.name)}</td><td>${esc(c.type)}</td><td>${esc(c.length)}</td><td>${esc(c.label)}</td><td>${esc(c.format)}</td><td>${esc(c.informat)}</td></tr>`)):empty("No saved columns","Refresh this table’s columns; inaccessible metadata is recorded in the refresh log.");
+}
+$("refresh-columns").addEventListener("click",()=>refreshServerScope("columns",selectedServerTable.libname,selectedServerTable.name));
+document.addEventListener("click",async e=>{const b=e.target.closest("button");if(!b)return;
+  if(b.dataset.refreshLibrary){$("server-library").value=b.dataset.refreshLibrary;await refreshServerScope("tables",b.dataset.refreshLibrary);}
+  if(b.dataset.serverTable){selectedServerTable=JSON.parse(b.dataset.serverTable);renderColumns();$("server-columns").scrollIntoView({block:"start"});}
+});

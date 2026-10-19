@@ -142,16 +142,16 @@
 <div class="split">
 <form id="server-form" class="panel">
 <div class="panel-number">SERVER CATALOG</div>
-<h2>Refresh libraries &amp; tables</h2>
+<input type="hidden" name="level" value="libraries"><h2>Refresh assigned libraries</h2>
 <label>Connection name<input name="label" id="server-label" maxlength="100" placeholder="For example: Analytics production"></label>
 <label>EGP connection<select name="template" id="server-template" data-files="egp"><option value="">Auto · last working connection / available EGP</option></select></label>
-<label>Initialization<select name="lib" id="server-init" data-files="sas"><option value="">Use shared _*.sas files</option></select></label>
+<label class="check"><input type="checkbox" name="use_init" id="server-use-init" checked>Use initialization files and shared WORK for this connection</label><label>Initialization<select name="lib" id="server-init" data-files="sas"><option value="">Use shared _*.sas files</option></select></label>
 <label>Libraries to include (optional)<input name="libraries" id="server-libraries" placeholder="For example: DWH, REPORTS" spellcheck="false"></label>
-<p class="hint">Leave blank for all assigned libraries except WORK, SASHELP and SASUSER. The selected EGP's first program chooses the SAS connection. Initialization runs first, just as in Run a file.</p>
+<p class="hint">With initialization off, only the fresh session’s default assignments are queried. Turning it on applies the shared files or selected override, and shared WORK if enabled.</p>
 <div class="actions">
-<button type="button" id="discover-libraries" class="secondary sas-action">Discover libraries</button><button type="submit" class="primary sas-action">Refresh snapshot ↗</button>
+<button type="button" id="discover-libraries" class="secondary sas-action" title="Collect table metadata for the libraries listed above">Refresh selected libraries and tables</button><button type="submit" class="primary sas-action">Refresh libraries</button>
 </div>
-<p class="hint">Discover first to list assigned libraries without opening their tables. Use the checkboxes below to choose the libraries for your full snapshot. Auto reuses the last successful EGP connection, or the only EGP in your input folder.</p>
+<p class="hint">Start with libraries, then refresh tables for a library and columns for a table below. Each level retains its own timestamp. Child refreshes use the saved snapshot’s connection settings.</p>
 <div id="server-library-choices"></div>
 <p class="hint">This opens a fresh SAS session and queries metadata. A large catalog or database connection may take time. You can inspect its console or stop its file while it runs.</p>
 </form>
@@ -186,13 +186,18 @@
 <label>Library<select id="server-library"><option value="">All libraries</option></select></label><label>Find a table<input id="server-search" type="search" placeholder="Table name or label"></label><label>Sort<select id="server-sort"><option value="name">Name</option>
 <option value="size">Largest storage first</option>
 <option value="modified">Most recently changed</option></select></label>
+<label>Availability<select id="server-availability"><option value="all">All discovered tables</option>
+<option value="unavailable">Metadata unavailable</option>
+<option value="readable">Readable metadata</option></select></label>
 </div>
 <div id="server-table-list"></div>
 <div class="actions">
 <button type="button" class="secondary" id="server-prev">Previous</button><span id="server-page" class="hint"></span><button type="button" class="secondary" id="server-next">Next</button>
 </div>
 </div>
-</section>
+<section id="server-columns" class="panel" hidden><h2 id="server-column-title">Columns</h2>
+<p id="server-column-status" class="hint"></p>
+<button id="refresh-columns" class="secondary" type="button">Refresh columns</button><div id="server-column-list"></div></section></section>
 <section id="page-files" class="page" hidden><details class="panel settings-group" id="settings-folders"><summary>Workspace and folders</summary><p>Current workspace</p>
 <code id="workspace">Connecting to your files…</code><form id="folders-form" class="panel">
 <div class="panel-number">LOCAL FOLDERS</div>

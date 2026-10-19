@@ -40,3 +40,11 @@ Inspector now occupies the work area with Files, Logs and Tasks navigation, Back
 Projects remembers ten recent folders and exposes Pack/Unpack first, with verify/output/recursive flags and EGP tools secondary. Unpack still validates before writes and keeps backups; added/changed/deleted counts come from the standalone engine observation hook. Pack, verified and unpacked bundles retain downloadable/copyable artifacts. Backup ZIP compression no longer blocks unrelated new commands; continuing an exported schedule remains protected, and the backup captures its original command metadata and excludes newly created output folders.
 
 Manual acceptance: Files/Logs/Tasks at small and large resolutions; Back/Escape focus; Windows Explorer opening and native file copy; rename/resume; bundle overwrite confirmation, corrupt bundle, network code folder and timestamped backups; full export while starting an unrelated file. Screenshots and live Windows/EG verification remain pending on an unlocked Windows desktop.
+
+## Phase C review notes
+
+Servers refreshes assigned libraries first, then table metadata for one library and column metadata for one table. Connection initialization is retained with the snapshot; disabling it suppresses `_*.sas` overrides and shared WORK assignments. Child refreshes inherit the selected snapshot's connection settings. Every operation uses a fresh EG/SAS session.
+
+Incremental snapshots retain sibling results and independent library/table/column timestamps. A serialized merge prevents concurrent sibling refreshes from overwriting each other's results. Table metadata failures retain discovered member names with unknown fields, warning and availability filtering. Old partial snapshots also display failed member names where their issue records identify them. Columns include type, label, length, position, format and informat; a per-table 10,000-column transport cap is explicit. Refreshing tables marks earlier column schemas stale.
+
+Validation includes Unicode/chunked transport, unavailable members, scoped merges, failed schema refresh retention and initialization suppression. Manual Windows/EG checks remain required for DICTIONARY metadata permissions, real session encodings, database engines and simultaneous child refreshes. No live SAS verification is claimed here.

@@ -6,6 +6,7 @@ values are UTF-8 hex chunks, decoded only after the complete record is received.
 """
 from __future__ import annotations
 
+import copy
 import math
 import re
 from pathlib import Path
@@ -53,6 +54,7 @@ data _null_; put '{prefix}|DONE'; run;
         ("bytes", "strip(put(filesize,best32.))"),
         ("created", "put(crdate,e8601dt19.)"), ("modified", "put(modate,e8601dt19.)")])
     emit_issue = records("_psc_issue", "issue", [("scope", "scope"), ("libname", "libname"), ("name", "memname"), ("message", "message")])
+    emit_unreadable = records("_psc_missing", "table", [("libname", "libname"), ("name", "memname"), ("kind", "memtype"), ("readable", "'0'")])
     requested = " ".join(libraries)
     return f"""/* PySAS Servers: best-effort metadata, one library/member at a time.
    No table contents are selected. Library and member names are hex literals,
@@ -87,6 +89,11 @@ data _null_; put '{prefix}|BEGIN'; run;
   quit;
   %if &_psc_rc > 4 or &_psc_rows = 0 %then %do;
     %_psc_issue(table,Metadata could not be read - SQL return code &_psc_rc.. See the refresh log.);
+    data work._psc_missing;
+      length libname $8 memname $32 memtype $8;
+      libname="&_psc_libhex"x; memname="&_psc_memhex"x; memtype="&_psc_type";
+    run;
+    {emit_unreadable}
   %end;
   %else %do;
     {emit_table}
@@ -213,7 +220,7 @@ def parse_catalog(text, token, allow_partial=False):
             if current is not None:
                 problem("An unfinished metadata record was skipped.")
             kind = payload[2:]
-            current = {} if kind in {"library", "table", "issue"} else None
+            current = {} if kind in {"library", "table", "column", "issue"} else None
             if current is None:
                 problem("An unknown metadata record was skipped.")
         elif payload.startswith("V|") and current is not None and not done:
@@ -237,7 +244,7 @@ def parse_catalog(text, token, allow_partial=False):
         raise ValueError("No server snapshot was returned. Inspect the refresh log for SAS errors.")
     if not done or current is not None:
         problem("The refresh ended before the catalog was complete. Readable records were retained.")
-    libraries, tables = {}, []
+    libraries, tables, columns = {}, [], []
 
     def lib(name):
         return libraries.setdefault(name, dict(name=name, engines=[], paths=[], tables=0, views=0,
@@ -256,7 +263,13 @@ def parse_catalog(text, token, allow_partial=False):
             for source, target in (("engine", "engines"), ("path", "paths")):
                 if row.get(source) and row[source] not in library[target]:
                     library[target].append(row[source])
+        elif kind == "column":
+            if not row.get("table") or not row.get("name") or row.get("type") not in {"char", "num"}:
+                problem("An incomplete column metadata record was skipped."); continue
+            for field in ("length", "position"): row[field] = number(row.get(field))
+            columns.append(row)
         else:
+            row["readable"] = row.get("readable") != "0"
             if not row.get("name") or row.get("kind") not in {"DATA", "VIEW"}:
                 problem("An incomplete table metadata record was skipped.")
                 continue
@@ -282,21 +295,29 @@ def parse_catalog(text, token, allow_partial=False):
                     library["known_bytes"] += row["bytes"]
             tables.append(row)
     issues = list({tuple(issue.get(k, "") for k in ("scope", "libname", "name", "message")): issue for issue in issues}.values())
-    readable_metadata = bool(libraries or tables)
+    readable_metadata = bool(libraries or tables or columns) or any(i.get("scope") == "columns" and i.get("name") for i in issues)
     for issue in issues:
         if issue.get("libname"):
             library = lib(issue["libname"])
             library["incomplete"] = True
             if issue.get("scope") == "table":
                 library["skipped_members"] += 1
+                known = next((t for t in tables if t['libname'] == issue['libname'] and t['name'] == issue['name']), None)
+                if known:
+                    known.update(readable=False, warning=issue['message'])
+                elif issue.get('name'):
+                    tables.append(dict(libname=issue['libname'], name=issue['name'], kind='UNKNOWN', label='', readable=False, warning=issue['message'], rows=None, columns=None, bytes=None, created=None, modified=None))
+                    library['unknown_sizes'] += 1
         else:
             for library in libraries.values():
                 library["incomplete"] = True
     if issues and not readable_metadata:
         raise ValueError("No readable library or table metadata was returned. Inspect the refresh log.")
-    return {"libraries": sorted(libraries.values(), key=lambda row: row["name"]),
+    result = {"libraries": sorted(libraries.values(), key=lambda row: row["name"]),
             "tables": sorted(tables, key=lambda row: (row["libname"], row["name"])),
             "issues": issues, "partial": bool(issues)}
+    if columns: result["column_details"] = columns
+    return result
 
 
 def read_catalog(run_dir: Path, token):
@@ -307,3 +328,99 @@ def read_catalog(run_dir: Path, token):
         if "PSC" + token + "|BEGIN" in text:
             return parse_catalog(text, token, allow_partial=True)
     raise ValueError("The refresh did not return a catalog log. Inspect its run folder.")
+
+
+def log_records(token, dataset, kind, fields):
+    """ASCII records; UTF-8 bytes survive EG log export and wrapped values."""
+    if not re.fullmatch(r"[a-f0-9]{12}", token): raise ValueError("Invalid snapshot token.")
+    prefix = 'PSC' + token
+    parts = [f"data _null_; set work.{dataset};", "length _psc_value $4096 _psc_utf8 $16384 _psc_chunk $40 _psc_hex $80;", f"put '{prefix}|R|{kind}';"]
+    for field, expression in fields:
+        parts += [f"_psc_value={expression};", "_psc_utf8=kcvt(trim(_psc_value),getoption('encoding'),'utf-8');", "do _psc_i=1 to lengthn(_psc_utf8) by 40;", "_psc_chunk=substr(_psc_utf8,_psc_i,40); _psc_hex=put(_psc_chunk,$hex80.);", f"put '{prefix}|V|{field}|' _psc_hex; end;"]
+    return '\n'.join(parts + [f"put '{prefix}|E'; run;"])
+
+
+def sas_text(value):
+    if not isinstance(value, str) or len(value.encode('utf-8')) > 2048 or any(ord(c)<32 for c in value):
+        raise ValueError('Use a single-line text value of up to 2048 UTF-8 bytes.')
+    return "'" + value.replace("'", "''") + "'"
+
+
+def columns_code(token, library, table):
+    library = library_filter(library)
+    if len(library) != 1: raise ValueError('Choose one library.')
+    if not table or len(table.encode('utf-8')) > 128: raise ValueError('Choose a table from the catalog.')
+    table_value = "kcvt('"+table.encode('utf-8').hex()+"'x,'utf-8',getoption('encoding'))"
+    emit = log_records(token, '_psc_columns', 'column', [(k,v) for k,v in
+        [('libname','libname'),('table','memname'),('name','name'),('type','type'),('label','label'),('length','strip(put(length,best32.))'),('position','strip(put(varnum,best32.))'),('format','format'),('informat','informat')]])
+    issue = log_records(token, '_psc_issue', 'issue', [('scope',"'columns'"),('libname',sas_text(library[0])),('name',table_value),('message',"'Columns unavailable or collection limit reached; inspect the refresh log.'")])
+    return f"""/* One table's column dictionary; no source data is selected. */
+options linesize=256 nosyntaxcheck noerrorabend obs=max;
+data _null_; put 'PSC{token}|BEGIN'; run;
+data work._psc_columns; length libname $8 memname name $32 type $4 label $256 format informat $49 length varnum 8; stop; run;
+proc sql noprint outobs=10001;
+ insert into work._psc_columns select libname,memname,name,type,label,format,informat,length,varnum from dictionary.columns
+ where libname='{library[0]}' and memname={table_value} order by varnum;
+ %let _psc_rc=&sqlrc; %let _psc_rows=&sqlobs;
+quit;
+%macro _psc_column_result;
+ %if &_psc_rc > 4 or &_psc_rows = 0 or &_psc_rows > 10000 %then %do;
+  data work._psc_issue; x=1; run;
+  {issue}
+ %end;
+%mend;
+%_psc_column_result;
+data work._psc_columns; set work._psc_columns(obs=10000); run;
+{emit}
+data _null_; put 'PSC{token}|DONE'; run;
+"""
+
+
+def merge_catalog(previous, patch, level, libraries, table, captured):
+    """Refresh only the requested scope. Retain siblings and their timestamps."""
+    result = copy.deepcopy(previous or dict(libraries=[], tables=[], issues=[]))
+    result.setdefault('column_details', [])
+    result.setdefault('refreshes', {})
+    refreshed_libs = set(libraries or [l['name'] for l in patch['libraries']])
+    libmap = {l['name']:l for l in result['libraries']}
+    for library in patch['libraries']:
+        old=libmap.get(library['name'], {})
+        libmap[library['name']] = {**old, **library, 'discovered': captured if level=='libraries' else old.get('discovered',captured)}
+    result['libraries'] = list(libmap.values())
+    if level in {'tables','full'}:
+        incoming = {(t['libname'],t['name']):dict(t, captured=captured) for t in patch['tables']}
+        for old in result['tables']:
+            key=(old['libname'],old['name'])
+            if key not in incoming and (old['libname'] not in refreshed_libs or patch['partial']):
+                incoming[key]=dict(old, stale=True) if old['libname'] in refreshed_libs else old
+        result['tables']=list(incoming.values())
+        for library in refreshed_libs:result['refreshes']['tables:'+library]=dict(captured=captured,partial=patch['partial'])
+        for column in result['column_details']:
+            if column['libname'] in refreshed_libs:column['stale']=True
+    elif level=='columns':
+        scope=(libraries[0], table)
+        incoming=patch.get('column_details', [])
+        old=[c for c in result['column_details'] if (c['libname'],c['table']) != scope]
+        if not incoming and patch['partial']:
+            old += [dict(c,stale=True) for c in result['column_details'] if (c['libname'],c['table']) == scope]
+        result['column_details']=old+[dict(c,captured=captured) for c in incoming]
+        result['refreshes']['columns:'+libraries[0]+'.'+table]=dict(captured=captured,partial=patch['partial'])
+    else:
+        result['refreshes']['libraries']=dict(captured=captured,partial=patch['partial'])
+    def matches(issue):
+        if level=='libraries':return issue.get('scope')=='snapshot'
+        if level=='columns':return issue.get('scope')=='columns' and issue.get('libname')==libraries[0] and issue.get('name')==table
+        return issue.get('libname') in refreshed_libs and issue.get('scope')!='columns'
+    result['issues']=[i for i in result['issues'] if not matches(i)]+patch['issues']
+    result['partial']=bool(result['issues'])
+    for library in result['libraries']:
+        members=[t for t in result['tables'] if t['libname']==library['name']]
+        library.update(tables=sum(t['kind']=='DATA' for t in members),views=sum(t['kind']=='VIEW' for t in members),
+            known_bytes=sum(t.get('bytes') or 0 for t in members if t['kind']!='VIEW'),
+            unknown_sizes=sum(t['kind']!='VIEW' and t.get('bytes') is None for t in members),
+            incomplete=any(i.get('libname') in {'',library['name']} for i in result['issues']),
+            skipped_members=sum(t.get('readable') is False for t in members))
+        library['tables_refreshed']=result['refreshes'].get('tables:'+library['name'])
+    result['libraries'].sort(key=lambda l:l['name']); result['tables'].sort(key=lambda t:(t['libname'],t['name']))
+    result['captured']=captured;result['libraries_only']=not bool(result['tables'])
+    return result
