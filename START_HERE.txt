@@ -1,4 +1,4 @@
-PySAS Workbench 0.4.0-preview.29
+PySAS Workbench 0.4.0-preview.30
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
@@ -190,7 +190,7 @@ Estimate time reads successful past runs by program and section/row selection.
 Schedule totals account for dependencies and parallelism. A + means some work
 has unknown timing. Estimates are approximate total durations, not a guarantee.
 Inspect any saved run to download its entire folder as a ZIP.
-Existing execution behavior is retained; the single-file engine is now 0.3.14.
+Existing execution behavior is retained; the single-file engine is now 0.3.15.
 
 Parameters editor (preview.19)
 ------------------------------
