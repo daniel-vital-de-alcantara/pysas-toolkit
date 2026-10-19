@@ -46,3 +46,5 @@ progress{width:min(100%,420px);accent-color:#007bc3}
 .data-preview-controls{margin-top:24px;border-top:1px solid var(--line);padding-top:20px}.data-preview-controls>summary{cursor:pointer;font-weight:600}.data-preview-controls[open]>summary{margin-bottom:16px}.preview-filter{display:grid;grid-template-columns:2fr 1.4fr 2fr auto;gap:12px;align-items:end}.preview-filter button{margin-bottom:20px}#preview-result-table td{max-width:420px;white-space:normal;overflow-wrap:anywhere}#dictionary-results td{max-width:320px;white-space:normal;overflow-wrap:anywhere}.server-filters{grid-template-columns:1fr 2fr 1fr 1.3fr}@media(max-width:850px){.preview-filter,.server-filters{grid-template-columns:1fr}.preview-filter button{justify-self:start}}
 
 [hidden]{display:none!important}
+
+.inspector-global-actions{display:flex;gap:8px;flex-wrap:wrap}.run-inspector .dialog-header{gap:12px;flex-wrap:wrap}

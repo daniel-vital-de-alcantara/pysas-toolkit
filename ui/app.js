@@ -473,6 +473,7 @@ $("preferences-form").addEventListener("submit",async e=>{e.preventDefault();try
 $("save-watcher").addEventListener("click",async()=>{try{state.preferences=await api("/api/preferences",{watcher:formData($("watch-form"))});$("watcher-settings-status").textContent="Watcher settings saved. Restart an active watcher to apply changes.";}catch(e){$("watcher-settings-status").textContent=e.message;}});
 document.addEventListener("click",e=>{
   const b=e.target.closest("button");if(!b)return;
+  if(["refresh","keyboard-help","quit-app"].includes(b.dataset.globalAction))$(b.dataset.globalAction).click();
   if(b.hasAttribute("data-watcher-stop"))$("stop-watch").click();
   if(b.hasAttribute("data-watcher-settings")){navigate("files");$("settings-watcher").open=true;$("settings-watcher").scrollIntoView();}
   if(b.dataset.uploadContext){navigate("files");$("settings-upload").open=true;$("upload-target").value=b.dataset.uploadContext;uploadDestination();$("upload-files").focus();}
