@@ -53,7 +53,7 @@ class ExplorationTests(unittest.TestCase):
             with self.assertRaises(ValueError):explore.request(c,'DATA',"Cases & ' names")
     def test_unicode_numeric_missing_and_transport_flags(self):
         q=self.query();rows=[['123','café年度'*20],['.A','=formula']]
-        result=explore.parse_sample(sample_log(q,rows,meta='2|1|1|1'),TOKEN,q)
+        result=explore.parse_sample([line.replace('|V|','|V| ') for line in sample_log(q,rows,meta='2|1|1|1')],TOKEN,q)
         self.assertEqual(result['rows'],[[123.0,rows[0][1]],[None,'=formula']])
         self.assertTrue(result['more_rows']);self.assertTrue(result['transport_limited']);self.assertTrue(result['cells_truncated'])
         for broken in [sample_log(q,rows)[:-1],sample_log(q,rows,meta='99|0|0|0'),sample_log(q,rows)[:-4]]:

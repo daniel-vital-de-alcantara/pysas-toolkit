@@ -153,8 +153,9 @@ def parse_sample(lines, token, query):
             cell=int(payload[5:]);values=bytearray()
             if cell!=len(row)+1 or cell>len(query['columns']):raise ValueError('Invalid preview column.')
         elif payload.startswith('V|') and cell is not None:
-            if not re.fullmatch(r'[a-fA-F0-9]{80}',payload[2:]):raise ValueError('Damaged preview value.')
-            values.extend(bytes.fromhex(payload[2:]))
+            chunk=payload[2:].strip()  # SAS PUT list output may pad a field after the delimiter.
+            if not re.fullmatch(r'[a-fA-F0-9]{80}',chunk):raise ValueError('Damaged preview value.')
+            values.extend(bytes.fromhex(chunk))
             if len(values)>2048:raise ValueError('Preview cell exceeded its limit.')
         elif payload=='ENDCELL' and cell is not None:
             value=values.rstrip(b' ').decode('utf-8')
