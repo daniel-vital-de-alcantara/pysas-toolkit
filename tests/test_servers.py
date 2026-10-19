@@ -67,7 +67,9 @@ class CatalogTests(unittest.TestCase):
         ]
         result = servers.parse_catalog(catalog_log(RECORDS[:4]+issues+RECORDS[4:]), TOKEN)
         self.assertTrue(result['partial'])
-        self.assertEqual([t['name'] for t in result['tables']], ['Claims', 'Unknown', 'View'])
+        locked=next(t for t in result['tables'] if t['name']=='Locked')
+        self.assertFalse(locked['readable']);self.assertIsNone(locked['bytes']);self.assertIsNone(locked['rows'])
+        self.assertEqual([t['name'] for t in result['tables']], ['Claims', 'Locked', 'Unknown', 'View'])
         data, empty, offline = result['libraries']
         self.assertEqual((data['known_bytes'], data['skipped_members'], data['incomplete']), (1048576, 1, True))
         self.assertFalse(empty['incomplete'])
@@ -110,6 +112,35 @@ class CatalogTests(unittest.TestCase):
         self.assertIn("getoption('encoding'), 'utf-8'", code)
         self.assertIn("libname not in ('WORK','SASHELP','SASUSER')", servers.catalog_code(TOKEN, []))
         with self.assertRaises(ValueError): servers.catalog_code("';bad;", [])
+
+    def test_columns_transport_and_incremental_scopes(self):
+        column=('column',dict(libname='DATA',table='Claims',name='A & B',type='char',length=12,position=1,label='Café',format='$12.',informat='$12.'))
+        patch=servers.parse_catalog(catalog_log([column]),TOKEN)
+        base=servers.merge_catalog(None,servers.parse_catalog(catalog_log(RECORDS),TOKEN),'full',['DATA','EMPTY'],'',100)
+        first=servers.merge_catalog(base,patch,'columns',['DATA'],'Claims',110)
+        other=('column',dict(libname='DATA',table='Unknown',name='id',type='num',length=8,position=1))
+        second=servers.merge_catalog(first,servers.parse_catalog(catalog_log([other]),TOKEN),'columns',['DATA'],'Unknown',120)
+        self.assertEqual(len(second['column_details']),2)
+        self.assertEqual(second['refreshes']['columns:DATA.Claims']['captured'],110)
+        issue=('issue',dict(scope='columns',libname='DATA',name='Claims',message='Denied'))
+        failed=servers.merge_catalog(second,servers.parse_catalog(catalog_log([issue]),TOKEN),'columns',['DATA'],'Claims',130)
+        self.assertTrue(next(c for c in failed['column_details'] if c['table']=='Claims')['stale'])
+        self.assertEqual(failed['refreshes']['columns:DATA.Unknown']['captured'],120)
+        self.assertEqual(len(failed['tables']),3)
+        code=servers.columns_code(TOKEN,'DATA',"a'&macro")
+        self.assertIn('from dictionary.columns',code)
+        self.assertNotIn("a'&macro",code)
+        self.assertIn('outobs=10001',code)
+        self.assertNotIn('select *',code)
+
+    def test_discovery_marks_missing_assignments_and_preserves_historical_metadata(self):
+        base=servers.merge_catalog(None,servers.parse_catalog(catalog_log(RECORDS),TOKEN),'full',[], '',100)
+        patch=servers.parse_catalog(catalog_log([('library',dict(libname='EMPTY',engine='V9',path='/empty'))]),TOKEN)
+        merged=servers.merge_catalog(base,patch,'libraries',[], '',200)
+        self.assertFalse(next(l for l in merged['libraries'] if l['name']=='DATA')['assigned'])
+        self.assertTrue(next(l for l in merged['libraries'] if l['name']=='EMPTY')['assigned'])
+        self.assertEqual(len(merged['tables']),3)
+        self.assertTrue(all(t['stale'] for t in merged['tables']))
 
 
 class ServerWorkbenchTests(unittest.TestCase):
@@ -180,7 +211,7 @@ class ServerWorkbenchTests(unittest.TestCase):
                 self.assertTrue(item['server']['partial'])
                 self.assertEqual(item['tasks']['source']['status'], options.get('task_status', 'FAILED' if options.get('rc') else 'SUCCESS'))
                 catalog = self.app.server_catalog(identifier)
-                self.assertEqual(len(catalog['tables']), 3)
+                self.assertEqual(len(catalog['tables']), 4)
                 self.assertIn('Locked', [issue['name'] for issue in catalog['issues']])
                 self.assertTrue(catalog['partial'])
                 self.assertIn('Partial snapshot saved', item['message'])
@@ -200,3 +231,15 @@ class ServerWorkbenchTests(unittest.TestCase):
 
 
 if __name__ == '__main__': unittest.main()
+
+class InitializationSelectionTests(unittest.TestCase):
+    def test_disabling_initialization_uses_empty_folder_and_drops_override(self):
+        import os
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp).resolve();(root/'pysas.py').write_text('# engine');(root/'project.egp').touch();(root/'_lib.sas').write_text('must not execute;')
+            app=ui.Workbench(root)
+            fake_os=Mock(wraps=os);fake_os.name='nt'
+            with patch.object(ui,'os',fake_os):
+                _,args=app.arguments(dict(action='server-refresh',template='project.egp',lib='_lib.sas',use_init=False))
+            self.assertNotIn('--lib',args)
+            folder=Path(args[args.index('--init-dir')+1]);self.assertEqual(list(folder.glob('_*.sas')),[])
