@@ -1,7 +1,7 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.29 is a separate browser UI for the standalone PySAS
-0.3.14 command-line engine. Download the Python ZIP from GitHub Releases, extract
+The Workbench 0.4.0-preview.30 is a separate browser UI for the standalone PySAS
+0.3.15 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
 
@@ -513,3 +513,5 @@ Servers now supports independent library, table and column refreshes with saved 
 Table previews are read only and available after collecting a table's complete current column metadata. Choose Top N (100 default; 1,000 maximum), add typed filters and combine them with AND/OR. Results are bounded to 100 columns, 256 characters per text cell and 2 MB of log transport, then displayed 50 rows at a time. Missing/truncated values and omitted columns are explicit. Numeric values use SAS raw numbers, with formats in the headings. Filters can still scan data on the server. Download/Copy sample CSV or JSON contains only the returned rows. Samples also remain in local run logs/artifacts and saved-data backups.
 
 The dictionary searches saved columns across chosen libraries and includes rows for unavailable/uncollected tables. Collect missing columns serially in batches of up to 200 tables; stop queued collection after the current table or cancel that file through its Console/Tasks control. Column limits are 10,000 per table and 100,000 per saved connection. CSV and Excel exports include the selected libraries and search term, plus metadata status. CSV protects spreadsheet users by prefixing formula-like text; Excel stores strings as text. See [review release notes](next-version/release-notes.md) and [manual acceptance](next-version/windows-eg-acceptance.md).
+
+EGP extraction in preview.30 reads program labels and process flows from project.xml. Projects offers Inspect extracted programs after completion and a ZIP of the complete extraction. Edit either named source view before repacking; conflicting edits are reported. See [the EGP extraction guide](egp-extraction.md).

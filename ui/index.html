@@ -116,7 +116,7 @@
 <h2>Inspect &amp; extract</h2>
 <label>Action<select name="action" id="egp-action"><option value="egp-inspect">Inspect project</option>
 <option value="egp-extract">Extract SAS programs</option>
-<option value="egp-pack">Repack extracted programs</option></select></label><label>Project / template<select name="project" data-files="egp"><option value="">Auto-detect project</option></select></label><label id="egp-source-label">Extracted folder<input name="source" placeholder="project"></label><label id="egp-output-label">Output path<input name="output" placeholder="Leave blank for PySAS default"></label><p class="hint">Repack uses the extraction manifest and an EGP template to preserve the rest of the project.</p>
+<option value="egp-pack">Repack extracted programs</option></select></label><label>Project / template<select name="project" data-files="egp"><option value="">Auto-detect project</option></select></label><label id="egp-source-label">Extracted folder<input name="source" placeholder="project"></label><label id="egp-output-label"><span id="egp-output-caption">Output folder (optional)</span><input name="output" placeholder="Leave blank for PySAS default"></label><p class="hint">Extract creates named SAS programs, a copy organized by process flow, and auxiliary project files. Blank output uses the project name; existing folders are never overwritten. Repack accepts edits from either source view and preserves the rest of the EGP.</p>
 <button type="submit" class="primary">Run EGP command</button>
 </form>
 </details>
@@ -293,7 +293,7 @@
 <label class="check"><input id="keep-awake" type="checkbox">Keep Windows and the display awake while the launcher is running</label><p id="awake-status" class="hint"></p>
 <p class="hint">Stops idle sleep without clicking or typing. It does not override manual sleep, closing the lid, or your organization's lock policy. The setting resets when the server closes.</p>
 </div></details></section>
-<footer>PySAS engine 0.3.14 · Local execution <span>Closing the app finishes active jobs before exiting.</span></footer><section id="details-dialog" hidden="" class="run-inspector" aria-label="Run inspector" tabindex="-1"><div class="dialog-header">
+<footer>PySAS engine 0.3.15 · Local execution <span>Closing the app finishes active jobs before exiting.</span></footer><section id="details-dialog" hidden="" class="run-inspector" aria-label="Run inspector" tabindex="-1"><div class="dialog-header">
 <div>
 <span class="eyebrow">RUN INSPECTOR</span><h2 id="detail-title">Run details</h2>
 </div>

@@ -46,6 +46,12 @@ def observe(engine):
             original_report(result)
             emit("bundle-result", result=result)
         engine.bundle_report = bundle_report
+    if hasattr(engine, "egp_report"):
+        original_egp_report = engine.egp_report
+        def egp_report(result):
+            original_egp_report(result)
+            emit("egp-result", result=result)
+        engine.egp_report = egp_report
     original_job = engine.run_job
     @functools.wraps(original_job)
     def job(source, *args, **kwargs):

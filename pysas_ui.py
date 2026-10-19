@@ -33,7 +33,7 @@ import ui_storage
 import windows_clipboard
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.30-dev"
+VERSION = "0.4.0-preview.30"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 TEXT_SUFFIXES = {".sas", ".log", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".xml"}
@@ -561,7 +561,12 @@ class Workbench:
 
     def event(self, item, event):
         kind = event.get("event")
-        if kind == "bundle-result":
+        if kind == "egp-result":
+            result = event["result"]
+            item["path"] = self.relative(result["path"])
+            item["egp_result"] = {key: result[key] for key in ("programs", "flows", "warnings")}
+            item["message"] = f"Extracted {result['programs']} programs in {result['flows']} process-flow folders. {len(result['warnings'])} extraction warnings; inspect the console for details."
+        elif kind == "bundle-result":
             item["bundle_result"] = event["result"]
         elif kind == "schedule-state":
             record = event["schedule_state"]
@@ -837,6 +842,16 @@ class Workbench:
         self.invalidate_lists()
         return {"name": name}
 
+    def extracted_project(self, value):
+        """Only successful, registered extraction outputs can be exported/opened as projects."""
+        key = self.history_key(value)
+        if key is None: return None
+        with self.lock:
+            found = any(c.get("action") == "egp-extract" and c.get("status") == "SUCCESS" and c.get("egp_result") and self.history_key(c.get("path")) == key for c in self.commands.values())
+        if not found: return None
+        folder = within(self.root, value)
+        return folder if folder.is_dir() and folder != self.root else None
+
     def open_folder(self, data):
         if data.get("command"):
             item = self.commands.get(data["command"], {})
@@ -846,7 +861,7 @@ class Workbench:
             folder = within(root / "_codebase_backups", value)
         else:
             folder = within(self.root, data.get("path", ""))
-            if not ui_storage.run_folder(self.root, self.relative(folder)):
+            if not ui_storage.run_folder(self.root, self.relative(folder)) and not self.extracted_project(self.relative(folder)):
                 raise ValueError("Choose a saved run folder.")
         if not folder.is_dir(): raise ValueError("Folder no longer exists.")
         if os.name != "nt": raise ValueError("Opening folders is available in the Windows app.")
@@ -1039,7 +1054,11 @@ class Workbench:
                         task.update({field: saved[field] for field in ("section", "row_start", "row_end", "status", "elapsed", "started", "path", "depends_on") if field in saved})
                         task["command_id"] = command["id"]
                     break
-        return {"files": files, "tasks": tasks, "listing_limited": len(files) >= 1000, "name": read_json(path / "run-display.json", {}).get("name", ""), "whole_run": ui_storage.run_folder(self.root, relative) == path}
+        run = ui_storage.run_folder(self.root, relative)
+        project = self.extracted_project(relative)
+        return {"files": files, "tasks": tasks, "listing_limited": len(files) >= 1000, "name": read_json(path / "run-display.json", {}).get("name", ""), "whole_run": run == path,
+                "export_scope": "project" if project else "run" if run else None,
+                "export_path": self.relative(project or run) if project or run else ""}
 
     def copy_file(self, relative=None, command=None, export=None):
         if command:

@@ -1,6 +1,6 @@
 # Manual Windows / Enterprise Guide acceptance
 
-Status: pending. Do not tag or merge the review stack until these checks have been completed in the target environment. Automated Windows COM tests use fake EG objects, not a production SAS server.
+Status: target-environment checks pending. The user authorized publishing preview.30 for testing after the EGP extraction fix. These manual checks still remain; draft PRs stay unmerged. Automated Windows COM tests use fake EG objects, not a production SAS server.
 
 ## UI and keyboard
 
@@ -25,3 +25,8 @@ Status: pending. Do not tag or merge the review stack until these checks have be
 - Verify 100 default / 1,000 maximum rows, 100-column cap, long-cell flags, transport budget, unordered sampling notice, source unchanged, exported sample parity and per-file cancellation. Check permission/connection failures are reported without stale result substitution.
 - Collect multiple libraries' missing columns. Confirm serial progress, sibling retention, stop-after-current, failed-table continuation and batch/column caps. Search across tables; compare CSV/XLSX exports with displayed filters and explicit missing/stale rows.
 - Confirm returned table samples are stored locally in artifacts/run logs and backups as described; use only data appropriate for the local computer.
+
+## EGP extraction acceptance
+
+- Extract a representative real project. Compare program labels, classic/newer flow membership and source bytes with the original/MagicRoot output. Verify duplicate names, linked-program warnings and full-folder ZIP.
+- Edit one flat file, then a grouped copy, and repack into a new EGP. Open it in Enterprise Guide, confirm only intended source edits and other project elements preserved. Conflicting edits must be reported before any output is published.
