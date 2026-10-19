@@ -500,3 +500,9 @@ the summary rescans and asks you to reselect the issue before showing context,
 so an old line cannot silently point to a different error. Live summaries can
 only include log content Enterprise Guide has already saved. Download and Copy
 file always operate on the original file; no SAS execution behavior is changed.
+
+## Next-version navigation (under review)
+
+The workbench groups tasks under Overview, Run, Projects, Run History, Servers and Settings. Run offers Single file or Multiple files (an Excel dependency schedule), then New or Continue. Successful schedule tasks retain their previous outputs when continuing. Settings contains default EGP/initialization, shared WORK, watcher, folders, cleanup, backups and power options. Watcher startup is explicitly opt-in and is always disabled after backup restoration. Alt O/R/P/H/V/S selects the six pages.
+
+Header elapsed time belongs to the longest active run and excludes pauses between schedule attempts. The finish estimate covers all current work, excluding future watcher arrivals; incomplete timing history is marked. Disk usage retains its previous measurement during refresh; an unavailable folder does not interrupt live status polling.

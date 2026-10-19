@@ -82,7 +82,7 @@ def export_backup(app, configs_only=False, progress=None, destination=None):
         if progress: progress(0, 0, 'Scanning saved files')
         manifest = dict(format=FORMAT, scope='configs' if configs_only else 'all', workspace=str(app.root), folders=app.folders(),
                         bundle_settings=app.bundle_settings(), commands=[] if configs_only else list(app.commands.values()),
-                        parameters_settings=ui_parameters.settings(app.storage), shared_work=app.shared_work())
+                        parameters_settings=ui_parameters.settings(app.storage), shared_work=app.shared_work(), preferences=app.preferences())
         bases = [app.storage / 'parameters']
         if not configs_only: bases += [app.root / 'runs', app.root / 'runner/runs', app.storage / 'artifacts']
         entries = [(p, p.relative_to(app.root).as_posix()) for base in bases for p in safe_files(base) if p.name not in {'.schedule.lock', '_cancel.request'}]
@@ -252,6 +252,26 @@ def restore_backup(app, stream, length):
             shared = shared_work_settings(manifest['shared_work'])
             shared['enabled'] = False  # A restored WORK path may belong to an expired session.
             settings['shared-work.json'] = shared
+        preferences = remap(manifest.get('preferences', {}))
+        if not isinstance(preferences, dict): raise ValueError('Invalid preferences in backup.')
+        clean = {key: '' for key in ('default_egp', 'default_lib')}
+        for key in clean:
+            value = preferences.get(key, '')
+            if isinstance(value, str) and value:
+                path = Path(value)
+                roots = [app.root, *(Path(v) for v in folders.values())]
+                if path.is_file() and any(path.resolve().is_relative_to(root.resolve()) for root in roots):
+                    clean[key] = value
+        watcher = preferences.get('watcher', {})
+        if not isinstance(watcher, dict): raise ValueError('Invalid watcher preferences.')
+        clean['watcher'] = dict(workers=max(1, min(32, int(watcher.get('workers') or 2))),
+                                poll=max(.5, min(60, float(watcher.get('poll') or 2))),
+                                auto_start=False, tables=watcher.get('tables') is True)
+        for key in ('template', 'lib'):
+            value = watcher.get(key, '')
+            if isinstance(value, str) and value and Path(value).is_file() and any(Path(value).resolve().is_relative_to(Path(v).resolve()) for v in [str(app.root), *folders.values()]):
+                clean['watcher'][key] = value
+        settings['preferences.json'] = clean
         previous = {name: (app.storage / name).read_bytes() if (app.storage / name).exists() else None for name in settings}
         completed = []
         try:

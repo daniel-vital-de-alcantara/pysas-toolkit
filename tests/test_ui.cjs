@@ -15,7 +15,7 @@ const context = {
   URLSearchParams,fetch:async()=>({ok:true,json:async()=>snapshot}),setInterval(){},AbortController,Date,console
 };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={logSummaryMarkup,logContextMarkup,remainingText,focusTarget,putMarkup,catalogIssues,setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={runFlow,logSummaryMarkup,logContextMarkup,remainingText,focusTarget,putMarkup,catalogIssues,setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
 const h = context.helpers;
 test('elapsed formatting supports seconds, hours, and runs longer than a day',()=>{
   assert.equal(h.duration(65.9),'00:01:05');
@@ -313,4 +313,12 @@ test('log context shows real file line numbers and safely highlights the selecte
   assert.match(html,/lines 40–43/);
   assert.equal((html.match(/log-selected-line/g)||[]).length,1);
   assert.match(html,/&lt;bad&gt;/);
+});
+
+test('Run flow reveals source options and separates new versus continued schedules',()=>{
+  node('run-mode').value='single';node('run-source').value='';h.runFlow();
+  assert.equal(node('single-options').hidden,true);assert.equal(node('multiple-options').hidden,true);
+  node('run-source').value='job.sas';h.runFlow();assert.equal(node('single-options').hidden,false);
+  node('run-mode').value='multiple';node('schedule-mode').value='continue';h.runFlow();
+  assert.equal(node('run-form').hidden,true);assert.equal(node('schedule-form').hidden,true);assert.equal(node('continue-form').hidden,false);
 });
