@@ -1,12 +1,12 @@
 # PySAS Toolkit
 
-**PySAS 0.3.14** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
+**PySAS 0.3.15** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
 
 It grew out of day-to-day model-development and consulting work where large SAS processes were difficult to inspect, rerun, parallelise, move between environments and review consistently. The current implementation brings those workflows together in one portable `pysas.py` utility.
 
 ## What it does
 
-| Component | Status in 0.3.14 | Purpose |
+| Component | Status in 0.3.15 | Purpose |
 | --- | --- | --- |
 | SAS bundle utility | Implemented | Pack, verify and safely unpack SAS source trees with SHA-256 integrity metadata and backups |
 | EGP tools | Implemented | Inspect EGP archives, extract embedded SAS programs and conservatively repack them into an EGP template |
@@ -38,13 +38,13 @@ is required. Inaccessible members are skipped; readable results are saved as a p
 with warnings and incomplete storage totals. Saved snapshots remain available offline and travel with saved-data
 backups; missing metadata is shown as unknown.
 
-The released command-line toolkit is version 0.3.14; the released UI preview is 0.4.0-preview.29.
+The released command-line toolkit is version 0.3.15; the released UI preview is 0.4.0-preview.30.
 
-The next Workbench version is in four stacked draft PRs, identified as `0.4.0-preview.30-dev`. It reorganizes Run/Settings, expands History and Projects, and adds progressive server metadata, bounded read-only table previews and dictionary search/export. See [review release notes](docs/next-version/release-notes.md). This review build requires visual and live Windows/EG acceptance before merge or release.
+Preview.30 reorganizes Run/Settings, expands History and Projects, and adds progressive server metadata, bounded read-only table previews and dictionary search/export. It also fixes EGP extraction: program labels and process-flow folders now follow project metadata, as in MagicRoot. See [EGP extraction](docs/egp-extraction.md) and [release notes](docs/next-version/release-notes.md). Live SAS/visual verification of the new server features remains pending; this is a testing preview.
 
 ## Requirements
 
-PySAS 0.3.14 is designed for controlled Windows environments with:
+PySAS 0.3.15 is designed for controlled Windows environments with:
 
 - Python 3.9+ recommended;
 - SAS Enterprise Guide installed and configured for the target SAS environment;
@@ -126,7 +126,7 @@ py pysas.py egp extract project.egp
 py pysas.py egp pack project --template project.egp --output project_updated.egp
 ```
 
-Extraction writes a `.pysas_egp_manifest.json` mapping extracted source files back to their original archive members. Repacking replaces only those mapped SAS members in the template and preserves the rest of the archive.
+Extraction exports named programs, a copy organized by process flow, and auxiliary project files. A `.pysas_egp_manifest.json` maps both editable views back to the original archive members. Repack accepts edits from either view, reports conflicting edits and preserves unrelated EGP members. Older flat manifests remain supported. See [the extraction guide](docs/egp-extraction.md).
 
 Because EGP internals are SAS Enterprise Guide version-sensitive, use copies of important projects and validate rebuilt artifacts in the target environment.
 
@@ -302,7 +302,7 @@ Important limitations include:
 
 ## Version
 
-Current published implementation: **0.3.14**.
+Current published implementation: **0.3.15**.
 
 ```powershell
 py pysas.py version

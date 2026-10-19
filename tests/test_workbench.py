@@ -124,6 +124,25 @@ class WorkbenchTests(unittest.TestCase):
         with zipfile.ZipFile(self.root / "updated.egp") as z:
             self.assertEqual(z.read("project.xml"), b"<Project/>")
 
+    def test_extracted_project_is_inspectable_and_exports_full_zip(self):
+        with zipfile.ZipFile(self.root / "demo.egp", "w") as archive:
+            archive.writestr("Program1/code.sas", "proc print;run;")
+            archive.writestr("project.xml", "<Project/>")
+        item=self.wait_command(self.app.launch({"action":"egp-extract","project":"demo.egp"})["id"])
+        self.assertEqual(item["status"],"SUCCESS",item.get("message"))
+        self.assertEqual(item["egp_result"]["programs"],1)
+        detail=self.app.details(item["path"])
+        self.assertEqual(detail["export_scope"],"project")
+        self.assertTrue(any("01 SAS project files" in f["name"] for f in detail["files"]))
+        job=self.app.exports.start("project",item["path"])
+        deadline=time.monotonic()+5
+        while self.app.exports.get(job["id"])["status"]=="WORKING" and time.monotonic()<deadline:time.sleep(.02)
+        exported=self.app.exports.get(job["id"]);self.assertEqual(exported["status"],"READY",exported)
+        with zipfile.ZipFile(self.app.root/exported["path"]) as archive:
+            self.assertTrue(any("03. By process flow" in name for name in archive.namelist()))
+            self.assertTrue(any(name.endswith("/.pysas_egp_manifest.json") for name in archive.namelist()))
+        with self.assertRaises(ValueError):self.app.exports.start("project","runner/inbox")
+
     def test_path_escape_and_command_injection_rejected(self):
         for value in ("../outside.txt", str(self.root.parent / "outside.txt")):
             with self.assertRaises(ValueError):

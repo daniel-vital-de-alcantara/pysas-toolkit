@@ -56,3 +56,7 @@ Bounded previews validate a saved readable table and complete, current column sc
 Dictionary search and exports run against saved schemas. Collection launches serial normal workers, follows each completed merged snapshot, retains failures, supports stopping queued work, and exposes the active file's normal cancellation. Export work is asynchronous and independent of status polling. Dictionary export files are prepared session downloads, while catalog and sample data remain persistent. CSV formula-like text is prefixed; Excel strings are explicitly text and invalid XML control characters are replaced.
 
 Regression coverage includes typed filter rejection, safe identifiers/values, Unicode and missing values, transport/truncation, stale schemas, CSV/Excel safety, serial collection, HTTP token controls, active-attempt clocks, inspector tabs, preview pagination and command/catalog lock ordering. All automated results are recorded in the final PR; live SAS and visual verification remain pending in windows-eg-acceptance.md.
+
+## Publication authorization after the review build
+
+The user subsequently requested the EGP extractor match MagicRoot and explicitly asked to publish a new GitHub version when fixed. Preview.30 includes that extraction fix and the four phases above. Publication is authorized by that later request; all source PRs remain unmerged and live/visual acceptance is still pending. Engine is now 0.3.15 for the EGP change; execution/scheduler code is unchanged.

@@ -4,7 +4,7 @@ PySAS Workbench 0.4.0-preview.29
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
 2. Place your EGP project, SAS programs, Schedule.xlsx, and _*.sas init files
    beside pysas.py in that folder. You can also copy the UI files into your
-   existing workspace, including the updated pysas.py 0.3.14. Keep your SAS,
+   existing workspace, including the updated pysas.py 0.3.15. Keep your SAS,
    EGP and Excel files. The updated engine remains a standalone single file.
 3. Double-click START_PYSAS.bat. PySAS opens in its own app-style window.
 4. The terminal closes after startup. Closing the app stops the watcher
@@ -50,7 +50,7 @@ What is included
 - Scheduler task statuses, individual task clocks, and total schedule duration.
 - Run history, searchable statuses, console, SAS logs/code and file downloads.
 - Excel previews (up to 100 data rows, 30 columns and 10 sheets per workbook).
-- Standalone pysas.py 0.3.14; existing CLI commands still work.
+- Standalone pysas.py 0.3.15; existing CLI commands still work.
 - Blue styling and saved code folders for repeated bundle operations.
 - Always-run shared setup is prepended before every scheduled program.
 - Watcher _*.sas files are shared initialization, never queued as jobs.
@@ -271,12 +271,21 @@ NEW IN PREVIEW.29
 - Latest log output returns to the normal log preview. Download and Copy file
   continue to use the original complete file. The SAS engine is unchanged.
 
-Next-version review build (0.4.0-preview.30-dev)
+Preview.30 (engine 0.3.15)
 ----------------------------------------------
 Run offers Single file or Multiple files (New / Continue Excel schedule).
 Settings contains watcher, shared WORK, defaults, folders, cleanup and backups.
 History names do not change folder names; Inspect has Files / Logs / Tasks.
 Servers supports progressive library/table/column metadata, bounded read-only
 previews, and dictionary search/export. Read docs/next-version/release-notes.md
-and windows-eg-acceptance.md. Review and live Windows/EG acceptance are pending;
-this build has not been published as a release.
+and windows-eg-acceptance.md. Live Windows/EG acceptance and visual verification
+remain pending for the new server features. This is a testing preview.
+
+EGP extraction fix
+------------------
+Projects > Enterprise Guide project tools > Extract SAS programs now uses the
+program names and process flows from project.xml, like MagicRoot. Output contains
+01 SAS project files, 02 Other files and 03. By process flow. Inspect the output
+and download/copy its entire ZIP. Source encodings are preserved; duplicates get
+numbered names. Repack accepts edits from either named source view, with explicit
+conflicts if both copies differ. See docs/egp-extraction.md.

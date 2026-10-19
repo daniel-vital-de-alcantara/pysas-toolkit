@@ -116,7 +116,7 @@
 <h2>Inspect &amp; extract</h2>
 <label>Action<select name="action" id="egp-action"><option value="egp-inspect">Inspect project</option>
 <option value="egp-extract">Extract SAS programs</option>
-<option value="egp-pack">Repack extracted programs</option></select></label><label>Project / template<select name="project" data-files="egp"><option value="">Auto-detect project</option></select></label><label id="egp-source-label">Extracted folder<input name="source" placeholder="project"></label><label id="egp-output-label">Output path<input name="output" placeholder="Leave blank for PySAS default"></label><p class="hint">Repack uses the extraction manifest and an EGP template to preserve the rest of the project.</p>
+<option value="egp-pack">Repack extracted programs</option></select></label><label>Project / template<select name="project" data-files="egp"><option value="">Auto-detect project</option></select></label><label id="egp-source-label">Extracted folder<input name="source" placeholder="project"></label><label id="egp-output-label"><span id="egp-output-caption">Output folder (optional)</span><input name="output" placeholder="Leave blank for PySAS default"></label><p class="hint">Extract creates named SAS programs, a copy organized by process flow, and auxiliary project files. Blank output uses the project name; existing folders are never overwritten. Repack accepts edits from either source view and preserves the rest of the EGP.</p>
 <button type="submit" class="primary">Run EGP command</button>
 </form>
 </details>

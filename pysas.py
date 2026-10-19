@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PySAS 0.3.14 — portable SAS Enterprise Guide command-line utilities.
+"""PySAS 0.3.15 — portable SAS Enterprise Guide command-line utilities.
 
 Keep this file beside the EGP, scheduler workbook and any top-level _*.sas
 initialisation files it should use.  Python 3.9+ is recommended.  ``rich`` is
@@ -18,6 +18,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -26,12 +27,12 @@ import time
 import uuid
 import zipfile
 from datetime import datetime, timezone
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Iterable
 from xml.etree import ElementTree as ET
 
 
-VERSION = "0.3.14"
+VERSION = "0.3.15"
 ROOT_DIR = Path(__file__).resolve().parent
 CODEBASE_FILE = "codebase.sasbundle.txt"
 BACKUP_FOLDER = "_codebase_backups"
@@ -394,44 +395,261 @@ def egp_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
+# Extraction follows project labels and process-flow membership, as in MagicRoot.
+# Keep this implementation self-contained: the CLI still ships as one Python file.
+EGP_PROGRAMS = "01 SAS project files"
+EGP_AUXILIARY = "02 Other files"
+EGP_FLOWS = "03. By process flow"
+
+
+def egp_archive_path(value: str) -> PurePosixPath:
+    value = value.replace("\\", "/")
+    path = PurePosixPath(value)
+    if (not value or value.startswith("/") or PureWindowsPath(value).drive or
+            ".." in path.parts or not path.parts or any(ord(c) < 32 for c in value)):
+        raise ValueError("Unsafe path in EGP archive or manifest: " + repr(value))
+    return path
+
+
+def egp_component(value: str, fallback="Unnamed", limit=80) -> str:
+    # Preserve readable labels, spaces and Unicode, while producing Windows filenames.
+    value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(value)).strip().rstrip(". ")
+    if value in {"", ".", ".."}: value = fallback
+    if re.fullmatch(r"(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?", value): value = "_" + value
+    return value[:limit].rstrip(". ") or fallback
+
+
+def egp_unique(value: str, used: set[str], suffix="") -> str:
+    original = value
+    number = 0
+    while (value + suffix).casefold() in used:
+        number += 1
+        value = f"{original} ({number})"
+    result = value + suffix
+    used.add(result.casefold())
+    return result
+
+
+def egp_project_index(zf: zipfile.ZipFile, members: dict[str, zipfile.ZipInfo]):
+    """Resolve classic PFD membership and newer container/parent relationships."""
+    warnings = []
+    xml = next((info for key, info in members.items() if key.casefold() == "project.xml"), None)
+    if xml is None:
+        return {}, {}, ["project.xml is missing; archive names and Unknown flows were used."]
+    if xml.file_size > 16 * 1024**2: raise ValueError("EGP project.xml exceeds the 16 MB metadata limit.")
+    raw = zf.read(xml)
+    # Reject external/entity definitions; ordinary EG XML has no DTD.
+    normalized_xml = raw.replace(b"\x00", b"").upper()
+    if b"<!DOCTYPE" in normalized_xml or b"<!ENTITY" in normalized_xml:
+        raise ValueError("EGP project.xml contains unsupported entity definitions.")
+    try:
+        root = ET.fromstring(raw)  # XML declarations/BOMs select UTF-8/UTF-16 correctly.
+    except ET.ParseError:
+        return {}, {}, ["project.xml could not be parsed; every embedded SAS file is still retained."]
+    local = lambda node: node.tag.rsplit("}", 1)[-1].casefold()
+    nodes = [node for node in root.iter() if local(node) == "element" and node.get("Type")]
+    def text(node, names):
+        # Prefer the element's own metadata over IDs inside PFD child processes.
+        own = next((child for child in node if local(child) == "element" and not child.get("Type")), node)
+        for name in names:
+            for child in own.iter():
+                if local(child) == name.casefold():
+                    value = (child.text or child.get("ID") or "").strip()
+                    if value: return value
+        return ""
+    flows, parents, programs, membership = {}, {}, {}, {}
+    for node in nodes:
+        kind = node.get("Type", "").rsplit(".", 1)[-1].casefold()
+        identifier = text(node, ["ID"])
+        label = text(node, ["Label", "Name"])
+        if not identifier: continue
+        parents[identifier] = text(node, ["Container", "ContainerID", "ParentID", "Parent", "OwnerID"])
+        if kind in {"pfd", "processflow", "container"}:
+            flows[identifier] = label or "Unnamed flow"
+            if kind == "pfd":
+                for process in node.iter():
+                    if local(process) == "process":
+                        reference = next(((child.text or "").strip() for child in process.iter() if local(child) == "id" and child.text), "")
+                        if reference: membership.setdefault(reference, identifier)
+        elif kind == "codetask":
+            if identifier in programs: warnings.append("Duplicate program ID in project.xml: " + identifier)
+            else: programs[identifier] = dict(label=label or "Unnamed_Code", parent=parents[identifier])
+    for identifier, program in programs.items():
+        parent = program["parent"]
+        visited = set()
+        while parent and parent not in visited:
+            visited.add(parent)
+            if parent in flows:
+                program["flow"] = parent
+                break
+            parent = parents.get(parent, "")
+        if not program.get("flow") and identifier in membership:
+            program["flow"] = membership[identifier]
+    return programs, flows, warnings
+
+
+def egp_report(result: dict) -> None:
+    """Optional observation hook for the local workbench."""
+    print(f"Extracted {result['programs']} SAS program(s) in {result['flows']} process-flow folder(s): {result['path']}")
+    for warning in result["warnings"]: print("WARNING: " + warning)
+
+
 def egp_extract(args: argparse.Namespace) -> int:
     path = choose_egp(args.project)
     output = Path(args.output) if args.output else ROOT_DIR / path.stem
     if not output.is_absolute(): output = ROOT_DIR / output
-    if output.exists(): raise FileExistsError(f"Output already exists; PySAS will not overwrite it: {output}")
-    output.mkdir(parents=True)
-    manifest: dict[str, str] = {}
+    output = output.resolve()
+    if output.exists(): raise FileExistsError(f"Output already exists; choose a different --output folder: {output}")
     with zipfile.ZipFile(path) as zf:
-        sas = [n for n in zf.namelist() if n.casefold().endswith(".sas")]
-        used: set[str] = set()
-        for index, member in enumerate(sas, 1):
-            leaf = safe_name(Path(member).stem) + ".sas"
-            if leaf.casefold() in used: leaf = f"{Path(leaf).stem}_{index:03d}.sas"
-            used.add(leaf.casefold())
-            (output / leaf).write_bytes(zf.read(member))
-            manifest[leaf] = member
-    (output / ".pysas_egp_manifest.json").write_text(json.dumps({
-        "source": str(path), "members": manifest,
-    }, indent=2), encoding="utf-8")
-    print(f"Extracted {len(manifest)} SAS member(s): {output}")
+        infos = zf.infolist()
+        if len(infos) > 20000 or sum(info.file_size for info in infos) > 2 * 1024**3:
+            raise ValueError("EGP archive exceeds the 20,000-entry / 2 GB extraction limit.")
+        members, raw_paths, used_paths = {}, {}, set()
+        for info in infos:
+            relative = egp_archive_path(info.orig_filename)
+            key = str(relative).casefold()
+            if key in used_paths: raise ValueError("Duplicate/colliding EGP archive path: " + info.filename)
+            used_paths.add(key)
+            if info.is_dir() or info.filename.endswith("\\"): continue
+            if info.file_size > 256 * 1024**2: raise ValueError("EGP member exceeds the 256 MB limit: " + info.filename)
+            if info.flag_bits & 1 or stat.S_ISLNK(info.external_attr >> 16):
+                raise ValueError("Encrypted entries and symbolic links are not supported: " + info.filename)
+            # Raw auxiliary paths are mapped safely too; the original ZIP remains intact.
+            raw_paths[str(relative)] = PurePosixPath(*(egp_component(part, limit=100) for part in relative.parts))
+            members[str(relative)] = info
+        raw_keys = [str(relative).casefold() for relative in raw_paths.values()]
+        if len(raw_keys) != len(set(raw_keys)): raise ValueError("EGP auxiliary filenames collide after Windows name sanitization.")
+        sas = [key for key in members if key.casefold().endswith(".sas")]
+        if not sas: raise ValueError("This EGP contains no embedded SAS source. Linked programs must be supplied separately.")
+        programs, flows, warnings = egp_project_index(zf, members)
+        lookup = {key.casefold(): key for key in sas}
+        assignments, assigned = [], set()
+        for identifier, program in programs.items():
+            key = lookup.get((identifier.replace("\\", "/").rstrip("/") + "/code.sas").casefold())
+            if key is None:
+                warnings.append(f"No embedded code.sas for {program['label']} ({identifier}); it may be linked externally.")
+                continue
+            if key in assigned:
+                warnings.append("More than one program references " + key + "; its source was retained once.")
+                continue
+            assigned.add(key)
+            assignments.append((key, program["label"], program.get("flow")))
+        for key in sas:
+            if key not in assigned:
+                leaf = PurePosixPath(key).stem
+                if leaf.casefold() == "code" and len(PurePosixPath(key).parts) > 1: leaf = PurePosixPath(key).parts[-2]
+                assignments.append((key, leaf, None))
+                warnings.append("No program metadata matched " + key + "; its source was retained in an Unknown flow.")
+        # Only a completely successful extraction becomes visible at the requested path.
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".pysas-egp-", dir=output.parent) as temp:
+            staging = Path(temp) / "project"
+            auxiliary = staging / EGP_AUXILIARY
+            auxiliary.mkdir(parents=True)
+            archive_copy = auxiliary / "original-egp.zip"
+            if any(str(v).casefold() == "original-egp.zip" or str(v).casefold().startswith("original-egp.zip/") for v in raw_paths.values()):
+                archive_copy = staging / "original-egp.zip"
+            shutil.copy2(path, archive_copy)
+            for key, info in members.items():
+                target = auxiliary / raw_paths[key]
+                if os.name == "nt" and max(len(str(output / EGP_AUXILIARY / raw_paths[key])), len(str(target))) > 240:
+                    warnings.append("Long auxiliary path is preserved in original-egp.zip only: " + key)
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(info) as source, target.open("xb") as destination: shutil.copyfileobj(source, destination)
+            manifest, aliases, hashes, records = {}, {}, {}, []
+            flat_used, folder_used, grouped_used, flow_folders = set(), set(), {}, {}
+            unknown = 0
+            for key, label, flow in assignments:
+                if flow:
+                    flow_key = flow
+                    flow_label = flows[flow]
+                else:
+                    flow_key = "unknown:" + key
+                    flow_label = f"Unknown_{unknown}"
+                    unknown += 1
+                if flow_key not in flow_folders:
+                    flow_limit = min(65, max(8, 240 - len(str(output / EGP_FLOWS)) - 50)) if os.name == "nt" else 65
+                    flow_folders[flow_key] = egp_unique(egp_component(flow_label, "Unknown", flow_limit), folder_used)
+                folder = flow_folders[flow_key]
+                name = label[:-4] if label.casefold().endswith(".sas") else label
+                name_limit = 90
+                if os.name == "nt":
+                    name_limit = min(name_limit, 240 - max(len(str(output / EGP_PROGRAMS)), len(str(output / EGP_FLOWS / folder))) - 12)
+                    if name_limit < 8: raise ValueError("The extraction destination is too long. Choose a shorter --output folder.")
+                name = egp_component(name, "Unnamed_Code", name_limit)
+                flat_name = egp_unique(name, flat_used, ".sas")
+                grouped_name = egp_unique(name, grouped_used.setdefault(folder, set()), ".sas")
+                flat = PurePosixPath(EGP_PROGRAMS) / flat_name
+                grouped = PurePosixPath(EGP_FLOWS) / folder / grouped_name
+                # Preserve source bytes: extraction must never guess/re-encode SAS source.
+                source_bytes = zf.read(members[key])
+                for relative in (flat, grouped):
+                    destination = staging / relative
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_bytes(source_bytes)
+                canonical = str(flat)
+                manifest[canonical] = members[key].filename
+                aliases[canonical] = [str(grouped)]
+                hashes[canonical] = hashlib.sha256(source_bytes).hexdigest()
+                records.append(dict(path=canonical, by_flow=str(grouped), member=members[key].filename, label=label, flow=flows.get(flow) if flow else flow_label))
+                print(f"  {label} -> {grouped}")
+            (staging / ".pysas_egp_manifest.json").write_text(json.dumps(dict(
+                format=2, source=str(path), members=manifest, aliases=aliases,
+                hashes=hashes, programs=records, warnings=warnings,
+            ), ensure_ascii=False, indent=2), encoding="utf-8")
+            if output.exists(): raise FileExistsError("Output appeared during extraction; no files were replaced: " + str(output))
+            staging.rename(output)
+    egp_report(dict(path=str(output), programs=len(manifest), flows=len(flow_folders), warnings=warnings))
     return 0
 
 
 def egp_pack(args: argparse.Namespace) -> int:
     source = Path(args.source)
-    if not source.is_absolute(): source = (ROOT_DIR / source).resolve()
+    if not source.is_absolute(): source = ROOT_DIR / source
+    source = source.resolve()
     template = choose_egp(args.template)
     manifest_path = source / ".pysas_egp_manifest.json"
-    if not manifest_path.is_file():
-        raise FileNotFoundError("The source folder has no .pysas_egp_manifest.json; extract it with PySAS first")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))["members"]
-    replacements = {member: (source / leaf).read_bytes() for leaf, member in manifest.items() if (source / leaf).is_file()}
+    if not manifest_path.is_file(): raise FileNotFoundError("Extract this project with PySAS before repacking it.")
+    saved = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest, aliases, hashes = saved.get("members"), saved.get("aliases", {}), saved.get("hashes", {})
+    if not isinstance(manifest, dict) or not isinstance(aliases, dict) or not isinstance(hashes, dict): raise ValueError("Invalid EGP extraction manifest.")
     output = Path(args.output) if args.output else ROOT_DIR / f"{source.name}.egp"
     if not output.is_absolute(): output = ROOT_DIR / output
+    output = output.resolve()
     if output.exists(): raise FileExistsError(f"Output already exists: {output}")
-    with zipfile.ZipFile(template) as zin, zipfile.ZipFile(output, "w") as zout:
-        for info in zin.infolist():
-            zout.writestr(info, replacements.get(info.filename, zin.read(info.filename)))
+    replacements = {}
+    with zipfile.ZipFile(template) as zin:
+        available = set(zin.namelist())
+        for leaf, member in manifest.items():
+            if not isinstance(leaf, str) or not isinstance(member, str) or not member.casefold().endswith(".sas") or member not in available:
+                raise ValueError("The extraction manifest does not match the selected EGP template.")
+            egp_archive_path(member)
+            extra = aliases.get(leaf, [])
+            if not isinstance(extra, list) or any(not isinstance(value, str) for value in extra): raise ValueError("Invalid EGP editable aliases.")
+            versions = []
+            for relative in [leaf, *extra]:
+                candidate = (source / egp_archive_path(relative)).resolve()
+                if not candidate.is_relative_to(source): raise ValueError("An extracted program points outside its source folder.")
+                if candidate.is_file(): versions.append((relative, candidate.read_bytes()))
+            if not versions: continue  # Preserve the original member, matching legacy manifest behavior.
+            baseline = hashes.get(leaf)
+            if baseline is not None and (not isinstance(baseline, str) or not re.fullmatch(r"[0-9a-f]{64}", baseline)):
+                raise ValueError("Invalid source hash in EGP manifest.")
+            changed = [(relative, raw) for relative, raw in versions if baseline is None or hashlib.sha256(raw).hexdigest() != baseline]
+            if len({raw for _, raw in changed}) > 1:
+                raise ValueError("Conflicting edits in flat and by-flow copies of " + leaf + ". Keep one edit or make both copies identical.")
+            if member in replacements: raise ValueError("Duplicate source mapping in EGP manifest: " + member)
+            replacements[member] = changed[0][1] if changed else versions[0][1]
+        output.parent.mkdir(parents=True, exist_ok=True)
+        temporary = output.with_name(output.name + "." + uuid.uuid4().hex + ".tmp")
+        try:
+            with zipfile.ZipFile(temporary, "w") as zout:
+                for info in zin.infolist(): zout.writestr(info, replacements.get(info.filename, zin.read(info)))
+            if output.exists(): raise FileExistsError("Output appeared during repacking; no files were replaced.")
+            temporary.rename(output)
+        finally:
+            temporary.unlink(missing_ok=True)
     print(f"Repacked {len(replacements)} SAS member(s): {output}")
     return 0
 

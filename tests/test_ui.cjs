@@ -342,3 +342,8 @@ test('Alt hints scope to the full-pane inspector',()=>{
   const fixture=keyboardFixture(3,false,true);fixture.api.showPage();assert.equal(fixture.api.active,true);
   assert.equal(fixture.controls[2].clicked,0);
 });
+
+test('completed EGP extraction offers its own artifact inspector',()=>{
+  const html=h.commandCards([{id:'egp',action:'egp-extract',name:'Extract',status:'SUCCESS',tasks:{},path:'my project',egp_result:{programs:2,flows:1,warnings:[]}}]);
+  assert.match(html,/Inspect extracted programs/);assert.match(html,/data-path="my project"/);
+});

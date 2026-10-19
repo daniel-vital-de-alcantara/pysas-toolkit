@@ -1,7 +1,8 @@
-# Workbench next version — review build
+# Workbench 0.4.0-preview.30
 
-Review build: `0.4.0-preview.30-dev`, based on released preview.29 and standalone engine 0.3.14. Four stacked draft PRs; no release tag or merge is approved by this document.
+Testing preview: `0.4.0-preview.30`, with standalone engine 0.3.15. Includes the four Workbench phases plus the EGP extraction fix requested after review. The user authorized publishing this preview; the draft PRs remain unmerged.
 
+- Fixed EGP extraction to recover program labels and classic/newer process-flow membership, as in MagicRoot. Flat and grouped source views retain original bytes/encodings; duplicate labels, unmapped programs and missing linked code are explicit. Repacking supports edits from either view and detects conflicts. Projects can inspect and ZIP the complete output. See [EGP extraction](../egp-extraction.md).
 - Six pages: Overview, Run, Projects, Run History, Servers and Settings. Run guides single-file, new-schedule and continued-schedule execution. Global folder, default EGP, shared WORK, watcher, cleanup, backup and power settings are together.
 - Header elapsed identifies the longest active run and excludes schedule pauses. The finish estimate covers current workloads. Storage refresh retains the last measurement; log inspection and scans refresh independently of live command status.
 - Optional editable run names do not rename run folders. Continued schedules retain them. History sorts by latest activity and preserves original start time.
@@ -14,11 +15,11 @@ Review build: `0.4.0-preview.30-dev`, based on released preview.29 and standalon
 
 ## Compatibility and outstanding acceptance
 
-The standalone CLI, dependency/skip rules, prepended always-run definitions, concurrency defaults, error handling and saved continuation state remain intact. The only standalone-engine addition is a bundle-result observation hook that reports counts after the existing unpack workflow. Existing run folders, catalogs and saved-data backups remain readable. New preferences are optional in older backups; missing external defaults reset safely and watcher startup is disabled after restore.
+The standalone CLI, dependency/skip rules, prepended always-run definitions, concurrency defaults, error handling and saved continuation state remain intact. Engine 0.3.15 adds the labeled EGP extraction/repack workflow and retains the bundle-result observation hook. SAS execution and scheduling behavior are unchanged. Existing run folders, catalogs and saved-data backups remain readable. New preferences are optional in older backups; missing external defaults reset safely and watcher startup is disabled after restore.
 
 External `.sas` schedule sources remain unexposed: workbook tasks currently address EGP nodes and inherit their server mapping. Defining a new external-source root and server mapping requires a separate engine/schema decision. No unsupported source-mode selector is shown.
 
-Automated tests and fake Windows/EG tests do not establish live SAS compatibility. See [Windows/EG acceptance](windows-eg-acceptance.md). Screenshot/layout verification is pending because the development Mac is locked. Review and live acceptance must happen before merging or tagging a release.
+Automated tests and fake Windows/EG tests do not establish live SAS compatibility. See [Windows/EG acceptance](windows-eg-acceptance.md). Screenshot/layout verification is pending because the development Mac is locked. The user requested publication as a testing preview after the EGP fix; live/visual acceptance remains recorded in the checklist, and the code review PRs are still unmerged.
 
 ## SAS query references
 

@@ -57,13 +57,14 @@ class Exports:
 
     def start(self, scope, relative=''):
         app = self.app
-        if scope not in {'all', 'configs', 'run'}: raise ValueError('Choose saved data, configs, or a run folder.')
+        if scope not in {'all', 'configs', 'run', 'project'}: raise ValueError('Choose saved data, configs, or a run folder.')
         with app.lock:
             if app.uploading: raise ValueError("Wait for file uploads to finish.")
             if app.storage_busy: raise ValueError('Wait for the current saved-data operation to finish.')
             if scope == 'all' and (app.processes or any(c.get('status') in ACTIVE for c in app.commands.values())):
                 raise ValueError('Finish active commands and stop the watcher before exporting all saved data. Configs can be exported while jobs run.')
-            folder = run_folder(app.root, relative) if scope == 'run' else None
+            folder = run_folder(app.root, relative) if scope == 'run' else app.extracted_project(relative) if scope == 'project' else None
+            if scope == 'project' and not folder: raise ValueError('Choose a completed EGP extraction from Projects.')
             if scope == 'run' and (not folder or not folder.is_dir() or folder != (app.root/relative).resolve()):
                 raise ValueError('Choose an entire saved run folder.')
             if scope == 'run' and folder in protected_runs(app): raise ValueError('Wait for this run to finish before creating its ZIP.')
@@ -73,7 +74,7 @@ class Exports:
             app.storage_busy = True
             # Capture metadata while locked; compression and filesystem walks run outside it.
             from ui_data import backup_manifest
-            manifest = backup_manifest(app, scope == 'configs') if scope != 'run' else None
+            manifest = backup_manifest(app, scope == 'configs') if scope not in {'run', 'project'} else None
         def work():
             target = app.storage/'exports'/identifier/((folder.name+'.zip') if folder else ('PySAS-configs.zip' if scope == 'configs' else 'PySAS-saved-data.zip'))
             last = [0.0]
@@ -83,7 +84,7 @@ class Exports:
                 with app.lock: job.update(done=done, total=total, message=message)
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
-                if scope == 'run':
+                if scope in {'run', 'project'}:
                     with target.open('w+b') as out:
                         write_archive(out, [(p, (Path(folder.name)/p.relative_to(folder)).as_posix()) for p in safe_files(folder) if p.name != '.schedule.lock'], progress)
                 else:
