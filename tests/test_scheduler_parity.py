@@ -241,7 +241,11 @@ class SchedulerParityTests(unittest.TestCase):
             console = (app.storage/(identifier+'.txt')).read_text(encoding='utf-8')
             self.assertEqual(exit_code, 1 if partial else 0, console)
             self.assertEqual(item['status'], 'PARTIAL' if partial else 'SUCCESS', item['message']+'\n'+console)
-            self.assertEqual(len(app.server_catalog(identifier)['tables']), 3)
+            catalog=app.server_catalog(identifier)
+            self.assertEqual(len(catalog['tables']),4 if partial else 3)
+            if partial:
+                locked=next(t for t in catalog['tables'] if t['name']=='Locked')
+                self.assertFalse(locked['readable']);self.assertIsNone(locked['bytes']);self.assertIsNone(locked['rows'])
             task = next(iter(item['tasks'].values()))
             self.assertEqual(task['status'], 'SAS_ERROR' if partial else 'SUCCESS')
             self.assertEqual(app.server_catalog(identifier)['partial'], partial)
