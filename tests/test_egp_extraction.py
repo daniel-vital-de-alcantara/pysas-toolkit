@@ -79,9 +79,15 @@ class EGPExtractionTests(unittest.TestCase):
         entries['project.xml']=ET.tostring(root,encoding='utf-16',xml_declaration=True)
         entries['CodeTask-A\\code.sas']=entries.pop('CodeTask-A/code.sas')
         with zipfile.ZipFile(project,'w') as archive:
-            for name,raw in entries.items():archive.writestr(name,raw)
+            for name,raw in entries.items():
+                # ZipInfo's constructor normalizes backslashes on Windows. Keep
+                # the actual archive separator so this fixture exercises both OSes.
+                info=zipfile.ZipInfo();info.filename=info.orig_filename=name
+                archive.writestr(info,raw)
+        with zipfile.ZipFile(project) as archive:
+            self.assertIn('CodeTask-A\\code.sas',[info.orig_filename for info in archive.infolist()])
         folder,saved=self.extract(project)
-        canonical=next(path for path,member in saved['members'].items() if member=='CodeTask-A\\code.sas')
+        canonical=next(path for path,member in saved['members'].items() if member.replace('\\','/')=='CodeTask-A/code.sas')
         self.assertIn('01. Résultats _ Claims',saved['aliases'][canonical][0])
         self.assertEqual((folder/canonical).read_bytes(),entries['CodeTask-A\\code.sas'])
 
@@ -94,7 +100,7 @@ class EGPExtractionTests(unittest.TestCase):
         entries['project.xml']=ET.tostring(xml,encoding='utf-16',xml_declaration=True)
         with zipfile.ZipFile(project,'w') as archive:
             for name,raw in entries.items():archive.writestr(name,raw)
-        folder,saved=self.extract(project,output='nested output '*4)
+        folder,saved=self.extract(project,output=('nested output '*4).rstrip())
         for path,member in saved['members'].items():
             self.assertLessEqual(len(Path(path).name),104)
             self.assertEqual((folder/path).read_bytes(),entries[member])
