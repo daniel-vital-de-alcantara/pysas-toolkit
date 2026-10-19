@@ -103,6 +103,8 @@ class Workbench:
         self.list_cache = {}
         self.cache_loading = set()
         self.cache_generation = 0
+        self.cache_errors = {}
+        self.startup_error = ""
         self.cache_lock = threading.RLock()
         self.awake = KeepAwake()
         self.upload_lock = threading.Lock()
@@ -250,7 +252,53 @@ class Workbench:
             atomic_json(self.storage / "shared-work.json", settings)
         return settings
 
+    def preferences(self):
+        saved = read_json(self.storage / "preferences.json", {})
+        return {"default_egp": saved.get("default_egp", ""), "default_lib": saved.get("default_lib", ""),
+                "watcher": saved.get("watcher", {"workers": 2, "poll": 2, "auto_start": False})}
+
+    def update_preferences(self, data):
+        with self.lock:
+            value = self.preferences()
+            for field, suffix in (("default_egp", ".egp"), ("default_lib", ".sas")):
+                if field in data:
+                    selected = str(data[field]).strip()
+                    if selected:
+                        path = self.input_path(selected)
+                        if not path.is_file() or path.suffix.lower() != suffix:
+                            raise ValueError("Choose an existing " + suffix + " file.")
+                        selected = str(path)
+                    value[field] = selected
+            if "watcher" in data:
+                watcher = data["watcher"]
+                if not isinstance(watcher, dict): raise ValueError("Invalid watcher settings.")
+                workers, poll = int(watcher.get("workers") or 2), float(watcher.get("poll") or 2)
+                if not 1 <= workers <= 32 or not 0.5 <= poll <= 60:
+                    raise ValueError("Use 1–32 workers and a 0.5–60 second polling interval.")
+                clean = dict(workers=workers, poll=poll, tables=watcher.get("tables") is True,
+                             auto_start=watcher.get("auto_start") is True)
+                for field, suffix in (("template", ".egp"), ("lib", ".sas")):
+                    selected = str(watcher.get(field) or "").strip()
+                    if selected:
+                        path = self.input_path(selected)
+                        if not path.is_file() or path.suffix.lower() != suffix:
+                            raise ValueError("Choose an existing " + suffix + " file.")
+                        selected = str(path)
+                    clean[field] = selected
+                value["watcher"] = clean
+            atomic_json(self.storage / "preferences.json", value)
+            return value
+
+    def start_saved_watcher(self):
+        watcher = self.preferences()["watcher"]
+        if watcher.get("auto_start") is not True: return
+        try:
+            self.launch({**watcher, "action": "watch"})
+        except (ValueError, OSError) as exc:
+            self.startup_error = "Watcher did not start: " + str(exc)
+
     def server_template(self, value=""):
+        value = value or self.preferences()["default_egp"]
         if value: return str(self.input_path(value))
         # Reuse the last working connection, then the only available project.
         for command in sorted(self.commands.values(), key=lambda c:c.get("started", 0), reverse=True):
@@ -285,6 +333,13 @@ class Workbench:
             if len(str(data.get("label", ""))) > 100:
                 raise ValueError("Connection names must be 100 characters or fewer.")
         folders = self.folders()
+        preferences = self.preferences()
+        if action in {"run", "watch", "schedule"}:
+            field = "project" if action == "schedule" else "template"
+            if not data.get(field) and preferences["default_egp"]:
+                data[field] = preferences["default_egp"]
+            if action in {"run", "watch"} and not data.get("lib"):
+                data["lib"] = preferences["default_lib"]
         project_field = "template" if action in {"run", "watch", "egp-pack"} else "project"
         if action in {"run", "watch", "schedule", "egp-pack", "egp-inspect", "egp-extract"} and not data.get(project_field) and Path(folders["inputs"]) != self.root:
             projects = sorted(Path(folders["inputs"]).glob("*.egp"))
@@ -649,31 +704,33 @@ class Workbench:
             return {"ok": True}
 
     def cached_listing(self, name, loader, ttl):
-        # Slow/network directory scans must never hold up live command status.
+        # One scan per listing, even if Refresh is clicked during a slow network scan.
         with self.cache_lock:
             cached = self.list_cache.get(name)
             generation = self.cache_generation
-            key = (name, generation)
-            if (not cached or time.monotonic() - cached[0] >= ttl) and key not in self.cache_loading:
-                self.cache_loading.add(key)
+            if (not cached or time.monotonic() - cached[0] >= ttl) and name not in self.cache_loading:
+                self.cache_loading.add(name)
                 def update():
                     try:
                         value = loader()
                         with self.cache_lock:
-                            if generation == self.cache_generation:
-                                self.list_cache[name] = (time.monotonic(), value)
-                    except OSError:
-                        pass  # Retain the previous listing if a network folder is unavailable.
+                            stamp = time.monotonic() if generation == self.cache_generation else 0
+                            self.list_cache[name] = (stamp, value)
+                            self.cache_errors.pop(name, None)
+                    except Exception as exc:
+                        with self.cache_lock:
+                            self.cache_errors[name] = str(exc)
+                            if cached: self.list_cache[name] = (time.monotonic(), cached[1])
                     finally:
                         with self.cache_lock:
-                            self.cache_loading.discard(key)
+                            self.cache_loading.discard(name)
                 threading.Thread(target=update, daemon=True).start()
             return cached[1] if cached else []
 
     def invalidate_lists(self):
         with self.cache_lock:
             self.cache_generation += 1
-            self.list_cache.clear()
+            self.list_cache = {key: (0, value) for key, (_, value) in self.list_cache.items()}
 
     def inventory(self):
         paths = set()
@@ -744,7 +801,8 @@ class Workbench:
         return {"version": VERSION, "workspace": str(self.root), "windows": os.name == "nt",
                 "openpyxl": importlib.util.find_spec("openpyxl") is not None,
                 "files": self.cached_listing("inventory", self.inventory, 30), "commands": commands[:200], "history": history,
-                "folders": self.folders(), "awake": self.awake.status(), "shared_work": self.shared_work(),
+                "preferences": self.preferences(), "startup_error": self.startup_error,
+                "scan_errors": dict(self.cache_errors), "folders": self.folders(), "awake": self.awake.status(), "shared_work": self.shared_work(),
                 "remaining": remaining_work(commands, queued, samples, time.time()),
                 "saved_storage": self.cached_listing("storage", lambda: ui_storage.storage_usage(self), 30) or None,
                 "initialization_files": self.cached_listing("init", lambda: sorted({str(p.resolve()) for folder in {Path(self.folders()["init"]), inbox} for p in folder.glob("_*") if p.is_file() and p.suffix.casefold() == ".sas"}), 5),
@@ -1035,6 +1093,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(self.server.app.select_parameters(data.get("name")))
             elif self.path == "/api/parameters/save":
                 self.respond(self.server.app.save_parameters(data))
+            elif self.path == "/api/preferences":
+                self.respond(self.server.app.update_preferences(data))
             elif self.path == "/api/shared-work":
                 self.respond(self.server.app.update_shared_work(data))
             elif self.path == "/api/estimate":
@@ -1187,6 +1247,7 @@ def main():
                 ready()
         else:
             ready()
+        threading.Thread(target=server.app.start_saved_watcher, daemon=True).start()
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
         # shutdown() must run outside the serve_forever thread.
