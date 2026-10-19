@@ -24,7 +24,7 @@
   function hide(){api.active=false;typed="";entries=[];layer?.remove();layer=null;}
   function visible(el){return !!el&&!el.closest('[hidden],[inert]')&&!!el.getClientRects().length;}
   function viewport(el){const b=el.getBoundingClientRect();return b.bottom>0&&b.top<innerHeight&&b.right>0&&b.left<innerWidth;}
-  function currentDialog(){return Array.from(document.querySelectorAll("dialog[open]")).at(-1);}
+  function currentDialog(){return Array.from(document.querySelectorAll("dialog[open]")).at(-1)||document.querySelector("#details-dialog:not([hidden])");}
   function label(el){return el.getAttribute('aria-label')||el.labels?.[0]?.textContent||el.textContent||el.title||el.name||"Action";}
   function rowItems(list){
     return Array.from(list.querySelectorAll('[data-key-row]')).filter(row=>row.closest('[data-key-list]')===list).map(row=>{

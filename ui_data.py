@@ -76,18 +76,28 @@ def write_archive(out, entries, progress=None, manifest=None):
     out.seek(0)
 
 
-def export_backup(app, configs_only=False, progress=None, destination=None):
+def backup_manifest(app, configs_only=False):
+    return json.loads(json.dumps(dict(format=FORMAT, scope='configs' if configs_only else 'all', workspace=str(app.root), folders=app.folders(),
+                        bundle_settings=app.bundle_settings(), commands=[] if configs_only else list(app.commands.values()),
+                        parameters_settings=ui_parameters.settings(app.storage), shared_work=app.shared_work(), preferences=app.preferences())))
+
+
+def export_backup(app, configs_only=False, progress=None, destination=None, *, manifest=None, before=None):
     out = open(destination, 'w+b') if destination else tempfile.TemporaryFile()
     try:
         if progress: progress(0, 0, 'Scanning saved files')
-        manifest = dict(format=FORMAT, scope='configs' if configs_only else 'all', workspace=str(app.root), folders=app.folders(),
-                        bundle_settings=app.bundle_settings(), commands=[] if configs_only else list(app.commands.values()),
-                        parameters_settings=ui_parameters.settings(app.storage), shared_work=app.shared_work(), preferences=app.preferences())
+        manifest = manifest if manifest is not None else backup_manifest(app, configs_only)
         bases = [app.storage / 'parameters']
-        if not configs_only: bases += [app.root / 'runs', app.root / 'runner/runs', app.storage / 'artifacts']
+        if not configs_only:
+            for parent in (app.root / 'runs', app.root / 'runner/runs', app.storage / 'artifacts'):
+                if parent.is_dir():
+                    for child in parent.iterdir():
+                        if not child.is_symlink() and (before is None or getattr(child.stat(), 'st_birthtime', child.stat().st_ctime) <= before):
+                            bases.append(child)
         entries = [(p, p.relative_to(app.root).as_posix()) for base in bases for p in safe_files(base) if p.name not in {'.schedule.lock', '_cancel.request'}]
         if not configs_only:
-            for identifier in app.commands:
+            for command in manifest["commands"]:
+                identifier = command["id"]
                 p = app.storage / (identifier + '.txt')
                 if p.is_file() and not p.is_symlink(): entries.append((p, p.relative_to(app.root).as_posix()))
         write_archive(out, entries, progress, manifest)

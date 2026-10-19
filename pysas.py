@@ -318,6 +318,11 @@ def bundle_verify(args: argparse.Namespace) -> int:
     return 0
 
 
+def bundle_report(result: dict) -> None:
+    """Optional observation hook; the standalone command owns all bundle writes."""
+    print(f"Added: {result['added']}; changed: {result['changed']}; deleted: {result['deleted']} (files absent from bundle are retained).")
+
+
 def bundle_unpack(args: argparse.Namespace) -> int:
     root = bundle_root(args)
     path = root / (args.bundle or CODEBASE_FILE)
@@ -343,6 +348,7 @@ def bundle_unpack(args: argparse.Namespace) -> int:
         os.replace(temp, target)
     print(f"Restored {len(changed)} changed/missing SAS file(s).")
     if backup: print(f"Backup: {backup}")
+    bundle_report(dict(added=len(changed)-len(existing), changed=len(existing), deleted=0, backup=str(backup) if backup else ""))
     return 0
 
 

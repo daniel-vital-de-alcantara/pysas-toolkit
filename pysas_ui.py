@@ -209,7 +209,7 @@ class Workbench:
 
     def bundle_settings(self):
         settings = read_json(self.storage / "bundle-paths.json", {})
-        return {"paths": settings.get("paths", []), "last": settings.get("last", "")}
+        return {"paths": settings.get("paths", [])[:10], "last": settings.get("last", "")}
 
     def code_root(self, value):
         root = Path(str(value).strip()).expanduser() if value else self.root
@@ -225,14 +225,11 @@ class Workbench:
         if operation not in {"save", "remove"}:
             raise ValueError("Unknown saved-path action.")
         with self.lock:
-            if self.storage_busy: raise ValueError("Wait for the saved-data operation to finish.")
+            if self.storage_busy and not self.exports.working(): raise ValueError("Wait for the saved-data operation to finish.")
             settings = self.bundle_settings()
             if operation == "save":
                 path = str(self.code_root(data.get("path")))
-                if path not in settings["paths"]:
-                    if len(settings["paths"]) >= 20:
-                        raise ValueError("You can save up to 20 code folders.")
-                    settings["paths"].append(path)
+                settings["paths"] = [path] + [p for p in settings["paths"] if os.path.normcase(p) != os.path.normcase(path)][:9]
                 settings["last"] = path
             else:
                 path = str(data.get("path", ""))
@@ -411,23 +408,30 @@ class Workbench:
         action, args = self.arguments(data)
         script = self.script
         with self.lock:
-            if self.storage_busy:
+            if self.storage_busy and not self.exports.working():
                 raise ValueError("Wait for the saved-data operation to finish before starting another command.")
             if getattr(self, "closing", False):
                 raise ValueError("PySAS is closing and finishing its active jobs.")
             if action == "watch" and any(c["action"] == "watch" and c["status"] in ACTIVE for c in self.commands.values()):
                 raise ValueError("The watcher is already running in this workbench.")
+            display_name = self.display_name(data.get("display_name", ""))
             identifier = uuid.uuid4().hex
             item = {"id": identifier, "action": action, "args": list(args),
                     "name": data.get("program") or data.get("workbook") or data.get("run_dir") or action.replace("-", " "),
                     "code_root": str(self.code_root(data.get("code_root"))) if action.startswith("bundle-") else None,
                     "started": time.time(), "finished": None, "status": "RUNNING", "tasks": {}, "message": "",
                     "can_cancel_file": True}
+            item["default_name"] = item["name"]
+            item["display_name"] = display_name
+            if display_name: item["name"] = display_name
             if action == "continue":
                 previous = self.input_path(data["run_dir"])
                 item["resume_path"] = self.relative(previous)
+                display_name = read_json(previous / "run-display.json", {}).get("name", "")
+                item["display_name"] = display_name
+                if display_name: item["name"] = display_name
                 item["elapsed_base"] = schedule_state(previous).get("elapsed", 0)
-                if previous in ui_storage.protected_runs(self): raise ValueError("This schedule is still running.")
+                if previous in ui_storage.protected_runs(self) or self.exports.protects(previous): raise ValueError("This schedule is running or its ZIP is being prepared.")
                 if not (previous / "schedule_state.json").is_file():
                     saved = sorted((c for c in self.commands.values() if c.get("path") == item["resume_path"] and c.get("elapsed") is not None), key=lambda c:c["started"], reverse=True)
                     if saved:
@@ -463,9 +467,9 @@ class Workbench:
                 else:
                     last = ui_parameters.settings(self.storage)["last"]
                 atomic_json(self.storage / "parameters-settings.json", {"last": last, "enabled": enabled and bool(last)})
-            if action == "bundle-pack":
+            if action.startswith("bundle-"):
                 root = self.code_root(data.get("code_root"))
-                item["artifact"] = str(within(root, str(data.get("output") or "codebase.sasbundle.txt")))
+                item["artifact"] = str(within(root, str(data.get("output" if action == "bundle-pack" else "bundle") or "codebase.sasbundle.txt")))
             env = os.environ.copy()
             env.update(PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
             env.pop("PYSAS_LIVE_LOG", None)
@@ -510,16 +514,16 @@ class Workbench:
             threading.Thread(target=self.monitor_worker, args=(identifier, process, event_path), daemon=True).start()
             if action.startswith("bundle-"):
                 try:
-                    settings = self.bundle_settings()
-                    settings["last"] = item["code_root"]
-                    atomic_json(self.storage / "bundle-paths.json", settings)
+                    self.update_bundle_paths({"path": item["code_root"]})
                 except OSError as exc:
                     item["message"] = "Bundle folder preference could not be saved: " + str(exc)
             return {"id": identifier}
 
     def event(self, item, event):
         kind = event.get("event")
-        if kind == "schedule-state":
+        if kind == "bundle-result":
+            item["bundle_result"] = event["result"]
+        elif kind == "schedule-state":
             record = event["schedule_state"]
             item["path"] = self.relative(event["path"])
             item["parts"] = len(record["attempts"])
@@ -577,6 +581,8 @@ class Workbench:
                 task.update(status=result["status"], elapsed=result.get("elapsed", 0), message=result.get("message", ""))
                 if result.get("task_dir"):
                     task["path"] = self.relative(result["task_dir"])
+        item["updated"] = event.get("time", time.time())
+        self.save_run_name(item)
         self.save(item)
 
     def monitor_worker(self, identifier, process, event_path):
@@ -636,9 +642,10 @@ class Workbench:
         with self.lock:
             item = self.commands[identifier]
             item["finished"] = time.time()
+            item["updated"] = item["finished"]
             item["elapsed"] = item.get("schedule_elapsed", item.get("elapsed_base", 0) + item["finished"] - item["started"])
             item["exit_code"] = rc
-            if rc == 0 and item["action"] == "bundle-pack" and item.get("artifact"):
+            if rc == 0 and item["action"].startswith("bundle-") and item.get("artifact"):
                 source = within(Path(item["code_root"]), item["artifact"])
                 target = self.storage / "artifacts" / identifier / source.name
                 try:
@@ -657,6 +664,7 @@ class Workbench:
                     task["status"] = "UNKNOWN"
                     task["message"] = "No final task status was received; check the console."
             try:
+                self.save_run_name(item)
                 self.save(item)
             except OSError as exc:
                 item["message"] = "Run ended, but history could not be saved: " + str(exc)
@@ -746,6 +754,61 @@ class Workbench:
                         return sorted(paths)
         return sorted(paths)
 
+    @staticmethod
+    def display_name(value):
+        if not isinstance(value, str) or len(value) > 120 or any(ord(c) < 32 for c in value):
+            raise ValueError("Use a run name of up to 120 characters without control characters.")
+        return value.strip()
+
+    def save_run_name(self, item):
+        if not item.get("display_name"): return
+        paths = [item.get("path")] if item["action"] in {"schedule", "continue"} else [t.get("path") for t in item.get("tasks", {}).values()] if item["action"] == "run" else []
+        for value in paths:
+            folder = ui_storage.run_folder(self.root, value)
+            if folder and folder.is_dir():
+                atomic_json(folder / "run-display.json", {"name": item["display_name"]})
+
+    def rename_run(self, data):
+        name = self.display_name(data.get("name", ""))
+        folder = ui_storage.run_folder(self.root, data.get("path"))
+        if not folder or not folder.is_dir() or folder != within(self.root, data.get("path", "")):
+            raise ValueError("Choose an entire saved run folder.")
+        with self.lock:
+            if self.exports.protects(folder): raise ValueError("Wait for this run’s ZIP to finish before renaming it.")
+            atomic_json(folder / "run-display.json", {"name": name})
+            for item in self.commands.values():
+                matches = self.history_key(item.get("path")) == self.history_key(self.relative(folder)) or (item.get("action") == "run" and any(self.history_key(t.get("path")) == self.history_key(self.relative(folder)) for t in item.get("tasks", {}).values()))
+                if matches:
+                    item["display_name"] = name
+                    item["name"] = name or item.get("default_name", folder.name)
+                    self.save(item)
+        self.invalidate_lists()
+        return {"name": name}
+
+    def open_folder(self, data):
+        if data.get("command"):
+            item = self.commands.get(data["command"], {})
+            root = Path(item.get("code_root") or self.root).resolve()
+            value = item.get("bundle_result", {}).get("backup")
+            if not value: raise ValueError("No backup folder is available.")
+            folder = within(root / "_codebase_backups", value)
+        else:
+            folder = within(self.root, data.get("path", ""))
+            if not ui_storage.run_folder(self.root, self.relative(folder)):
+                raise ValueError("Choose a saved run folder.")
+        if not folder.is_dir(): raise ValueError("Folder no longer exists.")
+        if os.name != "nt": raise ValueError("Opening folders is available in the Windows app.")
+        os.startfile(str(folder))
+        return {"ok": True}
+
+    def history_key(self, value):
+        """Match native and portable saved paths without accepting paths outside the workspace."""
+        if not isinstance(value, str) or not value: return None
+        try:
+            return os.path.normcase(self.relative(within(self.root, value)))
+        except (ValueError, OSError):
+            return None
+
     def history(self, limit=500):
         records = []
         for root, kind in [(self.root / "runner" / "runs", "file"), (self.root / "runs", "schedule")]:
@@ -770,8 +833,12 @@ class Workbench:
                     tasks = list(csv.DictReader(io.StringIO(read_text(summary))))
                     row["tasks"] = len(tasks)
                     if row["status"] == "UNKNOWN": row["status"] = "SUCCESS" if all(t["status"] in {"SUCCESS", "SKIPPED_SUCCESS", "SKIPPED_PREVIOUS", "ALWAYS_RUN_DEFINITION"} for t in tasks) else "FAILED"
+                row["updated"] = max([path.stat().st_mtime] + [p.stat().st_mtime for p in (status, summary) if p.is_file()])
+                row["finished"] = row["updated"] if row["status"] not in ACTIVE | {"UNKNOWN"} else None
+                row["original_name"] = row["name"]
+                row["name"] = read_json(path / "run-display.json", {}).get("name") or row["name"]
                 records.append(row)
-        return sorted(records, key=lambda x: x["started"], reverse=True)[:limit]
+        return sorted(records, key=lambda x: x["updated"], reverse=True)[:limit]
 
     def state(self, refresh=False):
         if refresh:
@@ -779,13 +846,16 @@ class Workbench:
         with self.lock:
             commands = json.loads(json.dumps(sorted(self.commands.values(), key=lambda x: x["started"], reverse=True)[:200]))
         history = [dict(row) for row in self.cached_listing("history", self.history, 15)]
-        paths = {h["path"]: h for h in history}
+        paths = {self.history_key(h["path"]): h for h in history}
         for command in reversed(commands):
-            if command.get("path") in paths:
-                paths[command["path"]].update(status=command["status"], elapsed=command.get("elapsed"), elapsed_base=command.get("elapsed_base", 0), started=command["started"])
+            key = self.history_key(command.get("path"))
+            if key in paths:
+                paths[key].update(status=command["status"], elapsed=command.get("elapsed"), elapsed_base=command.get("elapsed_base", 0), active_started=command["started"], finished=command.get("finished"), updated=command.get("updated") or command.get("finished") or command["started"])
             for task in command.get("tasks", {}).values():
-                if task.get("path") in paths:
-                    paths[task["path"]].update(status=task["status"], elapsed=task.get("elapsed"), started=task.get("started") or paths[task["path"]]["started"])
+                key = self.history_key(task.get("path"))
+                if key in paths:
+                    paths[key].update(status=task["status"], elapsed=task.get("elapsed"), active_started=task.get("started"), finished=task.get("finished"), updated=task.get("finished") or task.get("started") or paths[key]["updated"])
+        history.sort(key=lambda row: row.get("updated", row["started"]), reverse=True)
         samples = index_samples(self.cached_listing("timings", self.timing_samples, 30))
         for command in commands:
             for task in command.get("tasks", {}).values():
@@ -878,14 +948,21 @@ class Workbench:
                 break
         summary = path / "run_summary.csv"
         tasks = list(csv.DictReader(io.StringIO(read_text(summary)))) if summary.is_file() else []
+        for task in tasks:
+            value = task.get("task_dir") or task.get("path")
+            if value:
+                candidate = within(self.root, value)
+                if candidate.is_relative_to(path): task["path"] = self.relative(candidate)
         with self.lock:
-            for command in self.commands.values():
-                if command.get("path") == self.relative(path):
+            for command in sorted(self.commands.values(), key=lambda c:c.get("started", 0), reverse=True):
+                if self.history_key(self.relative(path)) in {self.history_key(command.get("path")), self.history_key(command.get("resume_path"))}:
+                    if not tasks: tasks = [dict(t, task_id=t.get("key"), program=t.get("name")) for t in command.get("tasks", {}).values()]
                     for task in tasks:
                         saved = command.get("tasks", {}).get(task["task_id"], {})
-                        task.update({field: saved[field] for field in ("section", "row_start", "row_end") if field in saved})
+                        task.update({field: saved[field] for field in ("section", "row_start", "row_end", "status", "elapsed", "started", "path", "depends_on") if field in saved})
+                        task["command_id"] = command["id"]
                     break
-        return {"files": files, "tasks": tasks}
+        return {"files": files, "tasks": tasks, "listing_limited": len(files) >= 1000, "name": read_json(path / "run-display.json", {}).get("name", ""), "whole_run": ui_storage.run_folder(self.root, relative) == path}
 
     def copy_file(self, relative=None, command=None, export=None):
         if command:
@@ -1019,7 +1096,7 @@ class Handler(BaseHTTPRequestHandler):
                     path = within(self.server.app.root, job["path"])
                 elif value("command"):
                     item = self.server.app.commands.get(value("command"), {})
-                    if item.get("action") != "bundle-pack" or item.get("status") != "SUCCESS" or not item.get("download"):
+                    if not item.get("action", "").startswith("bundle-") or item.get("status") != "SUCCESS" or not item.get("download"):
                         raise ValueError("No completed bundle is available for this command.")
                     path = within(self.server.app.storage / "artifacts", item["download"])
                 else:
@@ -1093,6 +1170,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(self.server.app.select_parameters(data.get("name")))
             elif self.path == "/api/parameters/save":
                 self.respond(self.server.app.save_parameters(data))
+            elif self.path == "/api/run-name":
+                self.respond(self.server.app.rename_run(data))
+            elif self.path == "/api/open-folder":
+                self.respond(self.server.app.open_folder(data))
             elif self.path == "/api/preferences":
                 self.respond(self.server.app.update_preferences(data))
             elif self.path == "/api/shared-work":

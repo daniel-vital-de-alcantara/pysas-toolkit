@@ -282,7 +282,7 @@ test('unchanged inspector markup preserves focused controls and copy feedback',(
 });
 
 test('restoring an inspected run chooses its original page, not a hidden duplicate',()=>{
-  const make=scope=>({tagName:'BUTTON',dataset:{path:'runs/a'},closest:q=>q==='dialog,.page'?{id:scope}:{getAttribute:()=> 'Run history'}});
+  const make=scope=>({tagName:'BUTTON',dataset:{path:'runs/a'},closest:q=>q==='dialog,.page,.run-inspector'?{id:scope}:{getAttribute:()=> 'Run history'}});
   const hidden=make('page-overview'),shown=make('page-history');
   const old=context.document.querySelectorAll;context.document.querySelectorAll=()=>[hidden,shown];
   try{assert.equal(h.focusTarget({el:{isConnected:false},data:JSON.stringify(shown.dataset),tag:'BUTTON',list:'Run history',scope:'page-history'}),shown);}

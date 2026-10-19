@@ -32,3 +32,11 @@ Refresh retains the last measurement, allows only one scan per listing, and expo
 External-file schedule mode remains unexposed: existing workbook tasks address named EGP nodes and inherit their server assignment. Adding a selector without a defined external source root/server mapping would silently change execution. This requires a separate engine/schema change after the source-mode decision; the existing mode remains available.
 
 Manual acceptance before merge/release: Windows normal run with parameters; new and continued Excel schedules; watcher explicit start/stop and opt-in startup; restore on a second PC; Alt navigation and progressive forms at 100/150/200% scaling; responsiveness with large logs and offline folders. Desktop screenshots could not be captured because the Mac is locked; no visual or live SAS verification is claimed.
+
+## Phase B review notes
+
+Inspector now occupies the work area with Files, Logs and Tasks navigation, Back/Escape, typed file groups, an explicit 1,000-file listing notice, folder opening and separate displayed-text versus actual-file copy. Optional names are metadata, editable without folder renames and inherited by continued schedules. History sorts by activity while preserving original start and separate active-attempt clocks.
+
+Projects remembers ten recent folders and exposes Pack/Unpack first, with verify/output/recursive flags and EGP tools secondary. Unpack still validates before writes and keeps backups; added/changed/deleted counts come from the standalone engine observation hook. Pack, verified and unpacked bundles retain downloadable/copyable artifacts. Backup ZIP compression no longer blocks unrelated new commands; continuing an exported schedule remains protected, and the backup captures its original command metadata and excludes newly created output folders.
+
+Manual acceptance: Files/Logs/Tasks at small and large resolutions; Back/Escape focus; Windows Explorer opening and native file copy; rename/resume; bundle overwrite confirmation, corrupt bundle, network code folder and timestamped backups; full export while starting an unrelated file. Screenshots and live Windows/EG verification remain pending on an unlocked Windows desktop.

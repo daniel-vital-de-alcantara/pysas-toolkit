@@ -40,6 +40,12 @@ def load_engine(script):
 
 def observe(engine):
     """Observe tasks and progress: the standalone engine owns execution and scheduling."""
+    if hasattr(engine, "bundle_report"):
+        original_report = engine.bundle_report
+        def bundle_report(result):
+            original_report(result)
+            emit("bundle-result", result=result)
+        engine.bundle_report = bundle_report
     original_job = engine.run_job
     @functools.wraps(original_job)
     def job(source, *args, **kwargs):

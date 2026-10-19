@@ -68,9 +68,12 @@ class Exports:
                 raise ValueError('Choose an entire saved run folder.')
             if scope == 'run' and folder in protected_runs(app): raise ValueError('Wait for this run to finish before creating its ZIP.')
             identifier = uuid.uuid4().hex
-            job = dict(id=identifier, status='WORKING', scope=scope, done=0, total=0, message='Scanning saved files')
+            job = dict(id=identifier, status='WORKING', scope=scope, path_source=app.relative(folder) if folder else '', started=time.time(), done=0, total=0, message='Scanning saved files')
             self.jobs[identifier] = job
             app.storage_busy = True
+            # Capture metadata while locked; compression and filesystem walks run outside it.
+            from ui_data import backup_manifest
+            manifest = backup_manifest(app, scope == 'configs') if scope != 'run' else None
         def work():
             target = app.storage/'exports'/identifier/((folder.name+'.zip') if folder else ('PySAS-configs.zip' if scope == 'configs' else 'PySAS-saved-data.zip'))
             last = [0.0]
@@ -84,7 +87,7 @@ class Exports:
                     with target.open('w+b') as out:
                         write_archive(out, [(p, (Path(folder.name)/p.relative_to(folder)).as_posix()) for p in safe_files(folder) if p.name != '.schedule.lock'], progress)
                 else:
-                    stream, _ = export_backup(app, scope == 'configs', progress, target)
+                    stream, _ = export_backup(app, scope == 'configs', progress, target, manifest=manifest, before=job['started'])
                     stream.close()
                 with app.lock: job.update(status='READY', message='ZIP ready', path=app.relative(target), bytes=target.stat().st_size)
             except Exception as exc:
@@ -95,6 +98,12 @@ class Exports:
                 with app.lock: app.storage_busy = False
         threading.Thread(target=work, daemon=True).start()
         return dict(job)
+
+    def working(self):
+        return any(j['status'] == 'WORKING' for j in self.jobs.values())
+
+    def protects(self, folder):
+        return any(j['status'] == 'WORKING' and (j['scope'] == 'all' or (j['scope'] == 'run' and self.app.root / j['path_source'] == folder)) for j in self.jobs.values())
 
     def get(self, identifier):
         with self.app.lock:
