@@ -385,7 +385,13 @@ def merge_catalog(previous, patch, level, libraries, table, captured):
     libmap = {l['name']:l for l in result['libraries']}
     for library in patch['libraries']:
         old=libmap.get(library['name'], {})
-        libmap[library['name']] = {**old, **library, 'discovered': captured if level=='libraries' else old.get('discovered',captured)}
+        libmap[library['name']] = {**old, **library, 'assigned': True if library.get('engines') or level=='libraries' else old.get('assigned'), 'discovered': captured if level=='libraries' else old.get('discovered',captured)}
+    if level == 'libraries':
+        returned = {library['name'] for library in patch['libraries']}
+        missing = set(libmap)-returned
+        for name in missing:libmap[name]['assigned']=None if patch['partial'] else False
+        for row in result['tables']+result['column_details']:
+            if row['libname'] in missing:row['stale']=True
     result['libraries'] = list(libmap.values())
     if level in {'tables','full'}:
         incoming = {(t['libname'],t['name']):dict(t, captured=captured) for t in patch['tables']}
