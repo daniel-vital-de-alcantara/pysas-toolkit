@@ -133,6 +133,15 @@ class CatalogTests(unittest.TestCase):
         self.assertIn('outobs=10001',code)
         self.assertNotIn('select *',code)
 
+    def test_discovery_marks_missing_assignments_and_preserves_historical_metadata(self):
+        base=servers.merge_catalog(None,servers.parse_catalog(catalog_log(RECORDS),TOKEN),'full',[], '',100)
+        patch=servers.parse_catalog(catalog_log([('library',dict(libname='EMPTY',engine='V9',path='/empty'))]),TOKEN)
+        merged=servers.merge_catalog(base,patch,'libraries',[], '',200)
+        self.assertFalse(next(l for l in merged['libraries'] if l['name']=='DATA')['assigned'])
+        self.assertTrue(next(l for l in merged['libraries'] if l['name']=='EMPTY')['assigned'])
+        self.assertEqual(len(merged['tables']),3)
+        self.assertTrue(all(t['stale'] for t in merged['tables']))
+
 
 class ServerWorkbenchTests(unittest.TestCase):
     def setUp(self):
