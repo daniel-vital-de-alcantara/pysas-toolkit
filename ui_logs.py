@@ -1,5 +1,6 @@
 """Read-only, full-file SAS diagnostic index with paginated results and context."""
 from collections import OrderedDict, deque
+from concurrent.futures import ThreadPoolExecutor
 import re
 import threading
 from pysas import text_encoding
@@ -8,12 +9,15 @@ from pysas import text_encoding
 # WARNING labels inside code, or SAS NOTE messages mentioning an error.
 DIAGNOSTIC = re.compile(r'^\s*(ERROR|WARNING)(?:\s+\d+(?:-\d+)?)?\s*:', re.I)
 PAGE_SIZE = 50
+_STATUS_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pysas-log-status")
 
 
 class LogIndex:
     def __init__(self):
         self.cache = OrderedDict()
         self.lock = threading.Lock()
+        self.status_cache = OrderedDict()
+        self.pending = set()
 
     @staticmethod
     def revision(path):
@@ -49,6 +53,32 @@ class LogIndex:
                 self.cache[str(path)] = result
                 while len(self.cache) > 4: self.cache.popitem(last=False)
         return result
+
+    def status(self, path):
+        """Return cached diagnostics immediately; full scans run off the HTTP thread."""
+        try: revision = self.revision(path)
+        except OSError: return 'unknown'
+        key = str(path)
+        with self.lock:
+            found = self.status_cache.get(key)
+            if found and found[0] == revision: return found[1]
+            if key in self.pending: return 'pending'
+            self.pending.add(key)
+        def work():
+            try:
+                data = self.scan(path)
+                level = 'error' if any(i['severity'] == 'error' for i in data['issues']) else 'warning' if data['issues'] else 'success'
+                with self.lock:
+                    if not data['changed']:
+                        self.status_cache[key] = (data['revision'], level)
+                        self.status_cache.move_to_end(key)
+                        while len(self.status_cache) > 2000: self.status_cache.popitem(last=False)
+            except (OSError, ValueError):
+                with self.lock: self.status_cache[key] = (revision, 'unknown')
+            finally:
+                with self.lock: self.pending.discard(key)
+        _STATUS_POOL.submit(work)
+        return 'pending'
 
     def summary(self, path, kind='all', offset=0, issue=None, revision=''):
         if path.suffix.lower() != '.log': raise ValueError('Choose a SAS .log file.')

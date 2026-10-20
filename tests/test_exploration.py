@@ -77,7 +77,7 @@ class ExplorationTests(unittest.TestCase):
                     deadline=time.monotonic()+5
                     while app.metadata_jobs.get(job['id'])['status']=='WORKING' and time.monotonic()<deadline:time.sleep(.01)
                     done=app.metadata_jobs.get(job['id']);self.assertEqual(done['status'],'READY',done)
-                    path=root/done['path']
+                    path=app.resolve(done['path'])
                     if operation=='csv':
                         with path.open(encoding='utf-8-sig',newline='') as output:rows=list(csv.reader(output))
                         self.assertTrue(rows[1][3].startswith("'="))
@@ -96,8 +96,8 @@ class ExplorationTests(unittest.TestCase):
             query=item['server']['query'];(folder/'logs/sample.log').write_text('\n'.join(sample_log(query,[[1,'hello']],item['server']['token'])))
             item['tasks']['t']=dict(status='SUCCESS',path=app.relative(folder));app.complete_worker(identifier,process)
             self.assertEqual(item['status'],'SUCCESS');self.assertNotIn('snapshot',item['server'])
-            saved=json.loads((root/item['server']['sample']).read_text());self.assertEqual(saved['rows'],[[1.0,'hello']])
-            self.assertTrue((root/item['server']['sample_csv']).exists())
+            saved=json.loads(app.resolve(item['server']['sample']).read_text());self.assertEqual(saved['rows'],[[1.0,'hello']])
+            self.assertTrue(app.resolve(item['server']['sample_csv']).exists())
 
     def test_dictionary_collection_is_serial_and_advances_parent_snapshot(self):
         from types import SimpleNamespace

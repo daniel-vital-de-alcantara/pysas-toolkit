@@ -15,7 +15,7 @@ const context = {
   URLSearchParams,fetch:async()=>({ok:true,json:async()=>snapshot}),setInterval(){},AbortController,Date,console
 };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={setInspectorTab,renderSample:(value)=>{previewResult=value;previewPage=0;renderPreviewRows();},runFlow,logSummaryMarkup,logContextMarkup,remainingText,focusTarget,putMarkup,catalogIssues,setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={applyInspector,inspectorState:()=>inspectorTab,taskRecords,tasksTable,inspectorFiles,logSymbol,setInspectorTab,renderSample:(value)=>{previewResult=value;previewPage=0;renderPreviewRows();},runFlow,logSummaryMarkup,logContextMarkup,remainingText,focusTarget,putMarkup,catalogIssues,setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
 const h = context.helpers;
 test('elapsed formatting supports seconds, hours, and runs longer than a day',()=>{
   assert.equal(h.duration(65.9),'00:01:05');
@@ -216,7 +216,7 @@ function keyboardFixture(count=2,onlyDialog=false,fullInspector=false){
     click(){this.clicked=(this.clicked||0)+1},matches(selector){return selector==='button,a[href]'?!this.field:!!this.field;}
   };}
   const controls=Array.from({length:count},(_,i)=>({...element(),id:'control'+String(i).padStart(3,'0'),textContent:'Action '+i,dataset:{keytip:i===0?'A':i===1?'B':undefined},clicked:0,focused:0}));
-  controls[0].dataset.page='overview';if(controls[1])controls[1].dataset.page='history';
+  controls[0].dataset.page='overview';if(controls[1])controls[1].dataset.page='runner';
   const scope={...element(),querySelectorAll(){return [...(onlyDialog?controls.slice(1):controls),...lists]}};
   doc={body:element(),createElement:element,activeElement:null,getElementById(){return null},
     querySelector(q){if(q==='#details-dialog:not([hidden])')return fullInspector?scope:null;if(q.startsWith('.page'))return scope;if(q.startsWith('#all-history'))return lists[0];return null;},
@@ -226,7 +226,7 @@ function keyboardFixture(count=2,onlyDialog=false,fullInspector=false){
   vm.createContext(ctx);vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/keyboard.js'),'utf8'),ctx);
   function key(type,value,options={}){const event={key:value,target:doc.activeElement,prevented:false,preventDefault(){this.prevented=true},stopPropagation(){},...options};listeners[type](event);return event;}
   function addList(count=4){
-    const list={...element(),dataset:{keytip:'L'},textContent:'Run history',hasAttribute:q=>q==='data-key-list'};
+    const list={...element(),dataset:{keytip:'L'},textContent:'Tasks',hasAttribute:q=>q==='data-key-list'};
     list.list=list;list.rows=Array.from({length:count},(_,i)=>{
       const row={...element(),list,matches(){return false;}};
       row.buttons=[{...element(),list,dataset:{path:'runs/'+i},clicked:0},{...element(),list,dataset:{cancelKey:String(i)},clicked:0}];
@@ -237,7 +237,7 @@ function keyboardFixture(count=2,onlyDialog=false,fullInspector=false){
 }
 test('Alt uses fixed mnemonic navigation and Escape returns from page hints',()=>{
   const f=keyboardFixture();f.key('keydown','Alt');f.key('keyup','Alt');assert.equal(f.api.active,true);
-  f.key('keydown','O');assert.equal(f.controls[0].clicked,1);assert.equal(f.api.active,true);
+  f.key('keydown','O');assert.equal(f.controls[0].clicked,1);assert.equal(f.api.active,false);f.api.showPage();
   f.key('keydown','Escape');assert.equal(f.api.active,true);f.key('keydown','Escape');assert.equal(f.api.active,false);
   f.controls[0].field=true;f.api.showPage();f.key('keydown','A');assert.equal(f.controls[0].focused,2);assert.equal(f.controls[0].clicked,1);
 });
@@ -252,8 +252,8 @@ test('keyboard hints target the open dialog only',()=>{
   const f=keyboardFixture(2,true);f.api.show();f.key('keydown','B');
   assert.equal(f.controls[0].clicked,0);assert.equal(f.controls[1].clicked,1);
 });
-test('Alt H enters history, arrows browse without opening and row actions use left/right',()=>{
-  const f=keyboardFixture(),list=f.addList();f.api.show();f.key('keydown','H');
+test('Alt O enters the Tasks list, arrows browse without opening and row actions use left/right',()=>{
+  const f=keyboardFixture(),list=f.addList();f.api.show();f.key('keydown','O');
   assert.equal(f.doc.activeElement,list.rows[0].buttons[0]);assert.equal(f.api.active,false);
   f.key('keydown','ArrowDown');assert.equal(f.doc.activeElement,list.rows[1].buttons[0]);
   f.key('keydown','ArrowRight');assert.equal(f.doc.activeElement,list.rows[1].buttons[1]);
@@ -347,3 +347,29 @@ test('completed EGP extraction offers its own artifact inspector',()=>{
   const html=h.commandCards([{id:'egp',action:'egp-extract',name:'Extract',status:'SUCCESS',tasks:{},path:'my project',egp_result:{programs:2,flows:1,warnings:[]}}]);
   assert.match(html,/Inspect extracted programs/);assert.match(html,/data-path="my project"/);
 });
+
+test('Overview merges runs and command records without duplicating continuations',()=>{
+  const rows=h.taskRecords([{path:'tasks/schedules/a',name:'Old name',status:'FAILED',kind:'schedule',started:1}], [{id:'b',name:'Resumed',action:'continue',status:'SUCCESS',path:'tasks/schedules/a',started:4,tasks:{}},{id:'a',name:'Old',action:'schedule',status:'FAILED',path:'tasks/schedules/a',started:1,tasks:{}},{id:'bundle',name:'Pack',action:'bundle-pack',status:'SUCCESS',started:2,tasks:{}}]);
+  assert.equal(rows.length,2);assert.equal(rows[0].name,'Resumed');assert.match(h.tasksTable(rows),/data-command="bundle"/);
+});
+test('Outputs omit all logs and child-task files; Logs include child-task diagnostics',()=>{
+  const files=[{name:'report.xlsx',path:'a'},{name:'schedule.log',path:'b',is_log:true},{name:'tasks/A/result.csv',path:'c',inside_task:true},{name:'tasks/A/logs/A.log',path:'d',is_log:true,task_id:'A',log_label:'A · A.log'}];
+  assert.deepEqual(Array.from(h.inspectorFiles(files,'files'),f=>f.path),['a']);assert.deepEqual(Array.from(h.inspectorFiles(files,'logs'),f=>f.path),['b','d']);
+  assert.match(h.logSymbol({severity:'error'}),/Errors/);assert.match(h.logSymbol({severity:'warning'}),/⚠/);assert.match(h.logSymbol({severity:'success'}),/✓/);
+});
+test('diagnostic issue list is always expanded',()=>{const html=h.logSummaryMarkup({counts:{error:0,warning:0},lines:0,first:{},issues:[],total:0,offset:0,page_size:50},'all');assert.doesNotMatch(html,/<details|<summary/);assert.match(html,/aria-label="Errors and warnings"/);});
+
+test('inspector mnemonic priorities remain prefix-free with Z reserved for ZIP',()=>{
+  const assigned=keyboardFixture().api.assignHints([...['F','L','T','O','Z'].map(code=>({preferred:code,label:code,identity:code})),...Array.from({length:75},(_,i)=>({identity:'item'+i,label:'Action'}))]);
+  assert.deepEqual(Array.from(assigned.slice(0,5)),['F','L','T','O','Z']);assert.equal(new Set(assigned).size,assigned.length);
+  assert.ok(assigned.every((code,i)=>typeof code==='string'&&!assigned.some((other,j)=>i!==j&&other.startsWith(code))));
+});
+
+test('inspector opens Outputs after success and Logs for failure, active or partial tasks',async()=>{
+  for(const status of ['SUCCESS','FAILED','RUNNING','PARTIAL','UNKNOWN']){
+    await h.applyInspector({status,name:'Example',files:[],tasks:[],command_id:'no-owner'},false);
+    assert.equal(h.inspectorState(),status==='SUCCESS'?'files':'logs');
+  }
+});
+
+test('page-command hints remain reachable from the bottom keyboard button',()=>{const f=keyboardFixture(3);f.doc.getElementById=id=>id==='keyboard-help'?f.controls[2]:null;f.api.show();f.key('keydown','X');assert.equal(f.api.active,true);f.key('keydown','A');assert.equal(f.controls[0].clicked,1);});

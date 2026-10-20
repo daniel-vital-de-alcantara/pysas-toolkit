@@ -29,11 +29,12 @@ import ui_parameters
 import ui_servers
 import ui_explore
 from ui_logs import LogIndex
+import ui_paths
 import ui_storage
 import windows_clipboard
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.30"
+VERSION = "0.4.0-preview.31-dev"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 TEXT_SUFFIXES = {".sas", ".log", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".xml"}
@@ -95,8 +96,7 @@ class Workbench:
         self.script = self.root / "pysas.py"
         if not self.script.is_file():
             raise ValueError("The workspace must contain pysas.py.")
-        self.storage = self.root / ".pysas-ui"
-        self.storage.mkdir(exist_ok=True)
+        ui_paths.initialize(self)
         (self.root / "runner" / "inbox").mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
         self.processes = {}
@@ -130,17 +130,27 @@ class Workbench:
             self.commands[item["id"]] = item
 
     def relative(self, path):
-        try:
-            return str(Path(path).resolve().relative_to(self.root))
-        except ValueError:
-            return ""
+        return ui_paths.relative(self, path)
+
+    def resolve(self, value):
+        return ui_paths.resolve(self, value)
+
+    def config(self, name):
+        return self.settings / name
+
+    def run_bases(self):
+        return [(self.tasks / 'files', 'file'), (self.tasks / 'schedules', 'schedule'),
+                (self.root / 'runner/runs', 'file'), (self.root / 'runs', 'schedule')]
+
+    def run_folder(self, value):
+        return ui_storage.run_folder(self.root, value, self.tasks)
 
     def save(self, item):
         atomic_json(self.storage / (item["id"] + ".json"), item)
 
     def folders(self):
         defaults = {"inputs": str(self.root), "init": str(self.root), "inbox": str(self.root / "runner" / "inbox")}
-        saved = read_json(self.storage / "folders.json", {})
+        saved = read_json(self.config("folders.json"), {})
         return {key: saved.get(key) or value for key, value in defaults.items()}
 
     def update_folders(self, data):
@@ -160,12 +170,26 @@ class Workbench:
                     if not candidate.is_dir():
                         raise ValueError("Create this folder first, then select it: " + str(candidate))
                     settings[key] = str(candidate)
-            atomic_json(self.storage / "folders.json", settings)
+            atomic_json(self.config("folders.json"), settings)
             return settings
 
+    def update_data_locations(self, data):
+        with self.lock:
+            if self.processes or self.uploading or self.storage_busy or self.metadata_jobs.working():
+                raise ValueError("Finish commands and stop the watcher before changing data folders.")
+            paths = ui_paths.locations(self.root, data)
+            for path in paths.values():
+                path.mkdir(parents=True, exist_ok=True)
+                probe = path / (".pysas-write-" + uuid.uuid4().hex)
+                try:
+                    with probe.open("xb") as stream: stream.write(b"ok")
+                finally: probe.unlink(missing_ok=True)
+            atomic_json(self.root / ".pysas-locations.json", {key: str(value) for key, value in paths.items()})
+        return {"message": "Data folders saved. Restart PySAS to load tasks and settings from these folders. Current and existing destination data have been preserved."}
+
     def input_path(self, value):
-        path = (self.root / value).expanduser().resolve()
-        roots = [self.root, *(Path(p).resolve() for p in self.folders().values())]
+        path = self.resolve(value) if not Path(value).is_absolute() else Path(value).expanduser().resolve()
+        roots = [self.root, self.tasks, self.settings, *(Path(p).resolve() for p in self.folders().values())]
         if not any(path.is_relative_to(root) for root in roots):
             raise ValueError("Select a file inside the workspace or a configured input folder.")
         return path
@@ -196,24 +220,24 @@ class Workbench:
                 self.uploading = False
 
     def parameter_settings(self):
-        return {**ui_parameters.settings(self.storage), "files": ui_parameters.list_parameters(self.storage)}
+        return {**ui_parameters.settings(self.settings), "files": ui_parameters.list_parameters(self.settings)}
 
     def save_parameters(self, data):
         with self.lock:
             if self.storage_busy: raise ValueError("Wait for the saved-data operation to finish.")
-            result = ui_parameters.save_parameters(self.storage, data)
-            atomic_json(self.storage / "parameters-settings.json", {"last": result["name"], "enabled": True})
+            result = ui_parameters.save_parameters(self.settings, data)
+            atomic_json(self.config("parameters-settings.json"), {"last": result["name"], "enabled": True})
             return result
 
     def select_parameters(self, name):
         with self.lock:
             if self.storage_busy: raise ValueError("Wait for the saved-data operation to finish.")
-            result = ui_parameters.load_parameters(self.storage, name)
-            atomic_json(self.storage / "parameters-settings.json", {"last": result["name"], "enabled": True})
+            result = ui_parameters.load_parameters(self.settings, name)
+            atomic_json(self.config("parameters-settings.json"), {"last": result["name"], "enabled": True})
             return result
 
     def bundle_settings(self):
-        settings = read_json(self.storage / "bundle-paths.json", {})
+        settings = read_json(self.config("bundle-paths.json"), {})
         return {"paths": settings.get("paths", [])[:10], "last": settings.get("last", "")}
 
     def code_root(self, value):
@@ -241,21 +265,21 @@ class Workbench:
                 settings["paths"] = [p for p in settings["paths"] if p != path]
                 if settings["last"] == path:
                     settings["last"] = ""
-            atomic_json(self.storage / "bundle-paths.json", settings)
+            atomic_json(self.config("bundle-paths.json"), settings)
             return settings
 
     def shared_work(self):
-        return shared_work_settings(read_json(self.storage / "shared-work.json", {}))
+        return shared_work_settings(read_json(self.config("shared-work.json"), {}))
 
     def update_shared_work(self, data):
         settings = shared_work_settings(data)
         with self.lock:
             if self.storage_busy: raise ValueError("Wait for the saved-data operation to finish.")
-            atomic_json(self.storage / "shared-work.json", settings)
+            atomic_json(self.config("shared-work.json"), settings)
         return settings
 
     def preferences(self):
-        saved = read_json(self.storage / "preferences.json", {})
+        saved = read_json(self.config("preferences.json"), {})
         return {"default_egp": saved.get("default_egp", ""), "default_lib": saved.get("default_lib", ""),
                 "watcher": saved.get("watcher", {"workers": 2, "poll": 2, "auto_start": False})}
 
@@ -288,7 +312,7 @@ class Workbench:
                         selected = str(path)
                     clean[field] = selected
                 value["watcher"] = clean
-            atomic_json(self.storage / "preferences.json", value)
+            atomic_json(self.config("preferences.json"), value)
             return value
 
     def start_saved_watcher(self):
@@ -503,10 +527,10 @@ class Workbench:
                     args.extend(["--parameters", str(snapshot)])
                     item["args"] = list(args)
                     item["parameters"] = {"name": name, "path": self.relative(snapshot)}
-                    last = next((saved for saved in ui_parameters.list_parameters(self.storage) if saved.casefold() == name.casefold()), "")
+                    last = next((saved for saved in ui_parameters.list_parameters(self.settings) if saved.casefold() == name.casefold()), "")
                 else:
-                    last = ui_parameters.settings(self.storage)["last"]
-                atomic_json(self.storage / "parameters-settings.json", {"last": last, "enabled": enabled and bool(last)})
+                    last = ui_parameters.settings(self.settings)["last"]
+                atomic_json(self.config("parameters-settings.json"), {"last": last, "enabled": enabled and bool(last)})
             if action.startswith("bundle-"):
                 root = self.code_root(data.get("code_root"))
                 item["artifact"] = str(within(root, str(data.get("output" if action == "bundle-pack" else "bundle") or "codebase.sasbundle.txt")))
@@ -539,6 +563,7 @@ class Workbench:
             event_path = self.storage / (identifier + ".events.jsonl")
             event_path.touch()
             env["PYSAS_UI_EVENTS"] = str(event_path)
+            env["PYSAS_RUNS_DIR"] = str(self.tasks)
             env.pop("PYSAS_UI_LEGACY_ROOT", None)
             # Neither normal output nor events depend on the HTTP/history reader.
             with (self.storage / (identifier + ".txt")).open("wb", buffering=0) as output:
@@ -604,6 +629,12 @@ class Workbench:
                 task["message"] = "Stopping schedule…" if task["status"] == "CANCELLING" else ""
             else:
                 task["finished"] = event["time"]
+                if task.get("path"):
+                    try:
+                        from ui_data import safe_files
+                        for log in safe_files(self.resolve(task["path"])):
+                            if log.suffix.lower()==".log": self.logs.status(log)
+                    except (OSError, ValueError): pass
                 task["elapsed"] = event.get("elapsed", max(0, event["time"] - (task.get("started") or event["time"])))
         elif kind == "progress":
             task = item["tasks"].get(event["key"])
@@ -667,7 +698,7 @@ class Workbench:
         if item["action"] == "server-refresh" and item["server"].get("level") == "preview":
             try:
                 task = next(t for t in item["tasks"].values() if t.get("path"))
-                result = ui_explore.read_sample(within(self.root, task["path"]), item["server"]["token"], item["server"]["query"])
+                result = ui_explore.read_sample(self.resolve(task["path"]), item["server"]["token"], item["server"]["query"])
                 result.update(captured=time.time(),partial=rc != 0 or task.get("status") != "SUCCESS")
                 target = self.storage / "artifacts" / identifier / "table-preview.json"
                 atomic_json(target, result)
@@ -682,7 +713,7 @@ class Workbench:
         elif item["action"] == "server-refresh":
             try:
                 task = next(t for t in item["tasks"].values() if t.get("path") and t.get("status") in {"SUCCESS", "SAS_ERROR", "FAILED"})
-                catalog = ui_servers.read_catalog(within(self.root, task["path"]), item["server"]["token"])
+                catalog = ui_servers.read_catalog(self.resolve(task["path"]), item["server"]["token"])
                 if rc != 0 or task.get("status") != "SUCCESS":
                     catalog["partial"] = True
                     catalog["issues"].append({"scope": "columns" if item["server"].get("level") == "columns" else "library" if len(item["server"]["libraries"]) == 1 else "snapshot", "libname": item["server"]["libraries"][0] if len(item["server"]["libraries"]) == 1 else "", "name": item["server"].get("table", ""), "message": "SAS or Enterprise Guide reported errors. Readable metadata was retained; inspect the refresh log."})
@@ -759,7 +790,7 @@ class Workbench:
                 raise ValueError("This historical run does not support per-file cancellation.")
             if not task.get("path"):
                 raise ValueError("The file is still starting. Try again in a moment.")
-            run_dir = within(self.root, task["path"])
+            run_dir = self.resolve(task["path"])
             if not run_dir.is_dir():
                 raise ValueError("The run folder is not available yet.")
             (run_dir / "_cancel.request").write_text("Requested by user", encoding="utf-8")
@@ -802,7 +833,7 @@ class Workbench:
         roots = {self.root, Path(self.folders()["inputs"]), Path(self.folders()["init"])}
         for root in sorted(roots):
             for base, dirs, names in os.walk(root):
-                dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in {"runner", "runs", "__pycache__", "_codebase_backups", "node_modules", "release", "ui", "tests"})
+                dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in {"runner", "runs", "tasks", "settings", "__pycache__", "_codebase_backups", "node_modules", "release", "ui", "tests"} and not any((Path(base)/d).resolve().is_relative_to(folder) for folder in (self.tasks,self.settings)))
                 for name in sorted(names):
                     path = Path(base) / name
                     if path.suffix.lower() in {".sas", ".egp", ".xlsx", ".txt", ".csv"} and path.resolve().is_relative_to(root.resolve()):
@@ -821,26 +852,40 @@ class Workbench:
         if not item.get("display_name"): return
         paths = [item.get("path")] if item["action"] in {"schedule", "continue"} else [t.get("path") for t in item.get("tasks", {}).values()] if item["action"] == "run" else []
         for value in paths:
-            folder = ui_storage.run_folder(self.root, value)
+            folder = self.run_folder(value)
             if folder and folder.is_dir():
                 atomic_json(folder / "run-display.json", {"name": item["display_name"]})
 
     def rename_run(self, data):
         name = self.display_name(data.get("name", ""))
-        folder = ui_storage.run_folder(self.root, data.get("path"))
-        if not folder or not folder.is_dir() or folder != within(self.root, data.get("path", "")):
-            raise ValueError("Choose an entire saved run folder.")
         with self.lock:
-            if self.exports.protects(folder): raise ValueError("Wait for this run’s ZIP to finish before renaming it.")
-            atomic_json(folder / "run-display.json", {"name": name})
-            for item in self.commands.values():
-                matches = self.history_key(item.get("path")) == self.history_key(self.relative(folder)) or (item.get("action") == "run" and any(self.history_key(t.get("path")) == self.history_key(self.relative(folder)) for t in item.get("tasks", {}).values()))
-                if matches:
-                    item["display_name"] = name
-                    item["name"] = name or item.get("default_name", folder.name)
+            if data.get('command'):
+                item = self.commands.get(data['command'])
+                if not item: raise ValueError('Command not found.')
+                item['display_name']=name; item['name']=name or item.get('default_name') or item['action']
+                self.save(item); self.save_run_name(item)
+            else:
+                path = self.resolve(data.get('path',''))
+                run = self.run_folder(data.get('path'))
+                if not run or not path.is_dir(): raise ValueError('Choose a saved task folder.')
+                if self.exports.protects(run): raise ValueError('Wait for this task’s ZIP to finish before renaming it.')
+                atomic_json(path/'run-display.json', {'name':name})
+                for item in self.commands.values():
+                    if self.history_key(item.get('path'))==self.history_key(self.relative(path)):
+                        item['display_name']=name;item['name']=name or item.get('default_name',path.name)
+                    for task in item.get('tasks',{}).values():
+                        if self.history_key(task.get('path'))==self.history_key(self.relative(path)):
+                            task['display_name']=name
+                            if item.get('action')=='run':
+                                item['display_name']=name;item['name']=name or item.get('default_name',path.name)
                     self.save(item)
         self.invalidate_lists()
-        return {"name": name}
+        return {'name':name}
+
+    def artifact_folder(self, value):
+        try: folder=self.resolve(value)
+        except ValueError: return None
+        return folder if folder.parent==self.storage/'artifacts' and folder.name in self.commands and folder.is_dir() else None
 
     def extracted_project(self, value):
         """Only successful, registered extraction outputs can be exported/opened as projects."""
@@ -849,7 +894,7 @@ class Workbench:
         with self.lock:
             found = any(c.get("action") == "egp-extract" and c.get("status") == "SUCCESS" and c.get("egp_result") and self.history_key(c.get("path")) == key for c in self.commands.values())
         if not found: return None
-        folder = within(self.root, value)
+        folder = self.resolve(value)
         return folder if folder.is_dir() and folder != self.root else None
 
     def open_folder(self, data):
@@ -860,8 +905,8 @@ class Workbench:
             if not value: raise ValueError("No backup folder is available.")
             folder = within(root / "_codebase_backups", value)
         else:
-            folder = within(self.root, data.get("path", ""))
-            if not ui_storage.run_folder(self.root, self.relative(folder)) and not self.extracted_project(self.relative(folder)):
+            folder = self.resolve(data.get("path", ""))
+            if not self.run_folder(self.relative(folder)) and not self.extracted_project(self.relative(folder)) and not self.artifact_folder(self.relative(folder)):
                 raise ValueError("Choose a saved run folder.")
         if not folder.is_dir(): raise ValueError("Folder no longer exists.")
         if os.name != "nt": raise ValueError("Opening folders is available in the Windows app.")
@@ -872,18 +917,19 @@ class Workbench:
         """Match native and portable saved paths without accepting paths outside the workspace."""
         if not isinstance(value, str) or not value: return None
         try:
-            return os.path.normcase(self.relative(within(self.root, value)))
+            return os.path.normcase(self.relative(self.resolve(value)))
         except (ValueError, OSError):
             return None
 
     def history(self, limit=500):
         records = []
-        for root, kind in [(self.root / "runner" / "runs", "file"), (self.root / "runs", "schedule")]:
+        for root, kind in self.run_bases():
             if not root.exists():
                 continue
             for path in root.iterdir():
-                if path.name.startswith(".") or path.is_symlink() or not path.is_dir() or not path.resolve().is_relative_to(self.root):
+                if path.name.startswith(".") or path.is_symlink() or not path.is_dir() or not path.resolve().is_relative_to(root):
                     continue
+                if self.relative(path).replace("\\", "/") in self.legacy_moves: continue
                 row = {"path": self.relative(path), "name": path.name, "kind": kind,
                        "status": "UNKNOWN", "elapsed": None, "started": path.stat().st_mtime}
                 status = path / "status.txt"
@@ -943,6 +989,8 @@ class Workbench:
                 "preferences": self.preferences(), "startup_error": self.startup_error,
                 "scan_errors": dict(self.cache_errors), "folders": self.folders(), "awake": self.awake.status(), "shared_work": self.shared_work(),
                 "remaining": remaining_work(commands, queued, samples, time.time()),
+                "migration": self.migration,
+                "data_locations": {"tasks": str(self.tasks), "settings": str(self.settings)},
                 "saved_storage": self.cached_listing("storage", lambda: ui_storage.storage_usage(self), 30) or None,
                 "initialization_files": self.cached_listing("init", lambda: sorted({str(p.resolve()) for folder in {Path(self.folders()["init"]), inbox} for p in folder.glob("_*") if p.is_file() and p.suffix.casefold() == ".sas"}), 5),
                 "queued_estimates": {name: estimate_task({"name": name}, samples) for name in queued},
@@ -982,7 +1030,7 @@ class Workbench:
             snapshot = command.get("server", {}).get("snapshot")
         if not snapshot:
             raise ValueError("This refresh has no saved snapshot. Inspect its console for details.")
-        path = within(self.storage / "artifacts", self.root / snapshot)
+        path = within(self.storage / "artifacts", self.resolve(snapshot))
         stamp = path.stat()
         key = (str(path), stamp.st_mtime_ns, stamp.st_size)
         with self.cache_lock:
@@ -995,7 +1043,7 @@ class Workbench:
     def timing_samples(self):
         with self.lock:
             commands = json.loads(json.dumps(list(self.commands.values())))
-        return duration_history(self.root, commands)
+        return duration_history(self.root, commands, self.run_bases(), self.resolve)
 
     def estimate(self, data):
         samples = index_samples(self.timing_samples())
@@ -1028,37 +1076,99 @@ class Workbench:
             self.cleanup_plans = {token: plan}
             return {**plan, "token": token}
 
-    def details(self, relative):
-        path = within(self.root, relative)
-        if not path.is_dir() or not relative:
-            raise ValueError("Choose a run folder.")
+    def describe_files(self, path, tasks=(), context_id=None):
         files = []
-        for file in sorted(path.rglob("*"), key=lambda p: (p.relative_to(path).parts[0] == "attempts", str(p))):
-            if file.is_file() and file.resolve().is_relative_to(self.root):
-                files.append({"path": self.relative(file), "name": str(file.relative_to(path)), "size": file.stat().st_size})
-            if len(files) >= 1000:
-                break
-        summary = path / "run_summary.csv"
-        tasks = list(csv.DictReader(io.StringIO(read_text(summary)))) if summary.is_file() else []
+        task_folders = {}
         for task in tasks:
-            value = task.get("task_dir") or task.get("path")
-            if value:
-                candidate = within(self.root, value)
-                if candidate.is_relative_to(path): task["path"] = self.relative(candidate)
+            if task.get('path'):
+                try: task_folders[self.resolve(task['path'])] = str(task.get('task_id') or task.get('key'))
+                except ValueError: pass
+        from ui_data import safe_files
+        candidates = sorted(safe_files(path), key=lambda file: (file.relative_to(path).parts[0] == 'attempts', str(file)))
+        for file in candidates[:1000]:
+            name = str(file.relative_to(path))
+            parts = file.relative_to(path).parts
+            task_id = next((identifier for folder,identifier in task_folders.items() if file.is_relative_to(folder)), None)
+            if not task_id and 'tasks' in parts[:-2]: task_id = parts[parts.index('tasks')+1]
+            is_log = file.suffix.lower() == '.log' or file.name == 'console.txt'
+            label = ((task_id or context_id)+' · ' if task_id or context_id else '')+file.name
+            if 'attempts' in parts: label += ' · earlier attempt'
+            files.append(dict(path=self.relative(file), name=name, size=file.stat().st_size,
+                              is_log=is_log, inside_task=bool(task_id), task_id=task_id,
+                              log_label=label, severity=self.logs.status(file) if file.suffix.lower()=='.log' else 'unknown',
+                              internal=file.name in {'.schedule.lock','run-display.json','_cancel.request'}))
+        return files, len(candidates)>1000
+
+    def command_details(self, identifier):
         with self.lock:
-            for command in sorted(self.commands.values(), key=lambda c:c.get("started", 0), reverse=True):
-                if self.history_key(self.relative(path)) in {self.history_key(command.get("path")), self.history_key(command.get("resume_path"))}:
-                    if not tasks: tasks = [dict(t, task_id=t.get("key"), program=t.get("name")) for t in command.get("tasks", {}).values()]
+            command = json.loads(json.dumps(self.commands.get(identifier)))
+        if not command: raise ValueError('Command not found.')
+        path = command.get('path')
+        if not path and command.get('action') == 'run':
+            path = next((t.get('path') for t in command.get('tasks',{}).values() if t.get('path')), None)
+        if path and self.resolve(path).is_dir():
+            detail = self.details(path)
+        else:
+            artifact = self.storage/'artifacts'/identifier
+            files, limited = self.describe_files(artifact) if artifact.is_dir() else ([], False)
+            detail = dict(files=files, tasks=[dict(t, task_id=t.get('key'), program=t.get('name')) for t in command.get('tasks',{}).values()],
+                          listing_limited=limited, whole_run=False, export_scope=None, export_path='', folder_path='')
+        console = self.storage/(identifier+'.txt')
+        if console.is_file() and not any(f['path']==self.relative(console) for f in detail['files']):
+            detail['files'].insert(0,dict(path=self.relative(console),name='Command console',is_log=True,log_label='Command console',severity='error' if command['status'] in {'FAILED','SAS_ERROR','CONNECTION_LOST'} else 'unknown'))
+        detail['can_rename']=True
+        if not detail.get('folder_path') and (self.storage/'artifacts'/identifier).is_dir():
+            detail.update(folder_path=self.relative(self.storage/'artifacts'/identifier), export_scope='command', export_path=self.relative(self.storage/'artifacts'/identifier))
+        detail.update(command_id=command['id'], name=command['name'], status=command['status'], description='py pysas.py '+' '.join(command.get('args',[])))
+        return detail
+
+    def details(self, relative):
+        path = self.resolve(relative)
+        if not path.is_dir() or not relative: raise ValueError("Choose a run folder.")
+        summary = path/'run_summary.csv'
+        tasks = list(csv.DictReader(io.StringIO(read_text(summary)))) if summary.is_file() else []
+        from pysas import safe_name
+        for task in tasks:
+            # Derive task folders from this schedule, including restored/moved runs.
+            candidate = path/'tasks'/safe_name(task['task_id'])
+            if candidate.is_dir(): task['path'] = self.relative(candidate)
+            try:
+                task['elapsed'] = float(task['elapsed']) if task.get('elapsed') else sum(float(task.get(k) or 0)*factor for k,factor in (('duration_hours',3600),('duration_minutes',60),('duration_seconds',1))) if 'duration_hours' in task else None
+            except (ValueError, TypeError): task['elapsed'] = None
+            task['key'] = task['task_id']; task['name'] = task.get('program', task['task_id'])
+        status, name = 'UNKNOWN', read_json(path/'run-display.json',{}).get('name','') or path.name
+        if (path/'status.txt').is_file():
+            values = dict(line.split('=',1) for line in read_text(path/'status.txt').splitlines() if '=' in line)
+            status = values.get('status','UNKNOWN'); name = read_json(path/'run-display.json',{}).get('name') or values.get('source') or name
+        elif tasks:
+            status = 'SUCCESS' if all(t.get('status') in {'SUCCESS','SKIPPED_SUCCESS','SKIPPED_PREVIOUS','ALWAYS_RUN_DEFINITION'} for t in tasks) else 'FAILED'
+        owner = None
+        self_task = None
+        with self.lock:
+            for command in sorted(self.commands.values(), key=lambda c:c.get('started',0), reverse=True):
+                direct = self.history_key(relative) in {self.history_key(command.get('path')),self.history_key(command.get('resume_path'))}
+                matched = next((t for t in command.get('tasks',{}).values() if self.history_key(t.get('path'))==self.history_key(relative)), None)
+                if direct:
+                    owner = command; status = command['status']; name = command.get('display_name') or name
+                    if not tasks: tasks = [dict(t,task_id=t.get('key'),program=t.get('name')) for t in command.get('tasks',{}).values() if self.history_key(t.get('path')) != self.history_key(relative)]
                     for task in tasks:
-                        saved = command.get("tasks", {}).get(task["task_id"], {})
-                        task.update({field: saved[field] for field in ("section", "row_start", "row_end", "status", "elapsed", "started", "path", "depends_on") if field in saved})
-                        task["command_id"] = command["id"]
+                        saved = command.get('tasks',{}).get(task['task_id'],{})
+                        task.update({field:saved[field] for field in ('section','row_start','row_end','status','elapsed','started','path','depends_on') if field in saved})
+                        task['command_id']=command['id']; task['key']=task['task_id']; task['name']=task.get('program',task['task_id'])
                     break
-        run = ui_storage.run_folder(self.root, relative)
-        project = self.extracted_project(relative)
-        return {"files": files, "tasks": tasks, "listing_limited": len(files) >= 1000, "name": read_json(path / "run-display.json", {}).get("name", ""), "whole_run": run == path,
-                "export_scope": "project" if project else "run" if run else None,
-                "export_path": self.relative(project or run) if project or run else ""}
+                if matched:
+                    owner = command; self_task = dict(matched); status = matched['status']; name = read_json(path/'run-display.json',{}).get('name') or matched.get('display_name') or matched.get('name') or name
+                    break
+        files, limited = self.describe_files(path, tasks, str(self_task.get("key")) if self_task else None)
+        if owner and (self.storage/(owner['id']+'.txt')).is_file():
+            # The global command console belongs to its top-level task, not each child.
+            if path == self.run_folder(relative):
+                files.append(dict(path=self.relative(self.storage/(owner['id']+'.txt')),name='Command console',is_log=True,log_label='Command console',severity='unknown'))
+        run, project = self.run_folder(relative), self.extracted_project(relative)
+        return dict(command_id=owner["id"] if owner else None, self_task=self_task, files=files,tasks=tasks,listing_limited=limited,name=name,status=status,whole_run=run==path,
+                    folder_path=self.relative(path) if run or project else '', can_rename=bool(run),
+                    export_scope='project' if project else ('run' if run==path else 'task') if run else None,
+                    export_path=self.relative(project or path) if project or run else '')
 
     def copy_file(self, relative=None, command=None, export=None):
         if command:
@@ -1068,7 +1178,7 @@ class Workbench:
         elif export:
             job = self.exports.get(export)
             if job["status"] != "READY": raise ValueError("Wait for the ZIP to finish.")
-            path = within(self.root, job["path"])
+            path = self.resolve(job["path"])
         else:
             path = self.input_path(relative)
         if not path.is_file():
@@ -1150,16 +1260,20 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if url.path == "/api/state":
                 self.respond({**self.server.app.state(refresh=value("refresh") == "1"), "token": self.server.token})
+            elif url.path == "/api/data-migration":
+                self.respond(self.server.app.migration or {"status":"IDLE"})
             elif url.path == "/api/export-status":
                 self.respond(self.server.app.exports.get(value("id")))
             elif url.path == "/api/run-zip":
-                self.send_archive(archive_folder(self.server.app.root, value("path")))
+                self.send_archive(archive_folder(self.server.app.root, str(self.server.app.resolve(value("path"))), self.server.app.tasks))
             elif url.path == "/api/backup":
                 self.send_archive(self.server.app.backup())
             elif url.path == "/api/server-catalog":
                 self.respond(self.server.app.server_catalog(value("id")))
             elif url.path == "/api/parameters":
-                self.respond(ui_parameters.load_parameters(self.server.app.storage, value("name")))
+                self.respond(ui_parameters.load_parameters(self.server.app.settings, value("name")))
+            elif url.path == "/api/command-details":
+                self.respond(self.server.app.command_details(value("id")))
             elif url.path == "/api/details":
                 self.respond(self.server.app.details(value("path")))
             elif url.path == "/api/log-summary":
@@ -1181,7 +1295,7 @@ class Handler(BaseHTTPRequestHandler):
                     tasks = list(self.server.app.commands[identifier].get("tasks", {}).values())[-8:]
                 for task in tasks:
                     if task.get("path"):
-                        stage = within(self.server.app.root, task["path"]) / "console.txt"
+                        stage = self.server.app.resolve(task["path"]) / "console.txt"
                         if stage.is_file():
                             console += "\n\n--- " + str(task.get("name", task.get("key", "File"))) + " ---\n" + read_text(stage, limit=8000, tail=True)
                 self.respond({"text": console})
@@ -1189,7 +1303,7 @@ class Handler(BaseHTTPRequestHandler):
                 item = self.server.app.commands.get(value("id"), {})
                 sample = item.get("server", {}).get("sample")
                 if not sample: raise ValueError("No completed preview is available.")
-                path = within(self.server.app.storage / "artifacts", self.server.app.root / sample)
+                path = within(self.server.app.storage / "artifacts", self.server.app.resolve(sample))
                 result = read_json(path)
                 if not isinstance(result, dict): raise ValueError("Saved preview is missing or unreadable.")
                 self.respond(result)
@@ -1204,7 +1318,7 @@ class Handler(BaseHTTPRequestHandler):
                 if value("export"):
                     job = self.server.app.exports.get(value("export"))
                     if job["status"] != "READY": raise ValueError("Wait for the ZIP to finish.")
-                    path = within(self.server.app.root, job["path"])
+                    path = self.server.app.resolve(job["path"])
                 elif value("command"):
                     item = self.server.app.commands.get(value("command"), {})
                     if not item.get("action", "").startswith("bundle-") or item.get("status") != "SUCCESS" or not item.get("download"):
@@ -1289,6 +1403,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(self.server.app.rename_run(data))
             elif self.path == "/api/open-folder":
                 self.respond(self.server.app.open_folder(data))
+            elif self.path == "/api/import-legacy-runs":
+                self.respond(ui_paths.start_legacy_import(self.server.app))
+            elif self.path == "/api/data-locations":
+                self.respond(self.server.app.update_data_locations(data))
             elif self.path == "/api/preferences":
                 self.respond(self.server.app.update_preferences(data))
             elif self.path == "/api/shared-work":
@@ -1339,6 +1457,8 @@ class LocalServer(ThreadingHTTPServer):
         super().server_close()
         if hasattr(self, "app"):
             self.app.awake.close()
+        for data_lock in getattr(self, "data_locks", []): data_lock.close()
+        self.data_locks = []
         handle = getattr(self, "workspace_lock", None)
         if handle is not None:
             handle.close()
@@ -1363,12 +1483,17 @@ def make_server(workspace, port=0):
     except OSError:
         handle.close()
         raise ValueError("A workbench is already running for this workspace. Use its browser window or stop its launcher first.")
+    data_locks = []
     try:
+        for folder in sorted(ui_paths.locations(workspace.resolve()).values()):
+            data_locks.append(ui_paths.lock_folder(folder))
         app = Workbench(workspace)
         server = LocalServer(("127.0.0.1", port), Handler)
     except Exception:
         handle.close()
+        for data_lock in data_locks: data_lock.close()
         raise
+    server.data_locks = data_locks
     server.workspace_lock = handle
     server.app = app
     server.token = secrets.token_urlsafe(32)

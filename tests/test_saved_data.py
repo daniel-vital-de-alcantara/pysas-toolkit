@@ -35,8 +35,8 @@ class SavedDataTests(unittest.TestCase):
         (self.app.storage / 'original.txt').write_text('console')
         (self.app.storage / 'app-profile').mkdir()
         (self.app.storage / 'app-profile/cookie').write_text('not portable')
-        ui.atomic_json(self.app.storage / 'folders.json', self.app.folders())
-        ui.atomic_json(self.app.storage / 'bundle-paths.json', {'paths': [str(self.root)], 'last': str(self.root)})
+        ui.atomic_json(self.app.config('folders.json'), self.app.folders())
+        ui.atomic_json(self.app.config('bundle-paths.json'), {'paths': [str(self.root)], 'last': str(self.root)})
         return item
 
     def test_round_trip_to_new_pc_preserves_logs_and_remaps_paths(self):
@@ -50,12 +50,12 @@ class SavedDataTests(unittest.TestCase):
         target = ui.Workbench(dest)
         result = target.backup(io.BytesIO(data), len(data))
         self.assertEqual(result['runs'], 1)
-        self.assertEqual((dest / 'runs/schedule/tasks/A/logs/log.log').read_text(encoding='utf-8'), 'NOTE: café finished')
+        self.assertEqual((dest / 'tasks/schedules/schedule/tasks/A/logs/log.log').read_text(encoding='utf-8'), 'NOTE: café finished')
         restored = ui.Workbench(dest)
         self.assertEqual(len(restored.commands), 1)
         item = next(iter(restored.commands.values()))
         self.assertNotEqual(item['id'], 'original')
-        self.assertEqual(Path(item['schedule_log']), Path('runs/schedule/schedule.log'))
+        self.assertEqual(Path(item['schedule_log']), Path('tasks/schedules/schedule/schedule.log'))
         self.assertEqual(restored.folders()['inputs'], str(dest))
         self.assertEqual(restored.bundle_settings()['last'], str(dest))
         self.assertEqual((dest / 'pysas.py').read_text(), '# new engine')
@@ -116,11 +116,11 @@ class SavedDataTests(unittest.TestCase):
 
     def test_failed_restore_rolls_back_moved_runs_and_settings(self):
         self.seed(); data = self.backup()
-        before = (self.app.storage / 'folders.json').read_bytes()
+        before = (self.app.config('folders.json')).read_bytes()
         with patch.object(self.app, 'save', side_effect=OSError('disk full')):
             with self.assertRaises(OSError): self.app.backup(io.BytesIO(data), len(data))
         self.assertEqual(len(list((self.root / 'runs').iterdir())), 1)
-        self.assertEqual((self.app.storage / 'folders.json').read_bytes(), before)
+        self.assertEqual((self.app.config('folders.json')).read_bytes(), before)
         self.assertEqual(len(self.app.commands), 1)
 
     def test_active_commands_block_export_and_import(self):

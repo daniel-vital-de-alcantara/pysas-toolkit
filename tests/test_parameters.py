@@ -38,7 +38,7 @@ class ParameterTests(unittest.TestCase):
         self.assertEqual(updated['name'], '_cases.sas')
         with self.assertRaises(ValueError):
             self.app.save_parameters(dict(name='_cases.sas', text='stale;', revision=saved['revision']))
-        self.assertEqual(params.load_parameters(self.app.storage, '_cases.sas')['text'], 'new;')
+        self.assertEqual(params.load_parameters(self.app.settings, '_cases.sas')['text'], 'new;')
         self.app.save_parameters(dict(name='other.sas', text='other;'))
         self.app.select_parameters('_cases.sas')
         self.assertEqual(ui.Workbench(self.root).parameter_settings()['last'], '_cases.sas')
@@ -89,11 +89,11 @@ class ParameterTests(unittest.TestCase):
             disabled = self.app.launch(dict(action='run', use_parameters=False, parameters_text='must_not_run;'))['id']
         for identifier, expected in zip(identifiers, ('%let ids=FIRST;', '%let ids=SECOND;')):
             item = self.app.commands[identifier]
-            snapshot = self.root / item['parameters']['path']
+            snapshot = self.app.resolve(item['parameters']['path'])
             self.assertEqual(snapshot.read_text(), expected)
             self.assertEqual(Path(item['args'][item['args'].index('--parameters')+1]), snapshot)
         self.assertNotIn('--parameters', self.app.commands[disabled]['args'])
-        self.assertEqual(params.load_parameters(self.app.storage, '_cases.sas')['text'], '%let ids=SAVED;')
+        self.assertEqual(params.load_parameters(self.app.settings, '_cases.sas')['text'], '%let ids=SAVED;')
         self.assertFalse(self.app.parameter_settings()['enabled'])
         self.app.processes.clear()
 
@@ -112,17 +112,17 @@ class ParameterTests(unittest.TestCase):
         self.app.commands['original'] = dict(id='original',action='run',args=[],name='job',status='SUCCESS',started=10,tasks={},parameters={'name':'_cases.sas','path':self.app.relative(snapshot)})
         stream, _ = self.app.backup()
         with stream: data = stream.read()
-        saved = params.load_parameters(self.app.storage, '_cases.sas')
+        saved = params.load_parameters(self.app.settings, '_cases.sas')
         self.app.save_parameters({**saved, 'text': 'current;'})
         result = self.app.backup(io.BytesIO(data), len(data))
         self.assertEqual(result['parameters'], 1)
-        self.assertEqual(params.load_parameters(self.app.storage, '_cases.sas')['text'], 'current;')
+        self.assertEqual(params.load_parameters(self.app.settings, '_cases.sas')['text'], 'current;')
         last = self.app.parameter_settings()['last']
         self.assertNotEqual(last, '_cases.sas')
-        self.assertEqual(params.load_parameters(self.app.storage, last)['text'], 'first;')
+        self.assertEqual(params.load_parameters(self.app.settings, last)['text'], 'first;')
         imported = next(c for c in self.app.commands.values() if c['id'] != 'original')
         self.assertNotEqual(imported['parameters']['path'], self.app.relative(snapshot))
-        self.assertEqual((self.root/imported['parameters']['path']).read_text(), 'snapshot;')
+        self.assertEqual((self.app.resolve(imported['parameters']['path'])).read_text(), 'snapshot;')
 
 
 if __name__ == '__main__': unittest.main()

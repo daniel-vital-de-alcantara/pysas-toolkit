@@ -1162,6 +1162,13 @@ def execute_eg(mode: str, project: Path, sas_path: Path, program: str, row_start
     return rc, console
 
 
+def saved_runs(kind):
+    """UI data root is optional; standalone CLI folder defaults stay compatible."""
+    value = os.environ.get("PYSAS_RUNS_DIR")
+    if value: return Path(value).expanduser().resolve() / kind
+    return ROOT_DIR / "runs" if kind == "schedules" else ROOT_DIR / "runner" / "runs"
+
+
 def run_job(source: Path, project: Path, tables: bool, explicit_lib: Path | None,
             notify_user: bool, runs_dir: Path | None = None, display_name: str | None = None,
             init_dir: Path | None = None, extra_init_dir: Path | None = None,
@@ -1173,7 +1180,7 @@ def run_job(source: Path, project: Path, tables: bool, explicit_lib: Path | None
         parameter_code = read_text(parameters)  # Read once; the archived copy is what will execute.
     logical_stem = re.sub(r"(?i)\.tables$", "", source.stem)
     base = safe_name(logical_stem)
-    root = runs_dir or (ROOT_DIR / "runner" / "runs")
+    root = runs_dir or saved_runs("files")
     root.mkdir(parents=True, exist_ok=True)
     run_dir = root / f"{now_stamp()}__{base}"
     suffix = 2
@@ -1257,7 +1264,7 @@ def runner_watch(args: argparse.Namespace) -> int:
     inbox = Path(args.inbox).expanduser().resolve() if getattr(args, "inbox", None) else root / "inbox"
     # Claim on the inbox volume so custom/network inboxes can be moved atomically.
     claimed = root / "claimed" if inbox.resolve() == (root / "inbox").resolve() else inbox / ".pysas-claimed"
-    runs = root / "runs"
+    runs = saved_runs("files")
     init_dir = Path(args.init_dir).expanduser().resolve() if getattr(args, "init_dir", None) else None
     if init_dir is not None and not init_dir.is_dir(): raise FileNotFoundError(init_dir)
     for path in (inbox, claimed, runs): path.mkdir(parents=True, exist_ok=True)
@@ -1554,7 +1561,7 @@ def schedule_run(args: argparse.Namespace) -> int:
     if getattr(args, "_resume_dir", None):
         run_dir = Path(args._resume_dir)
     else:
-        base_runs = ROOT_DIR / "runs"; base_runs.mkdir(exist_ok=True); run_dir = base_runs / f"{now_stamp()}__schedule"
+        base_runs = saved_runs("schedules"); base_runs.mkdir(parents=True, exist_ok=True); run_dir = base_runs / f"{now_stamp()}__schedule"
         suffix = 2
         while run_dir.exists(): run_dir = base_runs / f"{now_stamp()}__schedule_{suffix}"; suffix += 1
         run_dir.mkdir(); shutil.copy2(workbook, run_dir / workbook.name); shutil.copy2(project, run_dir / project.name)

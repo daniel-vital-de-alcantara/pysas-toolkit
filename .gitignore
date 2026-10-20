@@ -49,3 +49,8 @@ Schedule.xlsx
 # Local workbench state and release artifacts
 .pysas-ui/
 release/
+
+# Portable Workbench data (machine-specific locations are not app source).
+/tasks/
+/settings/
+/.pysas-locations.json

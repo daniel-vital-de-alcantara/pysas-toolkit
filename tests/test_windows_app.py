@@ -145,7 +145,7 @@ class WindowsTests(unittest.TestCase):
                         if item['status'] != 'RUNNING':
                             break
                         time.sleep(.1)
-                    console = (root / '.pysas-ui' / (identifier + '.txt')).read_text(encoding='utf-8')
+                    console = (root / 'tasks/.workbench' / (identifier + '.txt')).read_text(encoding='utf-8')
                     self.assertEqual(item['status'], 'SUCCESS', console)
                     self.assertTrue(item['runtime']['console'])
                     probe = json.loads((root / 'console-probe.json').read_text())

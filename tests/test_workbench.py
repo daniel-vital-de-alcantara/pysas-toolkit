@@ -138,7 +138,7 @@ class WorkbenchTests(unittest.TestCase):
         deadline=time.monotonic()+5
         while self.app.exports.get(job["id"])["status"]=="WORKING" and time.monotonic()<deadline:time.sleep(.02)
         exported=self.app.exports.get(job["id"]);self.assertEqual(exported["status"],"READY",exported)
-        with zipfile.ZipFile(self.app.root/exported["path"]) as archive:
+        with zipfile.ZipFile(self.app.resolve(exported["path"])) as archive:
             self.assertTrue(any("03. By process flow" in name for name in archive.namelist()))
             self.assertTrue(any(name.endswith("/.pysas_egp_manifest.json") for name in archive.namelist()))
         with self.assertRaises(ValueError):self.app.exports.start("project","runner/inbox")

@@ -283,7 +283,7 @@ class SchedulerParityTests(unittest.TestCase):
             deadline = time.monotonic()+10
             while identifier in app.processes and time.monotonic()<deadline: time.sleep(.05)
             item = app.commands[identifier]
-            self.assertEqual(item['status'], 'SUCCESS', (self.root/".pysas-ui"/(identifier+".txt")).read_text(encoding="utf-8"))
+            self.assertEqual(item['status'], 'SUCCESS', (app.storage/(identifier+".txt")).read_text(encoding="utf-8"))
             self.assertEqual(item['tasks']['target']['status'], 'SUCCESS')
             self.assertEqual(Path(item['schedule_log']), Path(item['path'])/'schedule.log')
             self.assertIn('NOTE: completed', (self.root/item['schedule_log']).read_text(encoding='utf-8'))
@@ -291,7 +291,7 @@ class SchedulerParityTests(unittest.TestCase):
             self.assertEqual(len(item['tasks']['target']['setup']), 3)
             for task in self.setups:
                 self.assertEqual(item['tasks'][task['task_id']]['status'], 'ALWAYS_RUN_DEFINITION')
-            self.assertIn('Running: Realised.sas (section Realised)', (self.root/".pysas-ui"/(identifier+".txt")).read_text(encoding="utf-8"))
+            self.assertIn('Running: Realised.sas (section Realised)', (app.storage/(identifier+".txt")).read_text(encoding="utf-8"))
         finally:
             for process in list(app.processes.values()):
                 if process.poll() is None: process.kill(); process.wait()
@@ -354,7 +354,7 @@ class SchedulerParityTests(unittest.TestCase):
                 tasks = app.commands[identifier]['tasks']
                 if all(key in tasks and tasks[key].get('path') and (self.root/tasks[key]['path']/'executed.txt').exists() for key in keys): return
                 time.sleep(.05)
-            self.fail('Automation did not reach Run: ' + (self.root/'.pysas-ui'/(identifier+'.txt')).read_text(encoding='utf-8'))
+            self.fail('Automation did not reach Run: ' + (app.storage/(identifier+'.txt')).read_text(encoding='utf-8'))
         try:
             chosen = app.launch(dict(action='schedule', workbook=str(main_book), project=str(project), workers=2))['id']
             chosen_process = app.processes[chosen]

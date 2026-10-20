@@ -62,5 +62,5 @@ class HistoryProjectsTests(unittest.TestCase):
             deadline=time.monotonic()+5
             while time.monotonic()<deadline and (self.app.exports.working() or self.app.processes):time.sleep(.02)
         self.assertEqual(self.app.exports.get(job['id'])['status'],'READY')
-        with zipfile.ZipFile(self.root/self.app.exports.get(job['id'])['path']) as archive:
+        with zipfile.ZipFile(self.app.resolve(self.app.exports.get(job['id'])['path'])) as archive:
             self.assertFalse(any(identifier in name for name in archive.namelist()))

@@ -48,3 +48,11 @@ progress{width:min(100%,420px);accent-color:#007bc3}
 [hidden]{display:none!important}
 
 .inspector-global-actions{display:flex;gap:8px;flex-wrap:wrap}.run-inspector .dialog-header{gap:12px;flex-wrap:wrap}
+
+/* Overview task list and a stable inspector command row. */
+.sidebar .app-actions{margin:auto 0 0;padding-top:16px;display:flex;flex-wrap:wrap;justify-content:flex-start;gap:2px}.sidebar .app-actions button{padding:8px;font-size:.75rem}.sidebar .side-footer{margin-top:auto}.sidebar .side-footer+.app-actions{margin-top:12px}
+body.inspector-open .app-actions{visibility:hidden;pointer-events:none}.run-inspector .dialog-header{justify-content:flex-start;flex-wrap:nowrap;align-items:center}.run-inspector .dialog-header>div{min-width:0}.run-inspector .eyebrow{display:block;margin-bottom:5px}
+.inspector-toolbar{position:sticky;top:-20px;z-index:2;background:var(--paper);padding:12px 0;border-bottom:1px solid var(--line);gap:8px}.inspector-tabs{margin:0;gap:4px}.inspector-tabs button{padding:10px 14px}.inspector-toolbar form{margin-left:auto;flex:1 1 240px;max-width:420px}.inspector-toolbar input{min-width:100px}.inspector-toolbar button{white-space:nowrap}.run-inspector #download-folder{margin:0}.run-inspector #detail-tasks{max-height:none;overflow:visible}.run-inspector #detail-tasks .table-wrap{overflow:visible}.run-inspector #detail-tasks td{overflow-wrap:anywhere}.run-inspector .inspector>aside{max-height:none;overflow:visible}.file-item{display:flex;align-items:baseline;gap:10px}.log-state{font-size:1rem;font-weight:700;min-width:18px}.log-state.success{color:#23794c}.log-state.warning{color:#9a6700}.log-state.error{color:#bd3328}.log-state.pending,.log-state.unknown{color:#647585}#log-issues-details{display:block}.metrics #overview-stop-watch{padding:5px 0;justify-content:flex-start;font-size:.75rem;min-height:25px}
+@media(max-width:800px){.sidebar .app-actions{margin-top:8px}.inspector-toolbar{top:-16px}.inspector-toolbar form{margin-left:0}.run-inspector #detail-tasks .table-wrap{overflow-x:auto}.inspector-toolbar{position:static}}
+
+#inspector-result{display:flex;align-items:center;gap:10px;white-space:nowrap}#inspector-execution-controls:empty{display:none}

@@ -11,9 +11,11 @@
 <body>
 <p id="list-keyboard-help" class="sr-only">Use Up and Down to browse rows, Home and End to jump, Left and Right for row actions, and Enter to open. Tab leaves the list.</p>
 <aside class="sidebar"><a class="brand" href="#overview"><img src="/icon.svg" width="34" height="34" alt=""><span>PySAS<small>WORKBENCH</small></span></a>
-<nav aria-label="Main navigation"><button data-page="overview" class="nav">Overview<span>01</span></button><button data-page="runner" class="nav">Run<span>02</span></button><button data-page="tools" class="nav">Projects<span>03</span></button><button data-page="history" class="nav">Run History<span>04</span></button><button data-page="servers" class="nav">Servers<span>05</span></button><button data-page="files" class="nav">Settings<span>06</span></button></nav>
+<nav aria-label="Main navigation"><button data-page="overview" class="nav">Overview<span>01</span></button><button data-page="runner" class="nav">Run<span>02</span></button><button data-page="tools" class="nav">Projects<span>03</span></button><button data-page="servers" class="nav">Servers<span>04</span></button><button data-page="files" class="nav">Settings<span>05</span></button></nav>
 <div class="side-footer">
 <span class="connection"><i id="connection-dot"></i><span id="connection">Connecting</span></span><small id="version">Local workspace</small>
+</div><div class="app-actions">
+<button id="quit-app" class="subtle">Quit app</button><button id="keyboard-help" class="subtle" type="button" title="Alt or F10: O Overview, R Run, P Projects, V Servers, S Settings; X page commands">Keyboard · Alt</button><button id="refresh" class="subtle">Refresh</button>
 </div></aside>
 <main><header><div>
 <div class="eyebrow">SAS ENTERPRISE GUIDE</div>
@@ -23,13 +25,10 @@
 <div class="header-clock">
 <span>LOCAL TIME</span><strong id="clock">—</strong>
 </div></header>
-<div class="app-actions">
-<button id="quit-app" class="subtle">Quit app</button><button id="keyboard-help" class="subtle" type="button" title="Alt or F10: O Overview, R Run, P Projects, H History, V Servers, S Settings; X page commands">Keyboard · Alt</button><button id="refresh" class="subtle">Refresh</button>
-</div>
+
 <div id="notice" role="status" hidden></div>
 <div id="error" role="alert" hidden></div>
-<section class="metrics" aria-label="Workspace status"><article><span>Running files</span><strong id="running-count">0</strong><small id="running-remaining" role="status">Currently executing</small></article><article><span>Queued files</span><strong id="queue-count">0</strong><small>Waiting in inbox</small></article><article><span>Completed runs</span><strong id="completed-count">0</strong><small id="saved-storage">Measuring saved storage…</small></article><article><span>Watcher</span><strong id="watcher-state" class="word">Stopped</strong><small id="watcher-time">Ready when you are</small></article></section>
-<section id="page-overview" class="page"><div class="watcher-monitor" data-watcher-monitor></div>
+<section id="page-overview" class="page"><section class="metrics" aria-label="Workspace status"><article><span>Running files</span><strong id="running-count">0</strong><small id="running-remaining" role="status">Currently executing</small></article><article><span>Queued files</span><strong id="queue-count">0</strong><small>Waiting in inbox</small></article><article><span>Completed runs</span><strong id="completed-count">0</strong><small id="saved-storage">Measuring saved storage…</small></article><article><span>Watcher</span><strong id="watcher-state" class="word">Stopped</strong><small id="watcher-time">Ready when you are</small><button class="subtle" data-watcher-stop id="overview-stop-watch" disabled>Stop after current files</button></article></section>
 <div class="section-heading">
 <div>
 <h2>Running now</h2>
@@ -38,16 +37,14 @@
 <button data-go="runner" class="primary">Run a file <span>↗</span></button>
 </div>
 <div id="live-overview"></div>
-<div class="section-heading">
-<div>
-<h2>Recent runs</h2>
-<p>Files that have run, with their final status and duration.</p>
+<div class="section-heading"><div><h2>Tasks</h2><p>Runs and commands together. Use ↑ / ↓ to browse and Enter to inspect.</p></div><div class="filters">
+<label class="sr-only" for="history-search">Search tasks</label><input id="history-search" data-keytip="F" type="search" placeholder="Find a task, file or command…"><label class="sr-only" for="history-filter">Filter status</label><select id="history-filter" data-keytip="S"><option value="all">All statuses</option>
+<option value="RUNNING">Running</option><option value="SUCCESS">Successful</option>
+<option value="errors">Errors / blocked</option>
+<option value="UNKNOWN">Unknown</option></select>
 </div>
-<button data-go="history" class="subtle">View all history →</button>
 </div>
-<div id="recent-runs"></div>
-<div class="section-heading"><h2>Command activity</h2></div>
-<div id="commands-overview"></div></section>
+<div id="all-history"></div></section>
 <section id="page-runner" class="page" hidden><div class="watcher-monitor" data-watcher-monitor></div>
 <div class="run-choice panel">
 <label>What would you like to run?<select id="run-mode"><option value="single">Single file</option>
@@ -123,21 +120,6 @@
 </div>
 <div class="section-heading"><h2>Command results</h2></div>
 <div id="tools-activity"></div></section>
-<section id="page-history" class="page" hidden><div class="section-heading">
-<div>
-<h2>Run history</h2>
-<p>Use ↑ / ↓ to browse runs, Enter to inspect, and Esc to close. Home / End jumps to the first or last run.</p>
-</div>
-<div class="filters">
-<label class="sr-only" for="history-search">Search run history</label><input id="history-search" data-keytip="F" type="search" placeholder="Find a file or run…"><label class="sr-only" for="history-filter">Filter status</label><select id="history-filter" data-keytip="S"><option value="all">All statuses</option>
-<option value="SUCCESS">Successful</option>
-<option value="errors">Errors / blocked</option>
-<option value="UNKNOWN">Unknown</option></select>
-</div>
-</div>
-<div id="all-history"></div>
-<div class="section-heading"><h2>All commands</h2></div>
-<div id="commands-history"></div></section>
 <section id="page-servers" class="page" hidden>
 <div class="split">
 <form id="server-form" class="panel">
@@ -260,7 +242,7 @@
 <p class="hint">Stopping the watcher lets files already running finish.</p>
 <label class="check"><input name="auto_start" id="watch-auto-start" type="checkbox">Start this watcher automatically when PySAS opens on this computer</label><button type="button" id="save-watcher" class="secondary">Save watcher settings</button><p id="watcher-settings-status" class="hint" role="status">Saving settings does not start the watcher. Startup is off unless you enable it.</p>
 </form>
-<div id="init-file-list" class="panel"></div></details><details class="panel settings-group" id="settings-storage"><summary>Storage and cleanup</summary><div class="panel">
+<div id="init-file-list" class="panel"></div></details><details class="panel settings-group" id="settings-storage"><summary>Storage and cleanup</summary><form id="data-locations-form" class="panel"><h3>Portable tasks and settings</h3><label>Tasks folder<input id="data-tasks" name="tasks" spellcheck="false"></label><label>Settings folder<input id="data-settings" name="settings" spellcheck="false"></label><p class="hint">Use the same folders from future installations. Finish commands and stop the watcher first. Locations apply after restarting PySAS. Copy your existing tasks/settings folders first, or point to folders from another installation. Existing folders are preserved.</p><button type="submit" class="secondary">Use these folders</button><p id="data-locations-status" class="hint" role="status"></p><h4>Bring existing runs into Tasks</h4><p class="hint">Copies completed runs from the old runs and runner/runs folders. Originals stay available to the CLI; the Tasks list shows the imported copy once. Active and unknown runs are excluded.</p><button id="import-legacy-runs" type="button" class="secondary">Import existing runs into Tasks</button><p id="migration-status" class="hint" role="status"></p></form><div class="panel">
 <h3>Clean up saved runs</h3>
 <p>Review the run count and storage before deleting. Active runs and unmonitored runs with unknown status are protected. Deleting a failed schedule also removes its successful task outputs and prevents continuation.</p>
 <div class="actions">
@@ -293,27 +275,17 @@
 <label class="check"><input id="keep-awake" type="checkbox">Keep Windows and the display awake while the launcher is running</label><p id="awake-status" class="hint"></p>
 <p class="hint">Stops idle sleep without clicking or typing. It does not override manual sleep, closing the lid, or your organization's lock policy. The setting resets when the server closes.</p>
 </div></details></section>
-<footer>PySAS engine 0.3.15 · Local execution <span>Closing the app finishes active jobs before exiting.</span></footer><section id="details-dialog" hidden="" class="run-inspector" aria-label="Run inspector" tabindex="-1"><div class="dialog-header">
-<div>
-<span class="eyebrow">RUN INSPECTOR</span><h2 id="detail-title">Run details</h2>
-</div>
-<button id="close-details" data-keytip="C" class="secondary" aria-label="Back to runs">← Back</button><div class="inspector-global-actions"><button type="button" class="subtle" data-global-action="refresh" data-keytip="U">Refresh</button><button type="button" class="subtle" data-global-action="keyboard-help">Keyboard · Alt</button><button type="button" class="subtle" data-global-action="quit-app" data-keytip="Q">Quit app</button></div>
-</div>
-<div id="detail-meta"></div>
-<p id="listing-notice" class="hint" hidden></p>
+<footer>PySAS engine 0.3.15 · Local execution <span>Closing the app finishes active jobs before exiting.</span></footer><section id="details-dialog" hidden="" class="run-inspector" aria-label="Run inspector" tabindex="-1"><div class="dialog-header"><button id="close-details" data-keytip="B" class="secondary" aria-label="Back to tasks">← Back</button><div><span class="eyebrow">TASK INSPECTOR</span><h2 id="detail-title">Task details</h2></div></div>
 <div class="inspector-toolbar">
-<button id="open-run-folder" type="button" class="secondary">Open run folder</button><form id="rename-run">
-<label>Run name<input id="run-display-name" maxlength="120"></label><button type="submit" class="secondary">Save name</button>
-</form>
-<span id="inspector-status" role="status" class="hint"></span>
-</div>
 <div class="inspector-tabs" role="group" aria-label="Inspect">
-<button type="button" data-inspector-tab="files" aria-pressed="true">Files</button><button type="button" data-inspector-tab="logs" aria-pressed="false">Logs</button><button type="button" data-inspector-tab="tasks" aria-pressed="false">Tasks</button>
-</div>
-<button id="download-folder" data-keytip="ZP" type="button" class="secondary" data-export-scope="run" hidden>Prepare entire run folder ZIP</button><div id="folder-export-status" class="hint" role="status" aria-live="polite"></div>
-<div id="detail-tasks" hidden=""></div>
+<button type="button" data-keytip="F" data-inspector-tab="files" aria-pressed="true" title="Outputs · Alt F">Outputs</button><button type="button" data-keytip="L" data-inspector-tab="logs" aria-pressed="false" title="Logs · Alt L">Logs</button><button type="button" data-keytip="T" data-inspector-tab="tasks" aria-pressed="false" title="Tasks · Alt T" disabled>Tasks</button>
+</div><button id="open-run-folder" data-keytip="O" type="button" class="secondary" disabled>Open folder</button><button id="download-folder" data-keytip="Z" type="button" class="secondary" data-export-scope="run" disabled>Create ZIP</button>
+<form id="rename-run"><label class="sr-only" for="run-display-name">Task name</label><input id="run-display-name" data-keytip="N" maxlength="120" placeholder="Task name" disabled><button type="submit" class="secondary" disabled>Save name</button></form><span id="inspector-result"></span>
+</div><div id="detail-meta"></div><p id="listing-notice" class="hint" hidden></p>
+<div id="inspector-execution-controls" class="actions"></div><span id="inspector-status" role="status" class="hint"></span><div id="folder-export-status" class="hint" role="status" aria-live="polite"></div>
+<div id="detail-tasks" hidden></div>
 <div class="inspector" id="inspector-files">
-<aside id="file-list" data-key-list data-keytip="L" tabindex="0" aria-label="Run files" aria-describedby="list-keyboard-help"></aside><section><div class="preview-heading">
+<aside id="file-list" data-key-list data-keytip="A" tabindex="0" aria-label="Outputs and logs" aria-describedby="list-keyboard-help"></aside><section><div class="preview-heading">
 <strong id="preview-name">Select a file</strong><div class="preview-actions">
 <a id="download" data-keytip="D" class="secondary" hidden>Download</a><button id="copy-file" data-keytip="Y" type="button" class="secondary" title="Copy this file as a file attachment using the Windows clipboard" hidden>Copy file</button>
 <button id="copy-log-text" type="button" class="secondary" hidden>Copy displayed text</button>

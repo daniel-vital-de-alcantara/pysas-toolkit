@@ -33,9 +33,11 @@ def safe_files(folder):
                 yield p
 
 
-def archive_folder(root, relative):
+def archive_folder(root, relative, tasks=None):
+    from ui_storage import run_folder
     folder = (root / relative).resolve()
-    if not any(folder.is_relative_to(base) and folder != base for base in (root / 'runs', root / 'runner/runs')) or not folder.is_dir():
+    owned = run_folder(root, folder, tasks)
+    if not owned or not folder.is_relative_to(owned) or not folder.is_dir():
         raise ValueError('Choose a saved run folder.')
     out = tempfile.TemporaryFile()
     try:
@@ -79,7 +81,7 @@ def write_archive(out, entries, progress=None, manifest=None):
 def backup_manifest(app, configs_only=False):
     return json.loads(json.dumps(dict(format=FORMAT, scope='configs' if configs_only else 'all', workspace=str(app.root), folders=app.folders(),
                         bundle_settings=app.bundle_settings(), commands=[] if configs_only else list(app.commands.values()),
-                        parameters_settings=ui_parameters.settings(app.storage), shared_work=app.shared_work(), preferences=app.preferences())))
+                        parameters_settings=ui_parameters.settings(app.settings), shared_work=app.shared_work(), preferences=app.preferences())))
 
 
 def export_backup(app, configs_only=False, progress=None, destination=None, *, manifest=None, before=None):
@@ -87,19 +89,19 @@ def export_backup(app, configs_only=False, progress=None, destination=None, *, m
     try:
         if progress: progress(0, 0, 'Scanning saved files')
         manifest = manifest if manifest is not None else backup_manifest(app, configs_only)
-        bases = [app.storage / 'parameters']
+        bases = [app.settings / 'parameters']
         if not configs_only:
-            for parent in (app.root / 'runs', app.root / 'runner/runs', app.storage / 'artifacts'):
+            for parent in (*[base for base,_ in app.run_bases()], app.storage / 'artifacts'):
                 if parent.is_dir():
                     for child in parent.iterdir():
-                        if not child.is_symlink() and (before is None or getattr(child.stat(), 'st_birthtime', child.stat().st_ctime) <= before):
+                        if not child.is_symlink() and portable(app.relative(child)) not in app.legacy_moves and (before is None or getattr(child.stat(), 'st_birthtime', child.stat().st_ctime) <= before):
                             bases.append(child)
-        entries = [(p, p.relative_to(app.root).as_posix()) for base in bases for p in safe_files(base) if p.name not in {'.schedule.lock', '_cancel.request'}]
+        entries = [(p, ('.pysas-ui/parameters/'+p.name if p.parent==app.settings/'parameters' else portable(app.relative(p)))) for base in bases for p in safe_files(base) if p.name not in {'.schedule.lock', '_cancel.request'}]
         if not configs_only:
             for command in manifest["commands"]:
                 identifier = command["id"]
                 p = app.storage / (identifier + '.txt')
-                if p.is_file() and not p.is_symlink(): entries.append((p, p.relative_to(app.root).as_posix()))
+                if p.is_file() and not p.is_symlink(): entries.append((p, ('.pysas-ui/parameters/'+p.name if p.parent==app.settings/'parameters' else portable(app.relative(p)))))
         write_archive(out, entries, progress, manifest)
         return out, 'PySAS-configs.zip' if configs_only else 'PySAS-saved-data.zip'
     except BaseException:
@@ -138,7 +140,7 @@ def restore_backup(app, stream, length):
                     or name.casefold() in seen or (i.external_attr >> 16) & 0o170000 == 0o120000):
                     raise ValueError('Backup contains an unsafe or duplicate path.')
                 seen.add(name.casefold())
-                allowed = name == 'manifest.json' or (len(parts) >= 3 and parts[0] == 'runs') or (len(parts) >= 4 and parts[:2] == ('runner', 'runs')) or (len(parts) >= 4 and parts[:2] == ('.pysas-ui', 'artifacts')) or (len(parts) == 2 and parts[0] == '.pysas-ui' and re.fullmatch(r'[a-zA-Z0-9_-]+\.txt', parts[1]))
+                allowed = (len(parts) >= 4 and parts[:2] in {('tasks','files'),('tasks','schedules')}) or name == 'manifest.json' or (len(parts) >= 3 and parts[0] == 'runs') or (len(parts) >= 4 and parts[:2] == ('runner', 'runs')) or (len(parts) >= 4 and parts[:2] == ('.pysas-ui', 'artifacts')) or (len(parts) == 2 and parts[0] == '.pysas-ui' and re.fullmatch(r'[a-zA-Z0-9_-]+\.txt', parts[1]))
                 if len(parts) == 3 and parts[:2] == ('.pysas-ui', 'parameters'):
                     ui_parameters.parameter_name(parts[2])
                     if i.file_size > ui_parameters.PARAMETER_LIMIT:
@@ -175,14 +177,14 @@ def restore_backup(app, stream, length):
         old_root = portable(manifest['workspace'])
         mappings = {}
         moves = []
-        for prefix in ('runs', 'runner/runs'):
+        for prefix in ('runs', 'runner/runs', 'tasks/files', 'tasks/schedules'):
             base = unpacked / prefix
             if base.exists():
                 for folder in base.iterdir():
-                    destination = app.root / prefix / folder.name
+                    destination = app.tasks / ('schedules' if prefix in {'runs','tasks/schedules'} else 'files') / folder.name
                     if destination.exists():
                         destination = destination.with_name(folder.name + '_import_' + uuid.uuid4().hex[:8])
-                    mappings[prefix + '/' + folder.name] = destination.relative_to(app.root).as_posix()
+                    mappings[prefix + '/' + folder.name] = portable(app.relative(destination))
                     moves.append((folder, destination))
         parameter_settings = manifest.get('parameters_settings')
         parameter_moves = {}
@@ -195,7 +197,7 @@ def restore_backup(app, stream, length):
         if parameter_folder.exists():
             for file in parameter_folder.iterdir():
                 ui_parameters.parameter_text(file.read_text(encoding='utf-8'))
-                destination = ui_parameters.parameter_path(app.storage, file.name)
+                destination = ui_parameters.parameter_path(app.settings, file.name)
                 if destination.exists():
                     if destination.read_bytes() == file.read_bytes():
                         parameter_moves[file.name] = file.name
@@ -230,7 +232,7 @@ def restore_backup(app, stream, length):
                 if rel == source or rel.startswith(source + '/'):
                     rel = target + rel[len(source):]
                     break
-            return str(app.root / rel) if absolute else rel if rel != normalized or '\\' in value else value
+            return str(app.resolve(rel)) if absolute else rel if rel != normalized or '\\' in value else value
         commands = []
         for original in manifest['commands']:
             item = remap(original)
@@ -282,27 +284,27 @@ def restore_backup(app, stream, length):
             if isinstance(value, str) and value and Path(value).is_file() and any(Path(value).resolve().is_relative_to(Path(v).resolve()) for v in [str(app.root), *folders.values()]):
                 clean['watcher'][key] = value
         settings['preferences.json'] = clean
-        previous = {name: (app.storage / name).read_bytes() if (app.storage / name).exists() else None for name in settings}
+        previous = {name: (app.config(name)).read_bytes() if (app.config(name)).exists() else None for name in settings}
         completed = []
         try:
             for source, destination in moves:
-                if not destination.resolve().is_relative_to(app.root):
+                if not any(destination.resolve().is_relative_to(base) for base in (app.root,app.tasks,app.settings)):
                     raise ValueError('Destination contains a link outside the workspace.')
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                source.rename(destination)
                 completed.append(destination)
+                shutil.move(str(source), str(destination))
             for item in commands:
                 destination = app.storage / (item['id'] + '.json')
                 completed.append(destination)
                 app.save(item)
             for name, value in settings.items():
-                (app.storage / name).write_text(json.dumps(value, ensure_ascii=False), encoding='utf-8')
+                (app.config(name)).write_text(json.dumps(value, ensure_ascii=False), encoding='utf-8')
         except BaseException:
             for p in reversed(completed):
                 if p.is_dir(): shutil.rmtree(p)
                 else: p.unlink(missing_ok=True)
             for name, content in previous.items():
-                p = app.storage / name
+                p = app.config(name)
                 if content is None: p.unlink(missing_ok=True)
                 else: p.write_bytes(content)
             raise
@@ -316,7 +318,7 @@ def signature(task):
     return (name, str(task.get('section') or '').strip().casefold(), int(task.get('row_start') or 0), int(task.get('row_end') or 0))
 
 
-def duration_history(root, commands):
+def duration_history(root, commands, bases=None, resolve=None):
     """One sample per saved task; merge UI scope with older workbook snapshots."""
     from pysas import load_schedule
     samples = {}
@@ -330,11 +332,12 @@ def duration_history(root, commands):
     for command in commands:
         for task in command.get('tasks', {}).values():
             if task.get('path'):
-                add(task, portable(task['path']), command.get('started', 0))
-    for base, kind in ((root / 'runs', 'schedule'), (root / 'runner/runs', 'file')):
+                add(task, portable(str(resolve(task['path']) if resolve else (root/portable(task['path'])).resolve())), command.get('started', 0))
+    for base, kind in (bases or ((root / 'runs', 'schedule'), (root / 'runner/runs', 'file'))):
         if not base.exists(): continue
         for folder in base.iterdir():
             if not folder.is_dir() or folder.is_symlink(): continue
+            if resolve and resolve(str(folder)) != folder.resolve(): continue
             try:
                 stamp = folder.stat().st_mtime
                 if kind == 'file':
@@ -343,7 +346,7 @@ def duration_history(root, commands):
                     if elapsed is None and status.get('started') and status.get('finished'):
                         elapsed = (datetime.fromisoformat(status['finished']) - datetime.fromisoformat(status['started'])).total_seconds()
                     if status.get('started'): stamp = datetime.fromisoformat(status['started']).timestamp()
-                    identity = folder.relative_to(root).as_posix()
+                    identity = portable(str(folder.resolve()))
                     if identity not in samples:
                         add(dict(name=status.get('source'), status=status.get('status'), elapsed=elapsed), identity, stamp)
                 else:
@@ -362,7 +365,7 @@ def duration_history(root, commands):
                             # Original 0.3.2 CSV splits elapsed time into h/m/s.
                             row['elapsed'] = sum(float(row.get(k) or 0) * multiplier for k, multiplier in (('duration_hours', 3600), ('duration_minutes', 60), ('duration_seconds', 1)))
                             row['row_start'], row['row_end'] = row.get('start'), row.get('end')
-                        identity = (folder / 'tasks' / safe_name(row['task_id'])).relative_to(root).as_posix()
+                        identity = portable(str((folder / 'tasks' / safe_name(row['task_id'])).resolve()))
                         if identity not in samples and (row['task_id'] in scopes or 'row_start' in row):
                             add({**scopes.get(row['task_id'], {}), **row}, identity, stamp)
             except (OSError, ValueError, KeyError): continue

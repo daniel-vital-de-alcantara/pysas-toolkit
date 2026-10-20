@@ -2,18 +2,19 @@
 (function () {
   "use strict";
   const alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  const navigation={overview:"O",runner:"R",tools:"P",history:"H",files:"S",servers:"V"};
+  const navigation={overview:"O",runner:"R",tools:"P",files:"S",servers:"V"};
   function codes(count){const width=Math.max(1,Math.ceil(Math.log(Math.max(1,count))/Math.log(26)));return Array.from({length:count},(_,i)=>{let code="";for(let n=0;n<width;n++){code=alphabet[i%26]+code;i=Math.floor(i/26);}return code;});}
   // Reserve explicit hints first. Allocate fallback letters from the control's
   // label, across the whole scope (including off-screen and disabled controls).
   function assignHints(items){
     const used=new Set(), answer=new Map();
+    const prefix=Array.from(alphabet).reverse().find(c=>!items.some(item=>{const preferred=(item.preferred||"").toUpperCase();return preferred&&(preferred.startsWith(c)||c.startsWith(preferred));}))||"Z";
     const free=code=>code&&!Array.from(used).some(other=>other.startsWith(code)||code.startsWith(other));
     const ordered=items.map((item,index)=>({...item,index})).sort((a,b)=>Number(!!b.preferred)-Number(!!a.preferred)||String(a.identity).localeCompare(String(b.identity))||a.index-b.index);
     for(const item of ordered){
       const preferred=(item.preferred||"").toUpperCase();
-      let code=free(preferred)?preferred:Array.from((item.label||"").toUpperCase().replace(/[^A-Z]/g,"")).find(c=>c!=="Z"&&free(c));
-      if(!code){code=codes(items.length+26).map(c=>"Z"+c).find(free);}
+      let code=free(preferred)?preferred:Array.from((item.label||"").toUpperCase().replace(/[^A-Z]/g,"")).find(c=>c!==prefix&&free(c));
+      if(!code){code=codes(items.length+26).map(c=>prefix+c).find(free);}
       used.add(code);answer.set(item.index,code);
     }
     return items.map((_,i)=>answer.get(i));
@@ -80,7 +81,7 @@
     if(level==="root"){
       candidates=Array.from(document.querySelectorAll('[data-page]')).map(el=>({el,code:navigation[el.dataset.page]}));
       for(const [id,code] of [['refresh','U'],['quit-app','Q'],['page-title','X']]){
-        const el=document.getElementById(id);if(el)candidates.push({el,code,action:id==='page-title'?()=>show('page'):null});
+        const el=(id==='page-title'?document.getElementById('keyboard-help'):null)||document.getElementById(id);if(el)candidates.push({el,code,action:id==='page-title'?()=>show('page'):null});
       }
     }else{
       const controls=Array.from(scope.querySelectorAll('button,a[href],input:not([type="hidden"]),select,textarea,summary,[tabindex="0"],[data-key-list]')).filter(el=>{
@@ -121,7 +122,7 @@
     if(el.matches('select,textarea,input:not([type="file"]):not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"])'))return;
     el.click();
     if(el.dataset.page||el.dataset.go)requestAnimationFrame(()=>{
-      if(el.dataset.page==='history'||el.dataset.go==='history'){
+      if(el.dataset.page==='overview'||el.dataset.go==='overview'){
         const list=document.querySelector('#all-history [data-key-list]');if(list)enterList(list);else document.getElementById('history-search')?.focus();
       }else show('page');
     });

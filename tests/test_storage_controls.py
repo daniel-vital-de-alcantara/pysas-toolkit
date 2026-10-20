@@ -45,21 +45,21 @@ class StorageTests(unittest.TestCase):
             release.set();done=self.wait_job(job)
         self.assertEqual(done['status'],'READY',done)
         self.assertGreater(done['done'],0)
-        with zipfile.ZipFile(self.root/done['path']) as z:self.assertIn('runner/runs/good/log.log',z.namelist())
+        with zipfile.ZipFile(self.app.resolve(done['path'])) as z:self.assertIn('runner/runs/good/log.log',z.namelist())
         with patch.object(ui.windows_clipboard,'copy_file') as copy:
-            self.app.copy_file(export=job['id']);copy.assert_called_once_with(self.root/done['path'])
+            self.app.copy_file(export=job['id']);copy.assert_called_once_with(self.app.resolve(done['path']))
     def test_configs_export_works_while_running_and_excludes_saved_results(self):
         self.seed('live','RUNNING')
-        ui.atomic_json(self.app.storage/'bundle-paths.json',dict(paths=[str(self.root)],last=str(self.root)))
-        (self.app.storage/'parameters').mkdir();(self.app.storage/'parameters/_cases.sas').write_text('%let id=1;')
+        ui.atomic_json(self.app.config('bundle-paths.json'),dict(paths=[str(self.root)],last=str(self.root)))
+        (self.app.settings/'parameters').mkdir();(self.app.settings/'parameters/_cases.sas').write_text('%let id=1;')
         with self.assertRaisesRegex(ValueError,'Finish active'):self.app.exports.start('all')
         done=self.wait_job(self.app.exports.start('configs'))
-        with zipfile.ZipFile(self.root/done['path']) as z:
+        with zipfile.ZipFile(self.app.resolve(done['path'])) as z:
             self.assertEqual(set(z.namelist()),{'manifest.json','.pysas-ui/parameters/_cases.sas'})
             manifest=json.loads(z.read('manifest.json'));self.assertEqual(manifest['commands'],[])
             self.assertEqual(manifest['bundle_settings']['last'],str(self.root))
         self.app.commands['live']['status']='SUCCESS'
-        raw=(self.root/done['path']).read_bytes()
+        raw=(self.app.resolve(done['path'])).read_bytes()
         self.assertEqual(self.app.backup(io.BytesIO(raw),len(raw))['commands'],0)
         self.assertTrue((self.root/'runner/runs/live/log.log').is_file())
     def test_export_failure_is_local_job_error_and_releases_busy_flag(self):
