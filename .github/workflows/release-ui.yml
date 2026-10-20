@@ -2,7 +2,7 @@ name: Test and release PySAS Workbench
 
 on:
   push:
-    branches: [main]
+    branches: [main, codex/graph-runner]
     tags: ['v0.4.*']
   pull_request:
   workflow_dispatch:

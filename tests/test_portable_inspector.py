@@ -2,7 +2,8 @@
 import csv
 import io
 import json
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+from types import SimpleNamespace
 import shutil
 import tempfile
 import time
@@ -48,6 +49,18 @@ class PortableInspectorTests(unittest.TestCase):
         with patch.dict(engine.os.environ,{},clear=True):
             self.assertEqual(engine.saved_runs('files'),self.root/'runner/runs');self.assertEqual(engine.saved_runs('schedules'),self.root/'runs')
         with patch.dict(engine.os.environ,{'PYSAS_RUNS_DIR':str(self.base/'shared-tasks')}):self.assertEqual(engine.saved_runs('files'),self.base/'shared-tasks/files')
+    def test_windows_data_references_use_portable_forward_slashes(self):
+        class WindowsPath(PureWindowsPath):
+            def resolve(self):return self
+        app=SimpleNamespace(root=WindowsPath('C:/app'),tasks=WindowsPath('D:/data/tasks'),
+                            settings=WindowsPath('D:/data/settings'),storage=WindowsPath('D:/data/tasks/.workbench'))
+        with patch.object(ui_paths,'Path',WindowsPath):
+            for path,expected in [('D:/data/tasks/graph-sources/a.sas','tasks/graph-sources/a.sas'),
+                                  ('D:/data/tasks/files/run/logs/a.log','tasks/files/run/logs/a.log'),
+                                  ('D:/data/settings/graphs/plan.json','settings/graphs/plan.json'),
+                                  ('D:/data/tasks/.workbench/command.txt','.pysas-ui/command.txt'),
+                                  ('C:/app/example.sas','example.sas')]:
+                with self.subTest(path=path):self.assertEqual(ui_paths.relative(app,path),expected)
     def test_point_new_installation_to_existing_external_tasks_and_settings(self):
         run,_=self.seed();self.app.save_parameters({'name':'cases.sas','text':'%let ids=1;'})
         tasks=self.base/'shared-tasks';settings=self.base/'shared-settings'

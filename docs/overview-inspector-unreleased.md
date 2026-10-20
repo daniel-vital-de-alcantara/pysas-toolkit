@@ -1,6 +1,6 @@
 # Overview, inspector and portable data
 
-Included in Workbench `0.4.0-preview.31`, with the Graph tab and scoped Settings keyboard hints.
+Included in Workbench `0.4.0-preview.32`, with the Graph tab and scoped Settings keyboard hints.
 
 Overview owns the four status cards, with watcher stopping inside its card. The searchable Tasks table merges saved runs and command activity, including commands with no SAS run folder. A continued schedule appears once. The old History URL redirects to Overview. The app controls live at the bottom of the sidebar and disappear while inspecting.
 

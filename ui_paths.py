@@ -42,7 +42,7 @@ def resolve(app,value):
 def relative(app,path):
     path=Path(path).resolve()
     for base,prefix in ((app.storage,'.pysas-ui'),(app.tasks,'tasks'),(app.settings,'settings'),(app.root,'')):
-        if path.is_relative_to(base):return str(Path(prefix)/path.relative_to(base))
+        if path.is_relative_to(base):return (Path(prefix)/path.relative_to(base)).as_posix()
     return ''
 
 def initialize(app):

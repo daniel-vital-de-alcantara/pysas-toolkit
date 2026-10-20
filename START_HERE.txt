@@ -1,4 +1,4 @@
-PySAS Workbench 0.4.0-preview.31
+PySAS Workbench 0.4.0-preview.32
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
@@ -137,7 +137,7 @@ SAS execution is only available on Windows.
 
 Project: https://github.com/daniel-vital-de-alcantara/pysas-toolkit
 
-New in preview.31
+New in preview.32
 -----------------
 - Graph is a separate tab; the existing Run tab is preserved. Link local SAS
   files or upload EGP/SAS files, choose embedded programs, arrange cards and

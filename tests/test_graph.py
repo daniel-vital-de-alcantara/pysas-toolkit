@@ -69,14 +69,14 @@ class GraphTests(unittest.TestCase):
         value=graph([node('A',self.source,row_start=2,row_end=2)],setup=[node('S',setup)],connection=self.project)
         folder=self.engine.prepare_graph_run(self.save(value));self.source.write_text('changed after snapshot;');setup.write_text('changed setup;')
         captured=[]
-        def execute(*args,**kwargs):captured.append(args[2].read_text());return self.fake_execute(*args,**kwargs)
+        def execute(*args,**kwargs):captured.append(args[2].read_text(encoding='utf-8-sig'));return self.fake_execute(*args,**kwargs)
         with patch.object(self.engine,'execute_eg',side_effect=execute),contextlib.redirect_stdout(io.StringIO()):
             model,tasks=self.engine.graph_tasks(folder)
             self.engine.execute_schedule(argparse.Namespace(workers=10,no_notify=True,cancel_file=None),folder,self.project,tasks)
         self.assertEqual(len(captured),1);self.assertIn('library_token',captured[0]);self.assertIn('line two;',captured[0]);self.assertNotIn('line one;',captured[0]);self.assertNotIn('changed',captured[0]);self.assertLess(captured[0].index('library_token'),captured[0].index('line two;'))
-        self.assertIn('ALWAYS_RUN_DEFINITION',(folder/'run_summary.csv').read_text());self.assertIn('graph order',(folder/'schedule.log').read_text())
+        self.assertIn('ALWAYS_RUN_DEFINITION',(folder/'run_summary.csv').read_text(encoding='utf-8-sig'));self.assertIn('graph order',(folder/'schedule.log').read_text(encoding='utf-8-sig'))
         self.assertTrue((folder/'graph-sources.json').is_file())
-        manifest=json.loads((folder/'graph-sources.json').read_text())
+        manifest=json.loads((folder/'graph-sources.json').read_text(encoding='utf-8-sig'))
         self.assertEqual(manifest['nodes']['A']['origin']['path'],str(self.source))
     def test_skipped_middle_node_waits_for_all_prerequisites(self):
         value=graph([node('A',self.source),node('B',self.source,skip=True),node('C',self.source)],edges=[{'from':'A','to':'B'},{'from':'B','to':'C'}],connection=self.project)
@@ -87,14 +87,14 @@ class GraphTests(unittest.TestCase):
             if program=='C':self.assertTrue(finished.is_set())
             return self.fake_execute(*args,**kwargs)
         status,folder=self.run_graph(value,execute)
-        self.assertEqual(status,0);self.assertEqual(seen,['A','C']);self.assertIn('SKIPPED_SUCCESS',(folder/'run_summary.csv').read_text())
+        self.assertEqual(status,0);self.assertEqual(seen,['A','C']);self.assertIn('SKIPPED_SUCCESS',(folder/'run_summary.csv').read_text(encoding='utf-8-sig'))
     def test_egp_graph_uses_selected_program_server_and_exports_outputs_with_graph_bridge(self):
         value=graph([dict(id='A',name='Friendly name',source=dict(type='egp',path=str(self.project),program_id='CodeTask-A'))])
         captured=[]
         def execute(*args,**kwargs):captured.append((args,kwargs));return self.fake_execute(*args,**kwargs)
         status,_=self.run_graph(value,execute);args,kwargs=captured[0]
         self.assertEqual(status,0);self.assertEqual(args[0],'RUNGRAPH');self.assertEqual(args[3],'Extract')
-        self.assertIn('Set sourceCode = FindProgram(programName)',kwargs['bridge']);self.assertIn('/* café */',args[2].read_text())
+        self.assertIn('Set sourceCode = FindProgram(programName)',kwargs['bridge']);self.assertIn('/* café */',args[2].read_text(encoding='utf-8-sig'))
         self.assertIn('If UCase(mode) <> "RUNFILE" And UCase(mode) <> "RUNGRAPH" Then',kwargs['bridge'])
         self.assertNotIn('If UCase(mode) = "RUNGRAPH" Then',self.engine.VBS)
     def test_duplicate_egp_labels_fail_before_sas_and_source_failures_publish_no_partial_run(self):
@@ -111,10 +111,10 @@ class GraphTests(unittest.TestCase):
         status,folder=self.run_graph(value,fail);self.assertEqual(status,1)
         self.source.write_text('live source changed;')
         captured=[]
-        def execute(*args,**kwargs):captured.append(args[2].read_text());return self.fake_execute(*args,**kwargs)
+        def execute(*args,**kwargs):captured.append(args[2].read_text(encoding='utf-8-sig'));return self.fake_execute(*args,**kwargs)
         with patch.object(self.engine,'execute_eg',side_effect=execute),contextlib.redirect_stdout(io.StringIO()):
             result=self.engine.graph_run(argparse.Namespace(action='continue',path=str(folder),workers=1,no_notify=True,cancel_file=None))
-        self.assertEqual(result,0);self.assertNotIn('live source changed',captured[0]);self.assertIn('2 parts',(folder/'schedule.log').read_text())
+        self.assertEqual(result,0);self.assertNotIn('live source changed',captured[0]);self.assertIn('2 parts',(folder/'schedule.log').read_text(encoding='utf-8-sig'))
         (folder/'sources/A.selected.sas').write_text('tampered')
         with self.assertRaisesRegex(ValueError,'snapshot changed'):self.engine.graph_tasks(folder)
     def test_cli_graph_valid_without_openpyxl_and_legacy_parser_is_retained(self):
@@ -136,7 +136,7 @@ class GraphTests(unittest.TestCase):
             result=self.engine.graph_run(argparse.Namespace(action='run',path=str(self.save(value)),workers=1,no_notify=True,cancel_file=str(control)))
         self.assertEqual(result,130);self.assertEqual(called,['A'])
         folder=next((self.root/'runs').glob('*__graph_*'))
-        self.assertIn('CANCELLED',(folder/'run_summary.csv').read_text())
+        self.assertIn('CANCELLED',(folder/'run_summary.csv').read_text(encoding='utf-8-sig'))
 
     def test_invalid_parallelism_is_rejected_even_when_continuing(self):
         for workers in (0,33,-1):

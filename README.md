@@ -39,9 +39,9 @@ is required. Inaccessible members remain listed with unknown metadata; readable 
 with warnings and incomplete storage totals. Saved snapshots remain available offline and travel with saved-data
 backups; missing metadata is shown as unknown.
 
-The released command-line toolkit is version 0.3.16; the released UI preview is 0.4.0-preview.31.
+The released command-line toolkit is version 0.3.16; the released UI preview is 0.4.0-preview.32.
 
-Preview.31 adds a separate **Graph** tab for linked SAS files or embedded EGP programs, using the same dependency scheduler with ordered shared setup. The existing Run/Excel workflow remains available. Settings keyboard hints now choose a section first, then its actions. Overview merges runs and commands into searchable Tasks; inspectors use Outputs/Logs/Tasks; portable Tasks and Settings folders can be reused between installations. See the [Graph guide](docs/graph-runner.md) and [release notes](docs/next-version/release-notes.md). Live SAS and desktop visual acceptance remain pending; this is a testing preview.
+Preview.32 adds a separate **Graph** tab for linked SAS files or embedded EGP programs, using the same dependency scheduler with ordered shared setup. The existing Run/Excel workflow remains available. Settings keyboard hints now choose a section first, then its actions. Overview merges runs and commands into searchable Tasks; inspectors use Outputs/Logs/Tasks; portable Tasks and Settings folders can be reused between installations. See the [Graph guide](docs/graph-runner.md) and [release notes](docs/next-version/release-notes.md). Live SAS and desktop visual acceptance remain pending; this is a testing preview.
 
 ## Requirements
 

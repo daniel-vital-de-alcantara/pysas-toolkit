@@ -1,6 +1,6 @@
 # Graph runner · testing preview
 
-The **Graph** tab is a separate way to prepare a single program or a dependency schedule. The existing **Run** tab and Excel schedule commands remain available. Included in Workbench 0.4.0-preview.31 with standalone engine 0.3.16.
+The **Graph** tab is a separate way to prepare a single program or a dependency schedule. The existing **Run** tab and Excel schedule commands remain available. Included in Workbench 0.4.0-preview.32 with standalone engine 0.3.16.
 
 ## Build a graph
 

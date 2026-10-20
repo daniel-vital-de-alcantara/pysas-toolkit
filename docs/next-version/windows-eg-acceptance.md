@@ -1,6 +1,6 @@
 # Manual Windows / Enterprise Guide acceptance
 
-Status: target-environment checks pending. The user authorized publishing preview.31 for testing with Graph, portable data and Settings keyboard improvements. These manual checks still remain; draft PRs stay unmerged. Automated Windows COM tests use fake EG objects, not a production SAS server.
+Status: target-environment checks pending. The user authorized publishing preview.32 for testing with Graph, portable data and Settings keyboard improvements. These manual checks still remain; draft PRs stay unmerged. Automated Windows COM tests use fake EG objects, not a production SAS server.
 
 ## UI and keyboard
 
