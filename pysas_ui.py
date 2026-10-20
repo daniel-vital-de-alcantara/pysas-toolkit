@@ -29,6 +29,7 @@ import ui_parameters
 import ui_servers
 import ui_explore
 from ui_logs import LogIndex
+import ui_graph
 import ui_paths
 import ui_storage
 import windows_clipboard
@@ -197,7 +198,11 @@ class Workbench:
     def upload(self, query, stream, length):
         destination = query.get("target", ["inputs"])[0]
         folders = self.folders()
-        if destination == "bundle":
+        if destination == "graph":
+            if Path(query.get("name", [""])[0]).suffix.casefold() not in {".sas", ".egp"}: raise ValueError("Graph sources must be SAS or EGP files.")
+            folder = self.tasks / "graph-sources"
+            folder.mkdir(exist_ok=True)
+        elif destination == "bundle":
             folder = self.code_root(query.get("code_root", [""])[0])
         elif destination in folders:
             folder = Path(folders[destination])
@@ -215,7 +220,9 @@ class Workbench:
                 if self.storage_busy: raise ValueError("Wait for the saved-data operation to finish.")
                 self.uploading = True
             try:
-                return receive_upload(folder, name, stream, length)
+                result = receive_upload(folder, name, stream, length)
+                if destination == "graph": result["path"] = self.relative(Path(result["path"]))
+                return result
             finally:
                 self.uploading = False
 
@@ -353,6 +360,16 @@ class Workbench:
         if action in {"run", "watch", "schedule", "continue", "server-refresh"} and os.name != "nt":
             raise ValueError("SAS execution requires Windows and SAS Enterprise Guide. File tools and history work here.")
         data = dict(data)
+        if action == "schedule" and data.get("_graph_plan"):
+            plan = within(self.storage / "graph-plans", data["_graph_plan"])
+            if not plan.is_file(): raise ValueError("Graph launch plan is missing.")
+            workers = int(data.get("workers", 10))
+            if not 1 <= workers <= 32: raise ValueError("Workers must be between 1 and 32.")
+            return "schedule", ["graph", "run", str(plan), "--workers", str(workers), "--no-notify"]
+        if action == "continue" and (self.input_path(data.get("run_dir", "")) / "graph.json").is_file():
+            workers = int(data.get("workers", 10))
+            if not 1 <= workers <= 32: raise ValueError("Workers must be between 1 and 32.")
+            return "continue", ["graph", "continue", str(self.input_path(data['run_dir'])), "--workers", str(workers), "--no-notify"]
         if action == "server-refresh":
             ui_servers.library_filter(data.get("libraries", ""))
             data["template"] = self.server_template(data.get("template", ""))
@@ -462,6 +479,8 @@ class Workbench:
                 raise ValueError("PySAS is closing and finishing its active jobs.")
             if action == "watch" and any(c["action"] == "watch" and c["status"] in ACTIVE for c in self.commands.values()):
                 raise ValueError("The watcher is already running in this workbench.")
+            if data.get("graph_id") and any(c.get("graph_id") == data["graph_id"] and c["status"] in ACTIVE for c in self.commands.values()):
+                raise ValueError("This graph is already running. Stop it or wait for it to finish.")
             display_name = self.display_name(data.get("display_name", ""))
             identifier = uuid.uuid4().hex
             item = {"id": identifier, "action": action, "args": list(args),
@@ -469,12 +488,17 @@ class Workbench:
                     "code_root": str(self.code_root(data.get("code_root"))) if action.startswith("bundle-") else None,
                     "started": time.time(), "finished": None, "status": "RUNNING", "tasks": {}, "message": "",
                     "can_cancel_file": True}
+            item["graph_id"] = data.get("graph_id")
             item["default_name"] = item["name"]
             item["display_name"] = display_name
             if display_name: item["name"] = display_name
             if action == "continue":
                 previous = self.input_path(data["run_dir"])
                 item["resume_path"] = self.relative(previous)
+                if (previous / "graph.json").is_file():
+                    associated = sorted((c for c in self.commands.values() if c.get("graph_id") and c.get("path") == item["resume_path"]),
+                                        key=lambda c: c["started"], reverse=True)
+                    item["graph_id"] = associated[0]["graph_id"] if associated else read_json(previous / "graph.json", {}).get("id")
                 display_name = read_json(previous / "run-display.json", {}).get("name", "")
                 item["display_name"] = display_name
                 if display_name: item["name"] = display_name
@@ -1262,6 +1286,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond({**self.server.app.state(refresh=value("refresh") == "1"), "token": self.server.token})
             elif url.path == "/api/data-migration":
                 self.respond(self.server.app.migration or {"status":"IDLE"})
+            elif url.path == "/api/graphs":
+                self.respond(ui_graph.load(self.server.app, value("id")) if value("id") else {"graphs": ui_graph.listing(self.server.app), "sources": ui_graph.sources(self.server.app)})
             elif url.path == "/api/export-status":
                 self.respond(self.server.app.exports.get(value("id")))
             elif url.path == "/api/run-zip":
@@ -1338,7 +1364,7 @@ class Handler(BaseHTTPRequestHandler):
                     while chunk := f.read(256 * 1024):
                         self.wfile.write(chunk)
             else:
-                name = {"/": "index.html", "/app.js": "app.js", "/keyboard.js": "keyboard.js", "/style.css": "style.css", "/icon.svg": "icon.svg"}.get(url.path)
+                name = {"/": "index.html", "/app.js": "app.js", "/keyboard.js": "keyboard.js", "/graph.js": "graph.js", "/style.css": "style.css", "/icon.svg": "icon.svg"}.get(url.path)
                 if not name:
                     self.respond({"error": "Not found."}, 404)
                     return
@@ -1377,7 +1403,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.connection.settimeout(60)
                 self.respond(self.server.app.upload(parse_qs(url.query), self.rfile, length))
                 return
-            if length < 0 or length > 1024 * 1024:
+            limit = 2 * 1024 * 1024 + 4096 if url.path in {"/api/graphs", "/api/graph-validate", "/api/graph-run"} else 1024 * 1024
+            if length < 0 or length > limit:
                 raise ValueError("Request is too large.")
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
@@ -1385,6 +1412,17 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/quit":
                 self.respond({"message": "Closing PySAS after active jobs finish."})
                 threading.Thread(target=self.server.request_close, daemon=True).start()
+            elif self.path == "/api/graphs":
+                self.respond(ui_graph.save(self.server.app, data))
+            elif self.path == "/api/graph-source":
+                self.respond(ui_graph.link_file(self.server.app, data))
+            elif self.path == "/api/graph-egp":
+                self.respond(ui_graph.egp_programs(self.server.app, data))
+            elif self.path == "/api/graph-validate":
+                graph = ui_graph.bind(self.server.app, data.get("graph"), runnable=True)
+                self.respond({"nodes": len(graph["nodes"]), "setup": len(graph["setup"]), "workers": graph["workers"]})
+            elif self.path == "/api/graph-run":
+                self.respond(ui_graph.launch(self.server.app, data))
             elif self.path == "/api/export":
                 self.respond(self.server.app.exports.start(data.get("scope"), data.get("path", "")))
             elif self.path == "/api/cleanup":

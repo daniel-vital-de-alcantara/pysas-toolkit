@@ -8,9 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from pysas_ui import VERSION
 
-FILES = ["pysas.py", "pysas_ui.py", "ui_worker.py", "ui_support.py", "ui_data.py", "ui_parameters.py", "ui_servers.py", "ui_explore.py", "ui_logs.py", "ui_storage.py", "ui_paths.py", "windows_app.py", "windows_clipboard.py", "launch_workbench.py", "START_PYSAS_CONSOLE.bat", "START_PYSAS.bat", "START_PYSAS_BROWSER.bat", "START_HERE.txt",
-         "README.md", "LICENSE", "docs/egp-extraction.md", "docs/overview-inspector-unreleased.md", "docs/scheduler-schema.md", "docs/execution-investigation.md", "docs/ui-workbench.md", "docs/next-version/release-notes.md", "docs/next-version/windows-eg-acceptance.md",
-         "examples/schedule_example.csv", "ui/index.html", "ui/app.js", "ui/keyboard.js", "ui/style.css", "ui/icon.svg", "ui/icon.ico"]
+FILES = ["pysas.py", "pysas_ui.py", "ui_worker.py", "ui_support.py", "ui_data.py", "ui_parameters.py", "ui_servers.py", "ui_explore.py", "ui_logs.py", "ui_storage.py", "ui_paths.py", "ui_graph.py", "windows_app.py", "windows_clipboard.py", "launch_workbench.py", "START_PYSAS_CONSOLE.bat", "START_PYSAS.bat", "START_PYSAS_BROWSER.bat", "START_HERE.txt",
+         "README.md", "LICENSE", "docs/graph-runner.md", "docs/egp-extraction.md", "docs/overview-inspector-unreleased.md", "docs/scheduler-schema.md", "docs/execution-investigation.md", "docs/ui-workbench.md", "docs/next-version/release-notes.md", "docs/next-version/windows-eg-acceptance.md",
+         "examples/schedule_example.csv", "ui/index.html", "ui/app.js", "ui/keyboard.js", "ui/graph.js", "ui/style.css", "ui/icon.svg", "ui/icon.ico"]
 
 
 def build(output=None):

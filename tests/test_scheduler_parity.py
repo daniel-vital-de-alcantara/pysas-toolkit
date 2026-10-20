@@ -193,6 +193,24 @@ class SchedulerParityTests(unittest.TestCase):
         self.assertEqual(rc, 0, console)
         self.assertEqual((self.root/'executed.txt').read_text(), 'TARGET_SERVER')
 
+    def test_graph_bridge_executes_prepared_source_on_original_egp_program_server(self):
+        project = self.project()
+        source = self.root/'selected.sas'; source.write_text('graph_target_token;', encoding='utf-8')
+        setup = self.root/'setup.sas'; setup.write_text('%let city=café;', encoding='utf-8')
+        shared = definition('Shared setup', task_id='setup', always_run=True,
+                            _graph_source=dict(path=str(setup)))
+        task = definition('Friendly graph label', task_id='graph_target', _always_run=[shared],
+                          _graph_source=dict(path=str(source), project=str(project), program='Realised.sas', tables=False))
+        with patch.object(engine, 'VBS', self.current), contextlib.redirect_stdout(io.StringIO()):
+            result = engine.scheduler_task(task, project, self.root/'graph')
+        folder = self.root/'graph/graph_target'
+        self.assertEqual(result['status'], 'SUCCESS', engine.read_text(folder/'console.txt'))
+        self.assertEqual((folder/'executed.txt').read_text(), 'TARGET_SERVER')
+        code = engine.read_text(next((folder/'code').glob('*.sas')))
+        self.assertLess(code.index('%let city=café;'), code.index('graph_target_token;'))
+        self.assertNotIn('data realised;', code)
+        self.assertTrue(list((folder/'logs').glob('*.log')))
+
     def test_ui_file_parameters_execute_after_init_and_survive_success(self):
         (self.root/'pysas.py').write_text((ROOT/'pysas.py').read_text(encoding='utf-8') + '\nVBS = ' + repr(self.current), encoding='utf-8')
         self.programs = [('Seed', 'seed;', 'TARGET_SERVER')]

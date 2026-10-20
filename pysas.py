@@ -1088,7 +1088,7 @@ def forward_bridge_progress(path: Path, offset: int, pending: bytes, run_dir: Pa
 
 
 def execute_eg(mode: str, project: Path, sas_path: Path, program: str, row_start: int,
-               row_end: int, run_dir: Path, tables: bool, cancel_file: str | Path | None = None) -> tuple[int, str]:
+               row_end: int, run_dir: Path, tables: bool, cancel_file: str | Path | None = None, bridge: str | None = None) -> tuple[int, str]:
     project, sas_path, run_dir = project.resolve(), sas_path.resolve(), run_dir.resolve()
     logs = run_dir / "logs"; code_dir = run_dir / "code"; results = run_dir / "results"
     for folder in (logs, code_dir, results): folder.mkdir(parents=True, exist_ok=True)
@@ -1104,12 +1104,12 @@ def execute_eg(mode: str, project: Path, sas_path: Path, program: str, row_start
     temp_prefix = run_dir / "_pysas_table"
     fd, vbs_name = tempfile.mkstemp(prefix="pysas_", suffix=".vbs")
     os.close(fd); vbs_path = Path(vbs_name)
-    vbs_path.write_text(VBS, encoding="utf-16")
+    vbs_path.write_text(bridge or VBS, encoding="utf-16")
     command = [str(cscript_path()), "//nologo", str(vbs_path), mode, str(project), str(sas_path),
                program, str(row_start), str(row_end), str(log_path), str(code_path), str(results),
                str(manifest) if tables else "", str(temp_prefix)]
     shared_text = shared_work_code()
-    if shared_text and mode.upper() != "RUNFILE":
+    if shared_text and mode.upper() not in {"RUNFILE", "RUNGRAPH"}:
         shared_path = run_dir / "_shared_work.sas"
         shared_path.write_text(shared_text, encoding="utf-8")
         command.append(str(shared_path))
@@ -1401,6 +1401,7 @@ def describe_selection(task: dict[str, Any]) -> str:
 
 
 def scheduler_task(task: dict[str, Any], project: Path, task_root: Path) -> dict[str, Any]:
+    if task.get("_graph_source"): return graph_task(task, project, task_root)
     task_dir = task_root / safe_name(task["task_id"]); task_dir.mkdir(parents=True, exist_ok=True)
     report_progress(task_dir, "preparing", f"Preparing {task['program']} ({describe_selection(task)})")
     task_project = task_dir / project.name; shutil.copy2(project, task_project)
@@ -1464,7 +1465,7 @@ def write_schedule_log(run_dir: Path, results: list[dict[str, Any]]) -> Path:
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as output:
             output.write(f"PySAS {VERSION} — Full schedule log\nSchedule: {run_dir.name}\n")
-            output.write("Tasks are grouped in workbook order; parallel task durations overlap.\n")
+            output.write("Tasks are grouped in " + ("graph order" if (run_dir/"graph.json").is_file() else "workbook order") + "; parallel task durations overlap.\n")
             output.write("Includes available SAS logs and automation console output.\n\n")
             state = schedule_state(run_dir)
             if len(state["attempts"]) > 1:
@@ -1510,6 +1511,9 @@ def write_summary(run_dir: Path, results: list[dict[str, Any]]) -> None:
     text += [f"{r['task_id']}: {r['status']} ({r.get('elapsed', 0):.1f}s)" for r in results]
     (run_dir / "run_summary.txt").write_text("\n".join(text) + "\n", encoding="utf-8")
     write_schedule_log(run_dir, results)
+    if (run_dir / "graph.json").is_file():
+        try: import openpyxl
+        except ImportError: return
     Workbook, _, Font, PatternFill, get_column_letter = require_openpyxl()
     wb = Workbook(); ws = wb.active; ws.title = "Summary"; ws.append(fields)
     for cell in ws[1]: cell.font = Font(bold=True); cell.fill = PatternFill("solid", fgColor="D9EAF7")
@@ -1606,7 +1610,7 @@ def execute_schedule(args, run_dir, project, tasks):
     definitions = [t for t in tasks if t["always_run"] and not t["skip"]]
     pending = {t["task_id"].casefold(): {**t, "_always_run": definitions, "_cancel_file": str(cancel_file)} for t in tasks if not t["always_run"]}
     results = [{**t, "status": "SKIPPED_SUCCESS" if t["skip"] else "ALWAYS_RUN_DEFINITION",
-                "elapsed": 0.0, "message": "Marked skip" if t["skip"] else "Prepended before each program in workbook order"}
+                "elapsed": 0.0, "message": "Marked skip" if t["skip"] else "Prepended before each program in " + ("graph order" if (run_dir/"graph.json").is_file() else "workbook order")}
                for t in tasks if t["always_run"]]
     for key, task in list(pending.items()):
         previous = prior.get(key, {})
@@ -1710,6 +1714,273 @@ def schedule_continue(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# JSON dependency graphs (Excel schedules keep their existing execution path)
+# ---------------------------------------------------------------------------
+GRAPH_FORMAT = "pysas-graph-1"
+GRAPH_LIMIT = 2 * 1024**2
+GRAPH_SOURCE_LIMIT = 16 * 1024**2
+
+
+def validate_graph(value, *, runnable=False):
+    if not isinstance(value, dict) or value.get("format") != GRAPH_FORMAT:
+        raise ValueError("Choose a PySAS graph JSON file (pysas-graph-1).")
+    def text(v, label, limit=2048):
+        if not isinstance(v, str) or len(v) > limit or any(ord(c) < 32 for c in v):
+            raise ValueError(label + " is invalid.")
+        return v.strip()
+    graph_id = text(value.get("id", ""), "Graph ID", 64)
+    if graph_id and (not re.fullmatch(r"[a-zA-Z0-9_-]+", graph_id) or egp_component(graph_id) != graph_id): raise ValueError("Invalid graph ID.")
+    name = text(value.get("name", "Untitled graph"), "Graph name", 120) or "Untitled graph"
+    workers = value.get("workers", 10)
+    if type(workers) is not int or not 1 <= workers <= 32: raise ValueError("Choose 1 to 32 parallel programs.")
+    connection = text(value.get("connection", ""), "Connection EGP")
+    nodes, setup, seen = [], [], set()
+    for field, output, maximum in (("setup", setup, 100), ("nodes", nodes, 200)):
+        entries = value.get(field, [])
+        if not isinstance(entries, list) or len(entries) > maximum: raise ValueError(f"Too many {field} entries (maximum {maximum}).")
+        for node in entries:
+            if not isinstance(node, dict): raise ValueError("Each program must be an object.")
+            identifier = text(node.get("id"), "Program ID", 60)
+            if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,59}", identifier) or egp_component(identifier) != identifier:
+                raise ValueError("Program IDs need letters, digits, underscores or hyphens, and a valid Windows filename.")
+            if identifier.casefold() in seen: raise ValueError("Duplicate program ID: " + identifier)
+            seen.add(identifier.casefold())
+            source = node.get("source")
+            if not isinstance(source, dict) or source.get("type") not in {"file", "egp"}: raise ValueError(identifier + ": choose a SAS file or embedded EGP program.")
+            path = text(source.get("path", ""), "Source path")
+            if not path: raise ValueError(identifier + ": source path is required.")
+            cleaned = dict(type=source['type'], path=path)
+            if source['type'] == 'egp':
+                cleaned['program_id'] = text(source.get('program_id', ''), 'EGP program ID', 200)
+                if not cleaned['program_id']: raise ValueError(identifier + ': choose an embedded EGP program.')
+            item = dict(id=identifier, name=text(node.get('name', identifier), 'Program name', 120) or identifier, source=cleaned)
+            for flag, default in (('skip', False), ('stop_process_on_error', True), ('stop_program_on_error', False), ('tables', False)):
+                v = node.get(flag, default)
+                if type(v) is not bool: raise ValueError(identifier + ': '+flag+' must be true or false.')
+                item[flag] = v
+            item['section'] = text(node.get('section', ''), 'Section name', 200)
+            for bound in ('row_start', 'row_end'):
+                v = node.get(bound)
+                if v == 0: v = None
+                if v is not None and (type(v) is not int or v < 1): raise ValueError(identifier + ': row bounds must be positive integers.')
+                item[bound] = v
+            if item['section'] and (item['row_start'] or item['row_end']): raise ValueError(identifier + ': choose a section or row range, not both.')
+            if item['row_start'] and item['row_end'] and item['row_start'] > item['row_end']: raise ValueError(identifier + ': row_start exceeds row_end.')
+            for coordinate in ('x', 'y'):
+                v = node.get(coordinate, 0)
+                if type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 20000: raise ValueError('Canvas positions must be between 0 and 20,000.')
+                item[coordinate] = round(v, 2)
+            output.append(item)
+    if runnable and not any(not n['skip'] for n in nodes): raise ValueError('Add at least one enabled program below shared setup.')
+    edges = value.get('edges', [])
+    if not isinstance(edges, list) or len(edges) > 2000: raise ValueError('Graph has too many dependencies (maximum 2,000).')
+    known = {n['id'] for n in nodes}; pairs = set(); links = []
+    for edge in edges:
+        if not isinstance(edge, dict): raise ValueError('Each dependency needs from and to IDs.')
+        first, last = edge.get('from'), edge.get('to')
+        if not isinstance(first, str) or not isinstance(last, str) or first not in known or last not in known: raise ValueError('Dependencies must link existing program cards, not shared setup.')
+        if (first, last) in pairs: raise ValueError('Duplicate dependency.')
+        if first == last: raise ValueError('A program cannot depend on itself.')
+        pairs.add((first, last)); links.append(dict(**{'from':first}, to=last))
+    waiting = set(known); dependencies = {k:{a for a,b in pairs if b==k} for k in known}
+    while waiting:
+        ready = {k for k in waiting if not dependencies[k] & waiting}
+        if not ready: raise ValueError('Circular dependency detected. Remove a link before saving or running.')
+        waiting -= ready
+    return dict(format=GRAPH_FORMAT, id=graph_id, name=name, connection=connection, workers=workers, setup=setup, nodes=nodes, edges=links)
+
+
+def load_graph(path, *, runnable=False):
+    path = Path(path)
+    if path.stat().st_size > GRAPH_LIMIT: raise ValueError('Graph JSON exceeds 2 MB.')
+    return validate_graph(json.loads(path.read_text(encoding='utf-8-sig')), runnable=runnable)
+
+
+def graph_source_path(value, base, suffix):
+    path = Path(value).expanduser()
+    path = (base/path).resolve() if not path.is_absolute() else path.resolve()
+    if not path.is_file() or path.suffix.casefold() != suffix: raise ValueError('Source is missing or has the wrong type: '+str(path))
+    return path
+
+
+def graph_egp_programs(path):
+    """Inspect embedded source and labels without opening Enterprise Guide."""
+    with zipfile.ZipFile(path) as archive:
+        infos = archive.infolist()
+        if len(infos)>20000 or sum(i.file_size for i in infos)>2*1024**3: raise ValueError('EGP exceeds the extraction limits.')
+        members = {}; seen_members=set()
+        for info in infos:
+            key = str(egp_archive_path(info.orig_filename))
+            if info.flag_bits & 1 or stat.S_ISLNK(info.external_attr >> 16): raise ValueError('Encrypted/symbolic EGP members are unsupported.')
+            if info.file_size > 256*1024**2: raise ValueError('EGP member exceeds 256 MB.')
+            if key.casefold() in seen_members: raise ValueError('Duplicate EGP archive path.')
+            seen_members.add(key.casefold());members[key] = info
+        programs, flows, warnings = egp_project_index(archive, members)
+        lookup = {k.casefold():i for k,i in members.items()}
+        counts = {}
+        for program in programs.values(): counts[program['label'].casefold()] = counts.get(program['label'].casefold(), 0)+1
+        result = []
+        for identifier, program in programs.items():
+            info = lookup.get((identifier+'/code.sas').casefold())
+            result.append(dict(id=identifier, name=program['label'], flow=flows.get(program.get('flow'), 'Unassigned'),
+                               member=info.filename if info else None, duplicate=counts[program['label'].casefold()]>1))
+        return result, warnings
+
+
+def select_graph_text(text, node):
+    lines = text.replace('\r\n','\n').replace('\r','\n').split('\n')
+    section = node.get('section')
+    if section:
+        start = f'* (please do not delete) section_start: {section};'.casefold()
+        end = f'* (please do not delete) section_end: {section};'.casefold()
+        starts = [i for i,line in enumerate(lines) if line.strip().casefold()==start]
+        ends = [i for i,line in enumerate(lines) if line.strip().casefold()==end]
+        if len(starts)!=1 or len(ends)!=1 or starts[0]>=ends[0]: raise ValueError(node['name']+': section markers are missing, duplicated or out of order.')
+        return '\n'.join(lines[starts[0]+1:ends[0]])
+    first, last = node.get('row_start') or 1, node.get('row_end') or len(lines)
+    if last>len(lines) or first>last: raise ValueError(node['name']+': row selection exceeds the source length.')
+    return '\n'.join(lines[first-1:last])
+
+
+def report_graph_plan(tasks):
+    """Observation hook; the dependency scheduler remains the execution owner."""
+    pass
+
+
+def graph_tasks(run_dir):
+    raw = json.loads((run_dir/'graph.json').read_text(encoding='utf-8'))
+    graph = validate_graph(raw, runnable=True)
+    evidence = json.loads((run_dir/'graph-sources.json').read_text(encoding='utf-8'))
+    def asset(relative):
+        path = (run_dir/egp_archive_path(relative)).resolve()
+        if not path.is_relative_to(run_dir.resolve()) or not path.is_file(): raise ValueError('Graph snapshot is missing or points outside its run.')
+        if path in checked: return path
+        expected = evidence['files'].get(str(egp_archive_path(relative)))
+        digest=hashlib.sha256()
+        with path.open('rb') as stream:
+            for chunk in iter(lambda:stream.read(1024*1024),b''):digest.update(chunk)
+        if not expected or digest.hexdigest()!=expected: raise ValueError('Graph snapshot changed; start a new graph run instead of continuing edited source.')
+        checked[path]=True
+        return path
+    tasks=[]
+    checked={}
+    for field in ('setup','nodes'):
+        for node in graph[field]:
+            saved=evidence['nodes'].get(node['id'])
+            if not saved: raise ValueError('Graph source manifest is incomplete.')
+            source=asset(saved['selected']); project=asset(saved['project']) if saved.get('project') else None
+            tasks.append(dict(task_id=node['id'], program=node['name'], section=node['section'], row_start=node['row_start'], row_end=node['row_end'],
+                              skip=node['skip'], always_run=field=='setup', max_parallel=graph['workers'], depends_on=[e['from'] for e in graph['edges'] if e['to']==node['id']],
+                              stop_process_on_error=node['stop_process_on_error'], stop_program_on_error=node['stop_program_on_error'],
+                              _graph_source=dict(path=str(source), project=str(project) if project else '', program=saved.get('egp_name',''), tables=node['tables'])))
+    report_graph_plan(tasks)
+    return graph, tasks
+
+
+def prepare_graph_run(path, workers=None):
+    path=Path(path).resolve(); graph=load_graph(path, runnable=True); base=path.parent
+    if workers is not None: graph=validate_graph({**graph,'workers':workers}, runnable=True)
+    root=saved_runs('schedules');root.mkdir(parents=True,exist_ok=True)
+    target=root/(now_stamp()+'__graph_'+safe_name(graph['name'],35));number=2
+    while target.exists():target=root/(now_stamp()+'__graph_'+safe_name(graph['name'],35)+'_'+str(number));number+=1
+    with tempfile.TemporaryDirectory(prefix='.graph-preparing-',dir=root) as temporary:
+        stage=Path(temporary)/'run';sources=stage/'sources';sources.mkdir(parents=True)
+        files={};records={};projects={};indexes={};connection_origin=graph['connection']
+        def keep_bytes(name,raw):
+            (stage/name).write_bytes(raw);files[name]=hashlib.sha256(raw).hexdigest();return name
+        def project_copy(value):
+            project=graph_source_path(value,base,'.egp')
+            if project in projects:return projects[project]
+            if project.stat().st_size>512*1024**2:raise ValueError('Connection EGP exceeds 512 MB.')
+            name='sources/project_'+str(len(projects))+'.egp'
+            shutil.copy2(project,stage/name)
+            digest=hashlib.sha256()
+            with (stage/name).open('rb') as stream:
+                for chunk in iter(lambda:stream.read(1024*1024),b''):digest.update(chunk)
+            files[name]=digest.hexdigest();projects[project]=name;return name
+        connection=project_copy(graph['connection']) if graph['connection'] else ''
+        graph['connection']=connection
+        for field in ('setup','nodes'):
+            for node in graph[field]:
+                print('Snapshotting '+node['name']+' ('+describe_selection(node)+')',flush=True)
+                source=node['source']; origin=dict(source);egp_name='';project='';program=None
+                if source['type']=='file':
+                    file=graph_source_path(source['path'],base,'.sas')
+                    if file.stat().st_size>GRAPH_SOURCE_LIMIT:raise ValueError(node['name']+': SAS source exceeds 16 MB.')
+                    raw=file.read_bytes();source['path']=keep_bytes('sources/'+node['id']+'.sas',raw)
+                    text=raw.decode(text_encoding(raw),errors='strict');project=connection
+                else:
+                    original=graph_source_path(source['path'],base,'.egp');project=project_copy(str(original))
+                    if project not in indexes:indexes[project]=graph_egp_programs(stage/project)[0]
+                    program=next((p for p in indexes[project] if p['id']==source['program_id']),None)
+                    if not program or not program['member']:raise ValueError(node['name']+': no readable embedded source; linked EGP programs must be supplied as SAS files.')
+                    if field=='nodes' and program['duplicate']:raise ValueError(node['name']+': duplicate EGP program names are ambiguous for server selection. Give the program a unique name in EG first.')
+                    with zipfile.ZipFile(stage/project) as archive:
+                        info=archive.getinfo(program['member'])
+                        if info.file_size>GRAPH_SOURCE_LIMIT:raise ValueError(node['name']+': SAS source exceeds 16 MB.')
+                        raw=archive.read(info)
+                    text=raw.decode(text_encoding(raw),errors='strict');source['path']=project;egp_name=program['name']
+                if field=='nodes' and not project and not node['skip']:raise ValueError('Choose a connection EGP for linked SAS programs.')
+                selected=select_graph_text(text,node)
+                selected_path=keep_bytes('sources/'+node['id']+'.selected.sas',selected.encode('utf-8'))
+                records[node['id']]=dict(selected=selected_path, project=project, egp_name=egp_name,
+                                         origin=origin,
+                                         source_hash=hashlib.sha256(raw).hexdigest(),selected_hash=hashlib.sha256(selected.encode('utf-8')).hexdigest())
+        (stage/'graph.json').write_text(json.dumps(graph,ensure_ascii=False,indent=2),encoding='utf-8')
+        (stage/'graph-sources.json').write_text(json.dumps(dict(format=GRAPH_FORMAT,files=files,nodes=records,connection_origin=connection_origin,graph_hash=hashlib.sha256((stage/'graph.json').read_bytes()).hexdigest()),indent=2),encoding='utf-8')
+        stage.rename(target)
+    return target
+
+
+def graph_bridge():
+    # This branch is used only by graph EGP nodes. Legacy RUNPROJECT/RUNFILE
+    # behavior and their server-selection rules stay exactly as before.
+    marker='If UCase(mode) = "RUNFILE" Then\n  If project.CodeCollection.Count'
+    replacement='If UCase(mode) = "RUNGRAPH" Then\n  Set sourceCode = FindProgram(programName)\n  text = ReadAll(sasPath)\n  selection = "graph selection (prepared before submission)"\nElseIf UCase(mode) = "RUNFILE" Then\n  If project.CodeCollection.Count'
+    return VBS.replace(marker,replacement,1).replace('If UCase(mode) <> "RUNFILE" Then','If UCase(mode) <> "RUNFILE" And UCase(mode) <> "RUNGRAPH" Then',1).replace('If UCase(mode) = "RUNFILE" Then\n  On Error Resume Next','If UCase(mode) = "RUNFILE" Or UCase(mode) = "RUNGRAPH" Then\n  On Error Resume Next',1)
+
+
+def graph_task(task, project, task_root):
+    folder=task_root/safe_name(task['task_id']);folder.mkdir(parents=True,exist_ok=True)
+    source=task['_graph_source']; template=Path(source['project']); task_project=folder/'connection.egp';shutil.copy2(template,task_project)
+    report_progress(folder,'preparing','Preparing '+task['program']+' ('+describe_selection(task)+')')
+    chunks=['options iomlogautoflush;']
+    if task.get('stop_program_on_error') or any(t.get('stop_program_on_error') for t in task.get('_always_run',[])):
+        chunks.append('options errorabend errorcheck=strict;')
+    shared=shared_work_code()
+    if shared:chunks.append(shared)
+    for definition in task.get('_always_run',[]):
+        report_progress(folder,'preparing','Appending shared setup: '+definition['program']+' ('+describe_selection(definition)+')')
+        chunks.extend(['/* ALWAYS_RUN_ITEM: '+safe_name(definition['task_id'])+' */',read_text(Path(definition['_graph_source']['path']))])
+    if shared:chunks.append(shared)
+    chunks.extend(['/* SCHEDULED_TARGET_START */',read_text(Path(source['path'])),'/* SCHEDULED_TARGET_END */'])
+    submitted=folder/'_submitted.sas';submitted.write_text('\n'.join(chunks)+'\n',encoding='utf-8')
+    began=time.time();mode='RUNGRAPH' if source.get('program') else 'RUNFILE'
+    rc,console=execute_eg(mode,task_project,submitted,source.get('program') or task['program'],0,0,folder,source.get('tables',False),cancel_file=task.get('_cancel_file'),bridge=graph_bridge() if mode=='RUNGRAPH' else None)
+    logs=list((folder/'logs').glob('*.log'));sas_error=any(detect_sas_error(log) for log in logs)
+    status='CANCELLED' if rc==130 else 'FAILED' if rc else 'SAS_ERROR' if sas_error else 'SUCCESS'
+    evidence=console+'\n'+'\n'.join(read_text(p) for p in logs)
+    if any(pattern in evidence.casefold() for pattern in CONNECTION_PATTERNS):status='CONNECTION_LOST'
+    return {**task,'status':status,'elapsed':time.time()-began,'task_dir':folder,'message':console.strip().splitlines()[-1] if console.strip() else ''}
+
+
+def graph_run(args):
+    if args.workers is not None and (type(args.workers) is not int or not 1 <= args.workers <= 32):
+        raise ValueError('Choose 1 to 32 parallel programs.')
+    if args.action=='continue':
+        run_dir=Path(args.path).resolve()
+        if not (run_dir/'run_summary.csv').is_file():raise ValueError('Choose a previous graph run with saved task results.')
+    else:run_dir=prepare_graph_run(args.path,args.workers)
+    raw=(run_dir/'graph.json').read_bytes();manifest=json.loads((run_dir/'graph-sources.json').read_text(encoding='utf-8'))
+    if hashlib.sha256(raw).hexdigest()!=manifest['graph_hash']:raise ValueError('Graph snapshot changed; create a new run instead.')
+    graph,tasks=graph_tasks(run_dir)
+    forwarded=argparse.Namespace(workers=args.workers or graph['workers'],no_notify=args.no_notify,cancel_file=getattr(args,'cancel_file',None),prior_elapsed=getattr(args,'prior_elapsed',None))
+    if args.action=='continue':forwarded._resume_dir=run_dir
+    project=next((Path(t['_graph_source']['project']) for t in tasks if not t['always_run'] and not t['skip']),None)
+    with schedule_lock(run_dir):return execute_schedule(forwarded,run_dir,project,tasks)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -1747,6 +2018,12 @@ def parser() -> argparse.ArgumentParser:
     rr.add_argument("--init-dir", help="folder containing shared _*.sas initialization files")
     rw.add_argument("--init-dir", help="folder containing shared _*.sas initialization files")
     rw.add_argument("--inbox", help="folder to watch; _*.sas files here initialize jobs instead of being queued")
+
+    graph = subs.add_parser("graph", help="run a JSON dependency graph without an Excel workbook")
+    graph.add_argument("action", choices=["run", "continue"]); graph.add_argument("path")
+    graph.add_argument("--workers", type=int); graph.add_argument("--no-notify", action="store_true")
+    graph.add_argument("--prior-elapsed", type=float, help="Known active seconds for continuing a legacy graph run")
+    graph.add_argument("--cancel-file", help=argparse.SUPPRESS); graph.set_defaults(func=graph_run)
 
     schedule = subs.add_parser("schedule", help="run an Excel dependency schedule")
     schedule.add_argument("action", nargs="?", choices=["run", "continue"], default="run")

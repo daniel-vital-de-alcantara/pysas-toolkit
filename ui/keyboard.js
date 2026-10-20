@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  const navigation={overview:"O",runner:"R",tools:"P",files:"S",servers:"V"};
+  const navigation={overview:"O",runner:"R",graph:"G",tools:"P",files:"S",servers:"V"};
   function codes(count){const width=Math.max(1,Math.ceil(Math.log(Math.max(1,count))/Math.log(26)));return Array.from({length:count},(_,i)=>{let code="";for(let n=0;n<width;n++){code=alphabet[i%26]+code;i=Math.floor(i/26);}return code;});}
   // Reserve explicit hints first. Allocate fallback letters from the control's
   // label, across the whole scope (including off-screen and disabled controls).
@@ -85,7 +85,7 @@
       }
     }else{
       const controls=Array.from(scope.querySelectorAll('button,a[href],input:not([type="hidden"]),select,textarea,summary,[tabindex="0"],[data-key-list]')).filter(el=>{
-        const list=el.closest('[data-key-list]');return !list||list===el;
+        if(el.closest('[data-graph-canvas]')&&!el.hasAttribute('data-graph-canvas'))return false;const list=el.closest('[data-key-list]');return !list||list===el;
       });
       const labels=assignHints(controls.map(el=>({preferred:el.dataset.keytip,label:label(el),identity:el.id||`${el.form?.id||""}/${el.name||""}/${label(el)}`})));
       candidates=controls.map((el,i)=>({el,code:labels[i]}));
@@ -118,6 +118,7 @@
     const el=target.el;hide();if(!el.isConnected||el.disabled)return;
     if(target.action){target.action();return;}
     if(el.hasAttribute('data-key-list')){enterList(el);return;}
+    if(el.hasAttribute('data-graph-canvas')){globalThis.PySASGraph?.focusCanvas();return;}
     el.focus();
     if(el.matches('select,textarea,input:not([type="file"]):not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"])'))return;
     el.click();

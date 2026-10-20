@@ -89,19 +89,24 @@ def export_backup(app, configs_only=False, progress=None, destination=None, *, m
     try:
         if progress: progress(0, 0, 'Scanning saved files')
         manifest = manifest if manifest is not None else backup_manifest(app, configs_only)
-        bases = [app.settings / 'parameters']
+        bases = [app.settings / 'parameters', app.settings / 'graphs']
         if not configs_only:
             for parent in (*[base for base,_ in app.run_bases()], app.storage / 'artifacts'):
                 if parent.is_dir():
                     for child in parent.iterdir():
                         if not child.is_symlink() and portable(app.relative(child)) not in app.legacy_moves and (before is None or getattr(child.stat(), 'st_birthtime', child.stat().st_ctime) <= before):
                             bases.append(child)
-        entries = [(p, ('.pysas-ui/parameters/'+p.name if p.parent==app.settings/'parameters' else portable(app.relative(p)))) for base in bases for p in safe_files(base) if p.name not in {'.schedule.lock', '_cancel.request'}]
+        entries = [(p, ('.pysas-ui/parameters/'+p.name if p.parent==app.settings/'parameters' else '.pysas-ui/graphs/'+p.name if p.parent==app.settings/'graphs' else portable(app.relative(p)))) for base in bases for p in safe_files(base) if p.name not in {'.schedule.lock', '_cancel.request'}]
         if not configs_only:
+            sources = app.tasks / 'graph-sources'
+            if sources.is_dir() and not sources.is_symlink():
+                entries.extend((p, portable(app.relative(p))) for p in sources.iterdir()
+                               if p.is_file() and not p.is_symlink() and p.suffix.lower() in {'.sas', '.egp'}
+                               and (before is None or getattr(p.stat(), 'st_birthtime', p.stat().st_ctime) <= before))
             for command in manifest["commands"]:
                 identifier = command["id"]
                 p = app.storage / (identifier + '.txt')
-                if p.is_file() and not p.is_symlink(): entries.append((p, ('.pysas-ui/parameters/'+p.name if p.parent==app.settings/'parameters' else portable(app.relative(p)))))
+                if p.is_file() and not p.is_symlink(): entries.append((p, ('.pysas-ui/parameters/'+p.name if p.parent==app.settings/'parameters' else '.pysas-ui/graphs/'+p.name if p.parent==app.settings/'graphs' else portable(app.relative(p)))))
         write_archive(out, entries, progress, manifest)
         return out, 'PySAS-configs.zip' if configs_only else 'PySAS-saved-data.zip'
     except BaseException:
@@ -141,6 +146,12 @@ def restore_backup(app, stream, length):
                     raise ValueError('Backup contains an unsafe or duplicate path.')
                 seen.add(name.casefold())
                 allowed = (len(parts) >= 4 and parts[:2] in {('tasks','files'),('tasks','schedules')}) or name == 'manifest.json' or (len(parts) >= 3 and parts[0] == 'runs') or (len(parts) >= 4 and parts[:2] == ('runner', 'runs')) or (len(parts) >= 4 and parts[:2] == ('.pysas-ui', 'artifacts')) or (len(parts) == 2 and parts[0] == '.pysas-ui' and re.fullmatch(r'[a-zA-Z0-9_-]+\.txt', parts[1]))
+                if len(parts)==3 and parts[:2]==('.pysas-ui','graphs'):
+                    if not re.fullmatch(r'[a-zA-Z0-9_-]{1,64}\.json',parts[2]) or i.file_size>2*1024**2: raise ValueError('Invalid graph backup entry.')
+                    allowed=True
+                if len(parts)==3 and parts[:2]==('tasks','graph-sources'):
+                    if PurePosixPath(parts[2]).suffix.lower() not in {'.sas','.egp'} or i.file_size>512*1024**2: raise ValueError('Invalid graph source backup entry.')
+                    allowed=True
                 if len(parts) == 3 and parts[:2] == ('.pysas-ui', 'parameters'):
                     ui_parameters.parameter_name(parts[2])
                     if i.file_size > ui_parameters.PARAMETER_LIMIT:
@@ -210,6 +221,12 @@ def restore_backup(app, stream, length):
             parameter_settings = dict(parameter_settings)
             parameter_settings['last'] = parameter_moves.get(parameter_settings.get('last'), '')
             if not parameter_settings['last']: parameter_settings['enabled'] = False
+        graph_sources=unpacked/'tasks/graph-sources'
+        if graph_sources.exists():
+            for source in graph_sources.iterdir():
+                target=app.tasks/'graph-sources'/source.name
+                if target.exists():target=target.with_name(source.stem+'_import_'+uuid.uuid4().hex[:8]+source.suffix)
+                mappings['tasks/graph-sources/'+source.name]=portable(app.relative(target));moves.append((source,target))
         ids = {}
         for item in manifest['commands']:
             if not isinstance(item, dict) or not isinstance(item.get('tasks', {}), dict) or not isinstance(item.get('args', []), list) or not isinstance(item.get('started'), (int, float)):
@@ -233,11 +250,24 @@ def restore_backup(app, stream, length):
                     rel = target + rel[len(source):]
                     break
             return str(app.resolve(rel)) if absolute else rel if rel != normalized or '\\' in value else value
+        graph_ids={}
+        graph_folder=unpacked/'.pysas-ui/graphs'
+        if graph_folder.exists():
+            from pysas import validate_graph
+            for source in graph_folder.iterdir():
+                graph=validate_graph(json.loads(source.read_text(encoding='utf-8')))
+                if graph.get('id') and graph['id']!=source.stem:raise ValueError('Graph ID does not match its backup filename.')
+                target=app.settings/'graphs'/source.name
+                if target.exists():target=target.with_name(uuid.uuid4().hex+'.json')
+                graph_ids[source.stem]=target.stem
+                graph=remap(graph);graph['id']=target.stem
+                source.write_text(json.dumps(graph,ensure_ascii=False),encoding='utf-8');moves.append((source,target))
         commands = []
         for original in manifest['commands']:
             item = remap(original)
             old_id = original['id']
             item['id'] = ids[old_id]
+            if item.get('graph_id') in graph_ids:item['graph_id']=graph_ids[item['graph_id']]
             item.pop('control_file', None)
             for record in [item, *item.get('tasks', {}).values()]:
                 if record.get('status') in {'RUNNING', 'STOPPING', 'CANCELLING', 'PENDING'}:
@@ -310,7 +340,8 @@ def restore_backup(app, stream, length):
             raise
         app.commands.update({c['id']: c for c in commands})
         app.invalidate_lists()
-        return {'runs': sum(not p.startswith('.pysas-ui/') for p in mappings), 'commands': len(commands), 'parameters': len(parameter_moves), 'missing_folders': missing}
+        return {'runs': sum(p.startswith(('runs/', 'runner/runs/', 'tasks/files/', 'tasks/schedules/')) for p in mappings),
+                'commands': len(commands), 'parameters': len(parameter_moves), 'graphs': len(graph_ids), 'missing_folders': missing}
 
 
 def signature(task):
@@ -353,7 +384,13 @@ def duration_history(root, commands, bases=None, resolve=None):
                     with (folder / 'run_summary.csv').open(encoding='utf-8-sig', newline='') as f: rows = list(csv.DictReader(f))
                     stamp = (folder / 'run_summary.csv').stat().st_mtime
                     scopes = {}
+                    if (folder / 'graph.json').is_file():
+                        from pysas import load_graph
+                        graph = load_graph(folder / 'graph.json')
+                        scopes = {n['id']: dict(program=n['name'], section=n['section'], row_start=n['row_start'], row_end=n['row_end'])
+                                  for n in graph['setup'] + graph['nodes']}
                     for workbook in folder.glob('*.xlsx'):
+                        if scopes: break
                         if workbook.name == 'run_summary.xlsx': continue
                         try:
                             scopes = {t['task_id']: t for t in load_schedule(workbook)}

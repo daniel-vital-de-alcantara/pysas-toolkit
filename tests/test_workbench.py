@@ -341,6 +341,32 @@ class HttpTests(unittest.TestCase):
         connection.close()
         return result
 
+    def test_graph_http_upload_save_validate_and_launch_use_existing_worker(self):
+        headers={'X-PySAS-Token':self.server.token}
+        self.assertEqual(self.request('POST','/api/graphs','{}')[0],403)
+        status,body,_=self.request('POST','/api/upload?target=graph&name=extract.sas',b'%put example;',headers)
+        self.assertEqual(status,200,body);source=json.loads(body)['path']
+        self.assertTrue(source.startswith('tasks/graph-sources/'))
+        self.assertEqual(self.request('POST','/api/upload?target=graph&name=bad.py',b'code',headers)[0],400)
+        project=self.root/'connection.egp';project.write_bytes(b'template')
+        graph=dict(format='pysas-graph-1',id='http_graph',name='HTTP graph',workers=10,connection=str(project),setup=[],
+                   nodes=[dict(id='A',name='Extract',source=dict(type='file',path=source),x=60,y=60)],edges=[])
+        payload=json.dumps({'graph':graph})
+        status,body,_=self.request('POST','/api/graphs',payload,headers)
+        self.assertEqual(status,200,body);saved=json.loads(body)
+        status,body,_=self.request('GET','/api/graphs?id=http_graph')
+        self.assertEqual(status,200);self.assertEqual(json.loads(body)['revision'],saved['revision'])
+        status,body,_=self.request('GET','/api/graphs')
+        self.assertEqual(json.loads(body)['sources'],[source]);self.assertEqual(status,200)
+        self.assertEqual(self.request('POST','/api/graphs',payload,headers)[0],400)
+        status,body,_=self.request('POST','/api/graph-validate',payload,headers)
+        self.assertEqual(status,200,body);self.assertEqual(json.loads(body)['nodes'],1)
+        with patch.object(self.server.app,'launch',return_value={'id':'graph_worker'}) as launch:
+            status,body,_=self.request('POST','/api/graph-run',payload,headers)
+            self.assertEqual(status,200,body);self.assertEqual(json.loads(body)['id'],'graph_worker')
+            self.assertEqual(launch.call_args.args[0]['action'],'schedule')
+        self.assertEqual(self.request('GET','/graph.js')[0],200)
+
     def test_log_summary_and_context_http(self):
         log=self.root/'sample.log';log.write_text('ERROR: first\nNOTE: done\nWARNING: last\n')
         status,body,_=self.request('GET','/api/log-summary?path=sample.log')

@@ -85,6 +85,8 @@ def observe(engine):
              elapsed=result["elapsed"], path=result["task_dir"], message=result["message"])
         return result
     engine.scheduler_task = task
+    if hasattr(engine, "report_graph_plan"):
+        engine.report_graph_plan = lambda tasks: emit("plan", tasks=tasks)
     original_load = engine.load_schedule
     @functools.wraps(original_load)
     def load(path):

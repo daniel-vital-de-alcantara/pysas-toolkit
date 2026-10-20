@@ -44,7 +44,7 @@ def folder_size(folder):
 
 
 def storage_usage(app):
-    return {'bytes': sum(folder_size(p) for p in (*[base for base,_ in app.run_bases()], app.storage/'artifacts', app.settings/'parameters')) + sum(p.stat().st_size for p in app.storage.glob('*') if p.is_file() and not p.is_symlink() and p.suffix in {'.txt', '.json', '.jsonl'}), 'export_bytes': folder_size(app.storage/'exports'), 'measured': time.time()}
+    return {'bytes': sum(folder_size(p) for p in (*[base for base,_ in app.run_bases()], app.storage/'artifacts', app.settings/'parameters', app.settings/'graphs', app.tasks/'graph-sources')) + sum(p.stat().st_size for p in app.storage.glob('*') if p.is_file() and not p.is_symlink() and p.suffix in {'.txt', '.json', '.jsonl'}), 'export_bytes': folder_size(app.storage/'exports'), 'measured': time.time()}
 
 
 class Exports:
