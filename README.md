@@ -1,18 +1,19 @@
 # PySAS Toolkit
 
-**PySAS 0.3.15** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
+**PySAS 0.3.16** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
 
 It grew out of day-to-day model-development and consulting work where large SAS processes were difficult to inspect, rerun, parallelise, move between environments and review consistently. The current implementation brings those workflows together in one portable `pysas.py` utility.
 
 ## What it does
 
-| Component | Status in 0.3.15 | Purpose |
+| Component | Status in 0.3.16 | Purpose |
 | --- | --- | --- |
 | SAS bundle utility | Implemented | Pack, verify and safely unpack SAS source trees with SHA-256 integrity metadata and backups |
 | EGP tools | Implemented | Inspect EGP archives, extract embedded SAS programs and conservatively repack them into an EGP template |
 | Standalone runner | Implemented | Run a SAS file through SAS Enterprise Guide automation with shared init code, logs and results |
 | Watch-folder runner | Implemented | Watch an inbox, execute stable `.sas` files concurrently and keep timestamped run folders |
 | Table extraction | Implemented | Export output datasets to one Excel workbook for `.tables.sas` jobs or `--tables` runs |
+| JSON dependency graphs | Implemented | Link SAS/EGP programs on a canvas or run graph JSON through the same scheduler |
 | Excel dependency scheduler | Implemented | Run EGP programs according to dependencies, skip/error rules and a parallelism limit |
 | Schedule continuation | Implemented | Resume a prior schedule while automatically skipping tasks that already completed successfully |
 
@@ -38,19 +39,19 @@ is required. Inaccessible members remain listed with unknown metadata; readable 
 with warnings and incomplete storage totals. Saved snapshots remain available offline and travel with saved-data
 backups; missing metadata is shown as unknown.
 
-The released command-line toolkit is version 0.3.15; the released UI preview is 0.4.0-preview.30.
+The released command-line toolkit is version 0.3.16; the released UI preview is 0.4.0-preview.31.
 
-Preview.30 reorganizes Run/Settings, expands History and Projects, and adds progressive server metadata, bounded read-only table previews and dictionary search/export. It also fixes EGP extraction: program labels and process-flow folders now follow project metadata, as in MagicRoot. See [EGP extraction](docs/egp-extraction.md) and [release notes](docs/next-version/release-notes.md). Live SAS/visual verification of the new server features remains pending; this is a testing preview.
+Preview.31 adds a separate **Graph** tab for linked SAS files or embedded EGP programs, using the same dependency scheduler with ordered shared setup. The existing Run/Excel workflow remains available. Settings keyboard hints now choose a section first, then its actions. Overview merges runs and commands into searchable Tasks; inspectors use Outputs/Logs/Tasks; portable Tasks and Settings folders can be reused between installations. See the [Graph guide](docs/graph-runner.md) and [release notes](docs/next-version/release-notes.md). Live SAS and desktop visual acceptance remain pending; this is a testing preview.
 
 ## Requirements
 
-PySAS 0.3.15 is designed for controlled Windows environments with:
+PySAS 0.3.16 is designed for controlled Windows environments with:
 
 - Python 3.9+ recommended;
 - SAS Enterprise Guide installed and configured for the target SAS environment;
 - access to the SAS Enterprise Guide COM automation interface;
 - Windows Script Host / `cscript.exe`;
-- `openpyxl` for scheduler and table-workbook functionality.
+- `openpyxl` for Excel schedules and table-workbook functionality; JSON graphs do not require it.
 
 Install the Python dependency with:
 
@@ -302,7 +303,7 @@ Important limitations include:
 
 ## Version
 
-Current published implementation: **0.3.15**.
+Current published implementation: **0.3.16**.
 
 ```powershell
 py pysas.py version

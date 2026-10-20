@@ -233,8 +233,58 @@ function keyboardFixture(count=2,onlyDialog=false,fullInspector=false){
       row.querySelectorAll=()=>row.buttons;return row;
     });list.querySelectorAll=()=>list.rows;lists.push(list);return list;
   }
-  return {api:ctx.PySASKeys,controls,key,doc,addList};
+  return {api:ctx.PySASKeys,controls,key,doc,addList,scope,element,listeners};
 }
+
+function settingsKeyboardFixture(){
+  const f=keyboardFixture();f.scope.id='page-files';
+  f.controls[1].dataset.page='files';
+  const groups=['Folders','Defaults','Shared WORK','Inbox watcher','Storage','Uploads','Backups','Power'].map((name,i)=>{
+    const group={...f.element(),id:'group'+i,open:false};
+    group.summary={...f.element(),textContent:name,dataset:{keytipGroup:['F','D','W','I','S','U','B','P'][i]},
+      closest(selector){return selector==='details'?group:null;}};
+    group.fields=[{...f.element(),id:group.id+'save',textContent:'Save',dataset:{keytip:'S'}},
+                  {...f.element(),id:group.id+'path',textContent:'Path',dataset:{keytip:'P'},field:true}];
+    group.querySelector=()=>group.summary;
+    group.querySelectorAll=()=>[group.summary,...group.fields];
+    return group;
+  });
+  f.scope.querySelectorAll=q=>q==='[data-keytip-group]'?groups.map(g=>g.summary):groups.flatMap(g=>[g.summary,...g.fields]);
+  const badges=()=>f.doc.body.children.at(-1).children.filter(c=>c.className==='keytip'&&!c.hidden).map(c=>c.textContent);
+  return {...f,groups,badges};
+}
+
+test('Settings hints choose a mnemonic section before showing only that section controls',()=>{
+  const f=settingsKeyboardFixture();f.api.show();f.key('keydown','S');
+  assert.deepEqual(f.badges(),['F','D','W','I','S','U','B','P']);
+  f.key('keydown','B');assert.equal(f.groups[6].open,true);
+  assert.deepEqual(f.badges(),['S','P']);
+  f.key('keydown','S');assert.equal(f.groups[6].fields[0].clicked,1);
+  assert.ok(f.groups.filter((_,i)=>i!==6).every(g=>g.fields[0].clicked===undefined));
+});
+
+test('Settings Escape walks back from section actions to sections to navigation',()=>{
+  const f=settingsKeyboardFixture();f.api.showPage();f.key('keydown','F');
+  assert.deepEqual(f.badges(),['S','P']);f.key('keydown','Escape');
+  assert.deepEqual(f.badges(),['F','D','W','I','S','U','B','P']);
+  f.key('keydown','Escape');assert.deepEqual(f.badges(),['O','S']);
+  f.key('keydown','Escape');assert.equal(f.api.active,false);
+});
+
+test('Settings section hints work off screen and open sections without toggling them closed',()=>{
+  const f=settingsKeyboardFixture(),group=f.groups[6];
+  group.summary.getBoundingClientRect=()=>({left:10,top:1500,bottom:1520,right:100});
+  f.api.showPage();assert.ok(!f.badges().includes('B'));f.key('keydown','B');
+  assert.equal(group.open,true);assert.deepEqual(f.badges(),['S','P']);
+  f.key('keydown','Escape');f.key('keydown','B');assert.equal(group.open,true);
+  f.key('keydown','P');assert.equal(f.doc.activeElement,group.fields[1]);assert.equal(group.fields[1].clicked,undefined);
+});
+
+test('scrolling Settings preserves the selected section and its stable hints',()=>{
+  const f=settingsKeyboardFixture();f.api.showPage();f.key('keydown','W');
+  f.groups[2].fields[0].disabled=true;f.listeners.scroll();assert.deepEqual(f.badges(),['P']);
+  f.key('keydown','P');assert.equal(f.doc.activeElement,f.groups[2].fields[1]);
+});
 test('Alt uses fixed mnemonic navigation and Escape returns from page hints',()=>{
   const f=keyboardFixture();f.key('keydown','Alt');f.key('keyup','Alt');assert.equal(f.api.active,true);
   f.key('keydown','O');assert.equal(f.controls[0].clicked,1);assert.equal(f.api.active,false);f.api.showPage();

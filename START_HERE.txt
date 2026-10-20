@@ -1,10 +1,10 @@
-PySAS Workbench 0.4.0-preview.30
+PySAS Workbench 0.4.0-preview.31
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
 2. Place your EGP project, SAS programs, Schedule.xlsx, and _*.sas init files
    beside pysas.py in that folder. You can also copy the UI files into your
-   existing workspace, including the updated pysas.py 0.3.15. Keep your SAS,
+   existing workspace, including the updated pysas.py 0.3.16. Keep your SAS,
    EGP and Excel files. The updated engine remains a standalone single file.
 3. Double-click START_PYSAS.bat. PySAS opens in its own app-style window.
 4. The terminal closes after startup. Closing the app stops the watcher
@@ -14,7 +14,8 @@ Requirements
 ------------
 - Windows with Python 3.10+ and SAS Enterprise Guide configured for your SAS
   environment. This ZIP does not bundle Python or SAS Enterprise Guide.
-- openpyxl is needed for schedules and Excel exports/previews. If it is not
+- openpyxl is needed for Excel schedules and Excel exports/previews.
+  JSON dependency graphs do not require openpyxl. If it is not
   already installed, use your approved installation process, or run:
       py -3 -m pip install openpyxl
 - Microsoft Edge or Google Chrome supplies the app window (no tabs/address bar).
@@ -48,9 +49,11 @@ What is included
 - Running filenames and elapsed time updated every second.
 - Runner, watcher, schedule, schedule continuation, bundles, and EGP tools.
 - Scheduler task statuses, individual task clocks, and total schedule duration.
-- Run history, searchable statuses, console, SAS logs/code and file downloads.
+- Overview Tasks combines searchable runs and commands; inspect Outputs/Logs/Tasks.
+- Graph tab: SAS/EGP program cards, dependency arrows and ordered shared setup.
+- Portable Tasks and Settings folders, reusable between installations.
 - Excel previews (up to 100 data rows, 30 columns and 10 sheets per workbook).
-- Standalone pysas.py 0.3.15; existing CLI commands still work.
+- Standalone pysas.py 0.3.16; existing CLI commands still work.
 - Blue styling and saved code folders for repeated bundle operations.
 - Always-run shared setup is prepended before every scheduled program.
 - Watcher _*.sas files are shared initialization, never queued as jobs.
@@ -105,14 +108,16 @@ Legacy schedule folders have per-task durations, but do not record total
 wall-clock time. The UI shows a dash for that total rather than adding up
 parallel task durations. New UI schedule runs retain the actual total time.
 
-The UI stores command history in .pysas-ui. An interrupted run with no final
+The UI stores command history in tasks/.workbench (or the configured Tasks
+folder). Configuration and graph definitions live in settings. An interrupted run with no final
 status is marked Unknown; check its console and output before rerunning.
 History lists up to 500 run folders and 200 commands. Run inspectors list up
 to 1,000 files. Very large workspaces may take longer to refresh.
 
-Schedule dependencies remain managed in Excel. There is no calendar-based
-scheduler or dependency graph editor. Stop file is available for each active
-file; it ends the owned local automation process.
+Schedule dependencies can be managed in Excel through Run, or in the new Graph
+canvas/JSON workflow. There is no calendar-based scheduler. Stop file ends its
+owned local automation process; Stop schedule/graph prevents further launches
+and stops that schedule's active local automation processes.
 
 The interface and adapter are tested automatically on Windows, macOS and
 Linux. Actual SAS execution needs testing on your Windows/Enterprise Guide
@@ -131,6 +136,26 @@ macOS/Linux can preview the UI, inspect history, and use bundle/EGP tools:
 SAS execution is only available on Windows.
 
 Project: https://github.com/daniel-vital-de-alcantara/pysas-toolkit
+
+New in preview.31
+-----------------
+- Graph is a separate tab; the existing Run tab is preserved. Link local SAS
+  files or upload EGP/SAS files, choose embedded programs, arrange cards and
+  link prerequisites to dependent programs. Default parallelism is 10.
+- Shared setup is ordered above the graph and prepended into every program.
+  Check, save, import/export JSON, run, stop and continue from saved source.
+  See docs/graph-runner.md. Changed-source-only reruns are a future feature.
+- Settings keyboard hints are scoped: Alt, S, then F Folders / D Defaults /
+  W Shared WORK / I Inbox watcher / S Storage / U Uploads / B Backups / P Power.
+  Then choose a displayed action. Escape steps back; Tab works normally.
+- Overview owns the four status cards and a single searchable Tasks list.
+  Inspect has a stable Outputs / Logs / Tasks / Open folder / Create ZIP row.
+- Tasks and Settings live in separate folders. Settings > Storage can point
+  to existing portable folders; locations apply after restart. Legacy data
+  is retained; Import existing runs copies finished legacy runs into Tasks.
+- The full saved-data ZIP includes uploaded graph sources and frozen runs.
+  Configs-only includes graph definitions. Linked external files need copying
+  or relinking on another PC. Stop active jobs before changing data folders.
 
 Earlier preview improvements
 --------------------------

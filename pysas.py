@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PySAS 0.3.15 — portable SAS Enterprise Guide command-line utilities.
+"""PySAS 0.3.16 — portable SAS Enterprise Guide command-line utilities.
 
 Keep this file beside the EGP, scheduler workbook and any top-level _*.sas
 initialisation files it should use.  Python 3.9+ is recommended.  ``rich`` is
@@ -32,7 +32,7 @@ from typing import Any, Iterable
 from xml.etree import ElementTree as ET
 
 
-VERSION = "0.3.15"
+VERSION = "0.3.16"
 ROOT_DIR = Path(__file__).resolve().parent
 CODEBASE_FILE = "codebase.sasbundle.txt"
 BACKUP_FOLDER = "_codebase_backups"

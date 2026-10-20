@@ -1,12 +1,15 @@
 # Manual Windows / Enterprise Guide acceptance
 
-Status: target-environment checks pending. The user authorized publishing preview.30 for testing after the EGP extraction fix. These manual checks still remain; draft PRs stay unmerged. Automated Windows COM tests use fake EG objects, not a production SAS server.
+Status: target-environment checks pending. The user authorized publishing preview.31 for testing with Graph, portable data and Settings keyboard improvements. These manual checks still remain; draft PRs stay unmerged. Automated Windows COM tests use fake EG objects, not a production SAS server.
 
 ## UI and keyboard
 
-- Capture Overview, Single file, New/Continue schedule, Projects, History inspector (Files/Logs/Tasks), Settings, Servers/Columns, sample results and dictionary screenshots.
-- Check 100%, 150% and 200% Windows scaling and narrow windows. Inspect Back/Escape, focus return, list scroll, Alt/F10 hints and arrow-key lists. Navigation: O Overview, R Run, P Projects, H History, V Servers, S Settings.
+- Capture Overview, Single file, New/Continue schedule, Projects, Tasks inspector (Outputs/Logs/Tasks), Settings, Servers/Columns, sample results and dictionary screenshots.
+- Check 100%, 150% and 200% Windows scaling and narrow windows. Inspect Back/Escape, focus return, list scroll, Alt/F10 hints and arrow-key lists. Navigation: O Overview, R Run, G Graph, P Projects, V Servers, S Settings.
 - Confirm elapsed seconds advance smoothly during a large log preview, slow storage scan, ZIP compression and metadata refresh. Verify header elapsed/finish labels and historical pause-adjusted continuation time.
+
+- Settings: Alt, S shows eight section hints. B opens Backups with local action hints; Escape returns to sections, then navigation. Check off-screen sections, long pages, file pickers, disabled actions and repeated opening.
+- Graph: import SAS/EGP sources; link cards by pointer and keyboard; shared setup order; validation, save/reload, undo/redo and narrow/high-DPI canvas layout.
 
 ## Existing execution and storage
 
@@ -30,3 +33,10 @@ Status: target-environment checks pending. The user authorized publishing previe
 
 - Extract a representative real project. Compare program labels, classic/newer flow membership and source bytes with the original/MagicRoot output. Verify duplicate names, linked-program warnings and full-folder ZIP.
 - Edit one flat file, then a grouped copy, and repack into a new EGP. Open it in Enterprise Guide, confirm only intended source edits and other project elements preserved. Conflicting edits must be reported before any output is published.
+
+## Graph execution acceptance
+
+- Compare a linked SAS node and an embedded EGP node with their existing Run/terminal executions. Confirm each uses the intended server, selected section/rows and ordered shared setup.
+- Test a parallel graph, default 10 workers, skipped intermediate dependencies, per-file stop and Stop graph. Continue after an error using frozen source and retained successful outputs.
+- Modify a linked file after a run starts. Confirm the active run and continuation retain snapshots, while a new run uses the edited file.
+- Export/restore full saved data with uploaded graph sources, colliding names and configured external Tasks/Settings folders. Confirm graphs and continuation keep the correct associations.

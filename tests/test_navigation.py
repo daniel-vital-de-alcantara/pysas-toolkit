@@ -6,6 +6,7 @@ import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from html.parser import HTMLParser
 from pysas_ui import Workbench
 from ui_data import export_backup, restore_backup
 
@@ -16,6 +17,23 @@ class NavigationTests(unittest.TestCase):
         shutil.copy2(Path(__file__).parents[1] / 'pysas.py', self.root / 'pysas.py')
         self.app = Workbench(self.root)
     def tearDown(self): self.temp.cleanup()
+
+    def test_settings_markup_has_unique_section_hints_and_unambiguous_local_actions(self):
+        class Hints(HTMLParser):
+            def __init__(self): super().__init__(); self.stack=[]; self.groups={}; self.codes={}
+            def handle_starttag(self,tag,attrs):
+                attrs=dict(attrs)
+                if tag=='details': self.stack.append(attrs.get('id',''))
+                group=next((value for value in reversed(self.stack) if value.startswith('settings-')),None)
+                if group and 'data-keytip-group' in attrs: self.groups[group]=attrs['data-keytip-group']
+                if group and 'data-keytip' in attrs: self.codes.setdefault(group,[]).append(attrs['data-keytip'])
+            def handle_endtag(self,tag):
+                if tag=='details': self.stack.pop()
+        parser=Hints();parser.feed((Path(__file__).parents[1]/'ui/index.html').read_text())
+        self.assertEqual(parser.groups,dict(zip(['settings-'+key for key in ['folders','defaults','shared-work','watcher','storage','upload','backups','power']],['F','D','W','I','S','U','B','P'])))
+        for group,codes in parser.codes.items():
+            with self.subTest(group=group):
+                self.assertEqual(len(codes),len(set(codes)))
 
     def test_refresh_keeps_measurement_and_does_not_duplicate_scans(self):
         started, release = threading.Event(), threading.Event()

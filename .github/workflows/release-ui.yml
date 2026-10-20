@@ -47,23 +47,7 @@ jobs:
           name: PySAS Workbench ${{ github.ref_name }}
           prerelease: ${{ contains(github.ref_name, 'preview') }}
           fail_on_unmatched_files: true
-          body: |
-            PySAS Workbench preview.30: EGP extraction fixed to use program names and process flows, plus the new Workbench interface.
-
-            Download the attached Python ZIP, extract fully and open START_PYSAS.bat.
-
-            - Extract EGP programs using project labels and process flows, as in MagicRoot. Inspect/download the full output; repack edits from either source view with conflict detection.
-            - Run single files or new/continued schedules; manage global controls in Settings.
-            - Inspect named runs through Files, Logs and Tasks; download or copy original artifacts.
-            - Pack/unpack source bundles with recent folders, verification, backups and accurate counts.
-            - Refresh server libraries, tables and columns progressively, retaining inaccessible-member warnings.
-            - Use bounded read-only previews and incremental dictionary search with CSV/Excel exports.
-            - Includes standalone engine 0.3.15. SAS execution and scheduler behavior are retained.
-
-            Automated checks include Windows fake-EG integration; live SAS-server and desktop visual acceptance of the new features remains pending.
-
-            Read docs/egp-extraction.md, docs/next-version/release-notes.md and windows-eg-acceptance.md inside the ZIP for limits, compatibility and verification requirements.
-
+          body_path: docs/next-version/release-notes.md
           files: |
             release/PySAS-Workbench-Python-*.zip
             release/SHA256SUMS.txt

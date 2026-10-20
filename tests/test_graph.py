@@ -1,6 +1,7 @@
 """Graph plans reuse the scheduler, with frozen code, setup and dependency barriers."""
 import argparse
 import contextlib
+import csv
 import io
 import json
 from pathlib import Path
@@ -145,6 +146,13 @@ class GraphTests(unittest.TestCase):
     def test_graph_run_duration_samples_keep_node_selection_without_excel(self):
         from ui_data import duration_history
         _,folder=self.run_graph(graph([node('A',self.source,row_start=2,row_end=2)],connection=self.project))
+        summary=folder/'run_summary.csv'
+        with summary.open(encoding='utf-8-sig',newline='') as stream:
+            reader=csv.DictReader(stream);fields=reader.fieldnames;rows=list(reader)
+        # Use a known duration: fast fake execution may take zero Windows clock ticks.
+        for row in rows:row['elapsed']='42'
+        with summary.open('w',encoding='utf-8-sig',newline='') as stream:
+            writer=csv.DictWriter(stream,fieldnames=fields);writer.writeheader();writer.writerows(rows)
         samples=duration_history(self.root,[],bases=[(folder.parent,'schedule')])
         self.assertEqual(len(samples),1);self.assertEqual(samples[0]['key'],('a','',2,2))
 
