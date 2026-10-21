@@ -15,7 +15,7 @@ const context = {
   URLSearchParams,fetch:async()=>({ok:true,json:async()=>snapshot}),setInterval(){},AbortController,Date,console
 };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={applyInspector,inspectorState:()=>inspectorTab,taskRecords,tasksTable,inspectorFiles,logSymbol,setInspectorTab,renderSample:(value)=>{previewResult=value;previewPage=0;renderPreviewRows();},runFlow,logSummaryMarkup,logContextMarkup,remainingText,focusTarget,putMarkup,catalogIssues,setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={runInitializationText,applyInspector,inspectorState:()=>inspectorTab,taskRecords,tasksTable,inspectorFiles,logSymbol,setInspectorTab,renderSample:(value)=>{previewResult=value;previewPage=0;renderPreviewRows();},runFlow,logSummaryMarkup,logContextMarkup,remainingText,focusTarget,putMarkup,catalogIssues,setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
 const h = context.helpers;
 test('elapsed formatting supports seconds, hours, and runs longer than a day',()=>{
   assert.equal(h.duration(65.9),'00:01:05');
@@ -423,3 +423,13 @@ test('inspector opens Outputs after success and Logs for failure, active or part
 });
 
 test('page-command hints remain reachable from the bottom keyboard button',()=>{const f=keyboardFixture(3);f.doc.getElementById=id=>id==='keyboard-help'?f.controls[2]:null;f.api.show();f.key('keydown','X');assert.equal(f.api.active,true);f.key('keydown','A');assert.equal(f.controls[0].clicked,1);});
+
+
+test('single-file initialization preview exposes inbox files and hidden default overrides',()=>{
+  const snapshot={initialization_files:['C:/inbox/_10_libs.SAS','C:/shared/_20_macros.sas'],preferences:{default_lib:''}};
+  assert.match(h.runInitializationText(snapshot),/_10_libs.SAS → _20_macros.sas/);
+  assert.match(h.runInitializationText({...snapshot,preferences:{default_lib:'C:/other.sas'}}),/override: C:\/other.sas.*replaces all shared/);
+  assert.match(h.runInitializationText({...snapshot,preferences:{default_lib:'C:/default.sas'}},'C:/explicit.sas'),/override: C:\/explicit.sas/);
+  assert.match(h.runInitializationText({initialization_files:[]}),/No shared/);
+  assert.match(h.runInitializationText({}),/Reading shared/);
+});

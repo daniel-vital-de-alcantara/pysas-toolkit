@@ -5,6 +5,7 @@ import io
 import json
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch, Mock
 import pysas
 import pysas_ui as ui
@@ -104,6 +105,65 @@ class ParameterTests(unittest.TestCase):
         with patch.object(self.engine, 'run_job', return_value=dict(status='SUCCESS', run_dir=self.root)) as job, contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(self.engine.main(['runner','run',str(source),'--template',str(project),'--parameters',str(parameter),'--no-notify']), 0)
         self.assertEqual(job.call_args.kwargs['parameters'], parameter)
+
+    def test_ui_single_file_uses_shared_and_inbox_initialization_before_parameters(self):
+        shared=self.root/'a-shared';shared.mkdir();inbox=self.root/'z-inbox';inbox.mkdir()
+        (shared/'_20_macros.SAS').write_text('shared_macro_token;',encoding='utf-8')
+        (inbox/'_10_libs.sAs').write_text('inbox_library_token;',encoding='utf-8')
+        source=self.root/'extract.sas';source.write_text('target_token;',encoding='utf-8')
+        project=self.root/'project.egp';project.write_text('template',encoding='utf-8')
+        parameters=self.app.settings/'parameters/cases.sas';parameters.parent.mkdir();parameters.write_text('%let ids=123;',encoding='utf-8')
+        self.app.update_folders({'init':str(shared),'inbox':str(inbox)})
+        with patch('pysas_ui.os',SimpleNamespace(name='nt')):
+            _,arguments=self.app.arguments(dict(action='run',program=str(source),template=str(project)))
+        captured=[]
+        def execute(*args,**kwargs):captured.append(args[2].read_text(encoding='utf-8'));return 0,''
+        for use_parameters in (False,True):
+            with self.subTest(parameters=use_parameters),patch.object(self.engine,'execute_eg',side_effect=execute),contextlib.redirect_stdout(io.StringIO()) as output:
+                flags=['--parameters',str(parameters)] if use_parameters else []
+                self.assertEqual(self.engine.main(arguments+flags),0)
+                code=captured[-1]
+                self.assertLess(code.index('inbox_library_token;'),code.index('shared_macro_token;'))
+                self.assertLess(code.index('shared_macro_token;'),code.index('target_token;'))
+                if use_parameters:
+                    self.assertLess(code.index('shared_macro_token;'),code.index('%let ids=123;'))
+                    self.assertLess(code.index('%let ids=123;'),code.index('target_token;'))
+                    self.assertIn('Appended parameters: cases.sas',output.getvalue())
+                self.assertIn('Appended shared initialization: '+str(inbox/'_10_libs.sAs'),output.getvalue())
+        self.assertTrue((inbox/'_10_libs.sAs').exists())
+        self.assertFalse((self.root/'runner/claimed').exists())
+        with patch.object(self.app,'cached_listing',side_effect=lambda key,load,*args:load()):
+            listed=self.app.state()['initialization_files']
+        self.assertEqual(listed,[str(inbox/'_10_libs.sAs'),str(shared/'_20_macros.SAS')])
+
+    def test_single_file_inbox_can_supply_parameters_once_and_override_still_replaces_shared(self):
+        shared=self.root/'shared';shared.mkdir();inbox=self.root/'inbox';inbox.mkdir()
+        (shared/'_libs.sas').write_text('library_token;',encoding='utf-8')
+        cases=inbox/'_cases.SAS';cases.write_text('%let ids=selected;',encoding='utf-8')
+        job=self.root/'job.sas';job.write_text('target_token;',encoding='utf-8')
+        override=self.root/'override.sas';override.write_text('override_token;',encoding='utf-8')
+        project=self.root/'project.egp';project.write_text('template',encoding='utf-8')
+        captured=[]
+        def execute(*args,**kwargs):captured.append(args[2].read_text(encoding='utf-8'));return 0,''
+        arguments=['runner','run',str(job),'--template',str(project),'--init-dir',str(shared),'--inbox',str(inbox),'--parameters',str(cases),'--no-notify']
+        with patch.object(self.engine,'execute_eg',side_effect=execute),contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.engine.main(arguments),0)
+            self.assertEqual(self.engine.main(arguments+['--lib',str(override)]),0)
+        self.assertEqual(captured[0].count('%let ids=selected;'),1)
+        self.assertLess(captured[0].index('library_token;'),captured[0].index('%let ids=selected;'))
+        self.assertNotIn('library_token;',captured[1]);self.assertEqual(captured[1].count('%let ids=selected;'),1)
+        self.assertLess(captured[1].index('override_token;'),captured[1].index('%let ids=selected;'))
+
+    def test_cli_without_explicit_inbox_keeps_existing_initialization_roots(self):
+        source=self.root/'job.sas';source.write_text('target_token;',encoding='utf-8')
+        project=self.root/'project.egp';project.write_text('template',encoding='utf-8')
+        inbox=self.root/'runner/inbox';(inbox/'_extra.sas').write_text('inbox_token;',encoding='utf-8')
+        (self.root/'_libs.sas').write_text('root_token;',encoding='utf-8')
+        captured=[]
+        def execute(*args,**kwargs):captured.append(args[2].read_text(encoding='utf-8'));return 0,''
+        with patch.object(self.engine,'execute_eg',side_effect=execute),contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.engine.main(['runner','run',str(source),'--template',str(project),'--no-notify']),0)
+        self.assertIn('root_token;',captured[0]);self.assertNotIn('inbox_token;',captured[0])
 
     def test_backup_restores_parameter_lists_and_snapshot_paths_without_overwrite(self):
         self.app.save_parameters(dict(name='_cases.sas', text='first;'))

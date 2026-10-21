@@ -1,12 +1,12 @@
 # PySAS Toolkit
 
-**PySAS 0.3.16** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
+**PySAS 0.3.17** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
 
 It grew out of day-to-day model-development and consulting work where large SAS processes were difficult to inspect, rerun, parallelise, move between environments and review consistently. The current implementation brings those workflows together in one portable `pysas.py` utility.
 
 ## What it does
 
-| Component | Status in 0.3.16 | Purpose |
+| Component | Status in 0.3.17 | Purpose |
 | --- | --- | --- |
 | SAS bundle utility | Implemented | Pack, verify and safely unpack SAS source trees with SHA-256 integrity metadata and backups |
 | EGP tools | Implemented | Inspect EGP archives, extract embedded SAS programs and conservatively repack them into an EGP template |
@@ -39,13 +39,15 @@ is required. Inaccessible members remain listed with unknown metadata; readable 
 with warnings and incomplete storage totals. Saved snapshots remain available offline and travel with saved-data
 backups; missing metadata is shown as unknown.
 
-The released command-line toolkit is version 0.3.16; the released UI preview is 0.4.0-preview.32.
+The released command-line toolkit is version 0.3.17; the released UI preview is 0.4.0-preview.33.
+
+Preview.33 fixes single-file runs omitting `_*.sas` files from the watcher inbox. Shared initialization from both configured folders now precedes parameters and the program. Run shows the effective list or initialization override, and Console records the appended files. See [single-file initialization](docs/single-file-initialization.md).
 
 Preview.32 adds a separate **Graph** tab for linked SAS files or embedded EGP programs, using the same dependency scheduler with ordered shared setup. The existing Run/Excel workflow remains available. Settings keyboard hints now choose a section first, then its actions. Overview merges runs and commands into searchable Tasks; inspectors use Outputs/Logs/Tasks; portable Tasks and Settings folders can be reused between installations. See the [Graph guide](docs/graph-runner.md) and [release notes](docs/next-version/release-notes.md). Live SAS and desktop visual acceptance remain pending; this is a testing preview.
 
 ## Requirements
 
-PySAS 0.3.16 is designed for controlled Windows environments with:
+PySAS 0.3.17 is designed for controlled Windows environments with:
 
 - Python 3.9+ recommended;
 - SAS Enterprise Guide installed and configured for the target SAS environment;
@@ -303,7 +305,7 @@ Important limitations include:
 
 ## Version
 
-Current published implementation: **0.3.16**.
+Current published implementation: **0.3.17**.
 
 ```powershell
 py pysas.py version

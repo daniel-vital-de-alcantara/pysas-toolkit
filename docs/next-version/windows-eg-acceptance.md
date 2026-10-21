@@ -1,6 +1,6 @@
 # Manual Windows / Enterprise Guide acceptance
 
-Status: target-environment checks pending. The user authorized publishing preview.32 for testing with Graph, portable data and Settings keyboard improvements. These manual checks still remain; draft PRs stay unmerged. Automated Windows COM tests use fake EG objects, not a production SAS server.
+Status: target-environment checks pending. The user authorized publishing testing previews for testing with Graph, portable data and Settings keyboard improvements. These manual checks still remain; draft PRs stay unmerged. Automated Windows COM tests use fake EG objects, not a production SAS server.
 
 ## UI and keyboard
 
@@ -13,6 +13,7 @@ Status: target-environment checks pending. The user authorized publishing previe
 
 ## Existing execution and storage
 
+- Run a single file with shared-folder and inbox `_*.sas` files, with parameters on/off and an initialization override. Compare the Run preview, Console file order and exported code: initialization → parameters → target. Confirm inbox jobs are not moved or queued.
 - Compare a normal program and representative schedule against the known working terminal engine: three always-run definitions prepended to each task, sections/rows, default ten workers, skipped intermediate dependencies, stop-on-error and global/per-file stop.
 - Continue an interrupted schedule. Confirm no successful task is rerun; original start remains, active elapsed excludes the pause, latest activity moves the run up, final task folders and consolidated schedule.log retain correct attempts.
 - Start watcher explicitly, then test opt-in startup and restore (must disable startup). Confirm initialization/shared WORK behavior is unchanged for runner, watcher and scheduler.

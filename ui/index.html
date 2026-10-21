@@ -54,7 +54,7 @@
 <div class="panel-number">01 / SINGLE FILE</div>
 <h2>Run a SAS program</h2>
 <label>SAS file<select id="run-source" name="program" data-files="sas" required><option value="">Select a SAS file</option></select></label><div id="single-options" hidden>
-<label>Run name (optional)<input name="display_name" maxlength="120" placeholder="Use a name you can find later"></label><details><summary>Advanced execution options</summary><label>EGP template<select name="template" data-files="egp"><option value="">Auto-detect project</option></select></label><label>Override initialization (optional)<select name="lib" data-files="sas"><option value="">Use shared _*.sas files</option></select></label></details><div class="parameters-panel">
+<label>Run name (optional)<input name="display_name" maxlength="120" placeholder="Use a name you can find later"></label><details><summary>Advanced execution options</summary><label>EGP template<select name="template" data-files="egp"><option value="">Auto-detect project</option></select></label><label>Override initialization (optional)<select name="lib" data-files="sas"><option value="">Default / shared _*.sas files</option></select></label></details><div class="parameters-panel">
 <label class="check"><input name="use_parameters" id="use-parameters" type="checkbox">Use parameters for this run</label><div id="parameters-editor" hidden>
 <p class="hint">Shared initialization → these parameters → your program. The code currently in this editor is used when you click Run program, including unsaved edits.</p>
 <label>Saved parameter files<select id="parameter-files"><option value="">New / unsaved file</option></select></label><div class="actions">
@@ -65,7 +65,7 @@
 </div>
 <p id="parameters-status" class="hint" role="status" aria-live="polite"></p>
 </div>
-<label class="check"><input name="tables" type="checkbox">Export output tables to Excel</label><p class="hint">Shared _*.sas files run first, alphabetically. Choosing an override file replaces this shared list. A .tables.sas filename also enables table export.</p>
+<label class="check"><input name="tables" type="checkbox">Export output tables to Excel</label><p id="run-initialization" class="hint" role="status"></p><p class="hint">Shared _*.sas files from the initialization folder and watcher inbox run first, alphabetically, then parameters, then your program. An initialization override replaces this shared list. A .tables.sas filename also enables table export.</p>
 <button type="button" class="secondary" data-estimate-form="run-form" data-estimate-action="run">Estimate time</button><p id="run-form-estimate" class="hint" role="status"></p>
 <button type="submit" class="primary sas-action">Run program ↗</button>
 </div>
@@ -289,7 +289,7 @@
 <label class="check"><input id="keep-awake" data-keytip="K" type="checkbox">Keep Windows and the display awake while the launcher is running</label><p id="awake-status" class="hint"></p>
 <p class="hint">Stops idle sleep without clicking or typing. It does not override manual sleep, closing the lid, or your organization's lock policy. The setting resets when the server closes.</p>
 </div></details></section>
-<footer>PySAS engine 0.3.16 · Local execution <span>Closing the app finishes active jobs before exiting.</span></footer><section id="details-dialog" hidden="" class="run-inspector" aria-label="Run inspector" tabindex="-1"><div class="dialog-header"><button id="close-details" data-keytip="B" class="secondary" aria-label="Back to tasks">← Back</button><div><span class="eyebrow">TASK INSPECTOR</span><h2 id="detail-title">Task details</h2></div></div>
+<footer>PySAS engine 0.3.17 · Local execution <span>Closing the app finishes active jobs before exiting.</span></footer><section id="details-dialog" hidden="" class="run-inspector" aria-label="Run inspector" tabindex="-1"><div class="dialog-header"><button id="close-details" data-keytip="B" class="secondary" aria-label="Back to tasks">← Back</button><div><span class="eyebrow">TASK INSPECTOR</span><h2 id="detail-title">Task details</h2></div></div>
 <div class="inspector-toolbar">
 <div class="inspector-tabs" role="group" aria-label="Inspect">
 <button type="button" data-keytip="F" data-inspector-tab="files" aria-pressed="true" title="Outputs · Alt F">Outputs</button><button type="button" data-keytip="L" data-inspector-tab="logs" aria-pressed="false" title="Logs · Alt L">Logs</button><button type="button" data-keytip="T" data-inspector-tab="tasks" aria-pressed="false" title="Tasks · Alt T" disabled>Tasks</button>

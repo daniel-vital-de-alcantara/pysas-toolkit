@@ -212,13 +212,25 @@ class SchedulerParityTests(unittest.TestCase):
         self.assertTrue(list((folder/'logs').glob('*.log')))
 
     def test_ui_file_parameters_execute_after_init_and_survive_success(self):
+        self.check_ui_file_parameters()
+
+    def test_ui_file_parameters_include_mixed_case_inbox_initialization_in_order(self):
+        self.check_ui_file_parameters(use_inbox=True)
+
+    def check_ui_file_parameters(self,use_inbox=False):
         (self.root/'pysas.py').write_text((ROOT/'pysas.py').read_text(encoding='utf-8') + '\nVBS = ' + repr(self.current), encoding='utf-8')
         self.programs = [('Seed', 'seed;', 'TARGET_SERVER')]
         project = self.project()
-        (self.root/'_libs.sas').write_text('library_token;', encoding='utf-8')
+        if use_inbox:
+            shared=self.root/'a-shared';shared.mkdir();inbox=self.root/'z-inbox';inbox.mkdir()
+            (inbox/'_10_libs.SAS').write_text('library_token;',encoding='utf-8')
+            (shared/'_20_macros.sAs').write_text('macro_token;',encoding='utf-8')
+        else:
+            (self.root/'_libs.sas').write_text('library_token;', encoding='utf-8')
         source = self.root/'extract.sas'; source.write_text('job_token;', encoding='utf-8')
         app = ui.Workbench(self.root)
         try:
+            if use_inbox:app.update_folders({'init':str(shared),'inbox':str(inbox)})
             identifier = app.launch(dict(action='run', program=str(source), template=str(project), use_parameters=True, parameters_name='_cases.sas', parameters_text='%let city=café;'))['id']
             exit_code = app.processes[identifier].wait(timeout=30)
             deadline = time.monotonic()+10
@@ -231,6 +243,11 @@ class SchedulerParityTests(unittest.TestCase):
             folder = self.root/task['path']
             code = engine.read_text(next((folder/'code').glob('*.sas')))
             self.assertLess(code.index('library_token;'), code.index('%let city=café;'))
+            if use_inbox:
+                self.assertLess(code.index('library_token;'),code.index('macro_token;'))
+                self.assertLess(code.index('macro_token;'),code.index('%let city=café;'))
+                self.assertIn('Shared initialization: 2 file(s)',console)
+                self.assertTrue((inbox/'_10_libs.SAS').is_file())
             self.assertLess(code.index('%let city=café;'), code.index('job_token;'))
             self.assertEqual((folder/'parameters/_cases.sas').read_text(encoding='utf-8'), '%let city=café;')
         finally:

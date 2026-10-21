@@ -99,6 +99,7 @@ async function refreshInspector(){
   catch(e){$("file-preview").textContent=e.message;}finally{inspectorPolling=false;}
 }
 function runFlow(){
+  renderRunInitialization();
   const multiple=$("run-mode").value==="multiple";
   $("run-form").hidden=multiple;$("multiple-options").hidden=!multiple;
   $("single-options").hidden=!$("run-source").value;
@@ -117,6 +118,15 @@ function initializePreferences(){
   preferencesInitialized=true;
 }
 function formData(form) { const data=Object.fromEntries(new FormData(form));form.querySelectorAll('input[type="checkbox"]').forEach(c=>data[c.name]=c.checked);return data; }
+function runInitializationText(snapshot,selected=""){
+  const override=selected||snapshot?.preferences?.default_lib;
+  if(override)return `Initialization override: ${override}. This replaces all shared _*.sas files; parameters are appended afterward.`;
+  if(!Array.isArray(snapshot?.initialization_files))return "Reading shared initialization files…";
+  const files=snapshot.initialization_files;
+  return files.length?`Shared initialization (${files.length}): ${files.map(p=>p.split(/[\\/]/).pop()).join(" → ")}. Parameters are appended afterward.`:`No shared _*.sas files found. Check the initialization folder and watcher inbox in Settings.`;
+}
+function renderRunInitialization(){if(state)$("run-initialization").textContent=runInitializationText(state,$("run-form").elements?.lib?.value||"");}
+$("run-form").elements?.lib?.addEventListener("change",renderRunInitialization);
 async function launch(data, form) { if(data.action==="run"&&data.use_parameters&&parameterLoading){error("Wait for the parameter file to finish loading.");return;}const button=form?.querySelector('[type="submit"]');if(button)button.disabled=true;error("");try{const result=await api("/api/launch",data);await refresh();await showCommand(result.id);}catch(e){error(e.message);}finally{if(button)button.disabled=false;}}
 function bindForm(id, action) { $(id).addEventListener("submit",event=>{event.preventDefault();launch({...formData(event.currentTarget),action},event.currentTarget);}); }
 function putMarkup(id,html){const node=$(id);if(node.dataset.markup===html)return;const saved=focusIdentity();node.innerHTML=html;node.dataset.markup=html;restoreFocus(saved);globalThis.PySASKeys?.refreshLists();}

@@ -23,7 +23,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
-from pysas import text_encoding, schedule_state, shared_work_settings
+from pysas import text_encoding, schedule_state, shared_work_settings, init_files
 from ui_data import archive_folder, export_backup, restore_backup, duration_history, estimate_task, estimate_schedule, index_samples, remaining_work
 import ui_parameters
 import ui_servers
@@ -35,7 +35,7 @@ import ui_storage
 import windows_clipboard
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.32"
+VERSION = "0.4.0-preview.33"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 TEXT_SUFFIXES = {".sas", ".log", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".xml"}
@@ -399,7 +399,7 @@ class Workbench:
             if not init_dir.is_dir():
                 raise ValueError("The configured initialization folder is unavailable.")
             args.extend(["--init-dir", str(init_dir)])
-        if action == "watch":
+        if action in {"run", "watch"}:
             args.extend(["--inbox", folders["inbox"]])
         file_root = self.code_root(data.get("code_root")) if action.startswith("bundle-") else self.root
         if action.startswith("bundle-") and data.get("code_root"):
@@ -1016,7 +1016,7 @@ class Workbench:
                 "migration": self.migration,
                 "data_locations": {"tasks": str(self.tasks), "settings": str(self.settings)},
                 "saved_storage": self.cached_listing("storage", lambda: ui_storage.storage_usage(self), 30) or None,
-                "initialization_files": self.cached_listing("init", lambda: sorted({str(p.resolve()) for folder in {Path(self.folders()["init"]), inbox} for p in folder.glob("_*") if p.is_file() and p.suffix.casefold() == ".sas"}), 5),
+                "initialization_files": self.cached_listing("init", lambda: [str(p) for p in init_files(folder=Path(self.folders()["init"]), extra_folder=inbox)], 5),
                 "queued_estimates": {name: estimate_task({"name": name}, samples) for name in queued},
                 "server_snapshots": self.server_snapshots(),
                 "server_previews": [{"id": c["id"], "status": c["status"], "name": c["name"], "started": c["started"], "library": (c["server"].get("libraries") or [""])[0], **{k:v for k,v in c["server"].items() if k in {"sample", "sample_csv", "connection", "table"}}} for c in commands if c.get("server", {}).get("level") == "preview"],

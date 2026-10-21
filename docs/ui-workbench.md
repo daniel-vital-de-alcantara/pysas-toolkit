@@ -1,7 +1,7 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.32 is a separate browser UI for the standalone PySAS
-0.3.16 command-line engine. Download the Python ZIP from GitHub Releases, extract
+The Workbench 0.4.0-preview.33 is a separate browser UI for the standalone PySAS
+0.3.17 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
 
@@ -15,6 +15,8 @@ useful for the standalone Run/Excel commands.
 Settings uses scoped keyboard hints: Alt, S, then F Folders / D Defaults /
 W Shared WORK / I Inbox watcher / S Storage / U Uploads / B Backups / P Power.
 Choose a displayed action inside that section. Escape returns one level.
+
+For single-file initialization, parameters, overrides and the optional CLI inbox, see [the initialization guide](single-file-initialization.md).
 
 ## Running files and elapsed time
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PySAS 0.3.16 — portable SAS Enterprise Guide command-line utilities.
+"""PySAS 0.3.17 — portable SAS Enterprise Guide command-line utilities.
 
 Keep this file beside the EGP, scheduler workbook and any top-level _*.sas
 initialisation files it should use.  Python 3.9+ is recommended.  ``rich`` is
@@ -32,7 +32,7 @@ from typing import Any, Iterable
 from xml.etree import ElementTree as ET
 
 
-VERSION = "0.3.16"
+VERSION = "0.3.17"
 ROOT_DIR = Path(__file__).resolve().parent
 CODEBASE_FILE = "codebase.sasbundle.txt"
 BACKUP_FOLDER = "_codebase_backups"
@@ -1010,21 +1010,31 @@ def shared_work_code():
 
 def compose_sas(source: Path, result_dir: Path, explicit_lib: Path | None = None,
                 init_dir: Path | None = None, extra_init_dir: Path | None = None,
-                parameters: Path | None = None, parameter_source: Path | None = None) -> str:
+                parameters: Path | None = None, parameter_source: Path | None = None,
+                *, progress=None) -> str:
     parts = ["options iomlogautoflush;\n", shared_work_code(),
              f"%let PYSAS_RESULT_DIR=\"{result_dir.as_posix()}\";\n",
              "/* PYSAS_LIB_START */\n"]
     selected_parameters = (parameter_source or parameters).resolve() if parameters is not None else None
-    for path in init_files(explicit_lib, init_dir, extra_init_dir):
-        if selected_parameters is not None and path.resolve() == selected_parameters:
-            continue  # A selected _*.sas parameter file belongs after initialization.
+    initialization = [path for path in init_files(explicit_lib, init_dir, extra_init_dir)
+                      if selected_parameters is None or path.resolve() != selected_parameters]
+    if progress:
+        if explicit_lib:
+            progress(f"Initialization override: {explicit_lib} (replaces shared _*.sas files)")
+        else:
+            folders = [init_dir or ROOT_DIR] + ([extra_init_dir] if extra_init_dir is not None else [])
+            progress(f"Shared initialization: {len(initialization)} file(s), alphabetical order. Folders: " + ", ".join(str(p) for p in dict.fromkeys(folders)))
+    for path in initialization:
         parts += [f"/* PYSAS_INIT_FILE_START: {path.name} */\n", normalized(read_text(path)),
                   f"/* PYSAS_INIT_FILE_END: {path.name} */\n"]
+        if progress: progress(f"Appended shared initialization: {path}")
     parts += ["/* PYSAS_LIB_END */\n", shared_work_code()]
     if parameters is not None:
         parts += ["/* PYSAS_PARAMETERS_START */\n", normalized(read_text(parameters)), "/* PYSAS_PARAMETERS_END */\n"]
+        if progress: progress(f"Appended parameters: {(parameter_source or parameters).name}")
     parts += [f"/* PYSAS_JOB_START: {source.name} */\n",
               normalized(read_text(source)), f"/* PYSAS_JOB_END: {source.name} */\n"]
+    if progress: progress(f"Appended program: {source.name}")
     return "".join(parts)
 
 
@@ -1198,7 +1208,8 @@ def run_job(source: Path, project: Path, tables: bool, explicit_lib: Path | None
         print(f"Parameters: {parameters.name} (after shared initialization, before {source.name})", flush=True)
     submitted = run_dir / "_submitted.sas"
     submitted.write_text(compose_sas(source, run_dir / "results", explicit_lib, init_dir, extra_init_dir,
-                                    parameters=parameter_copy, parameter_source=parameters), encoding="utf-8")
+                                    parameters=parameter_copy, parameter_source=parameters,
+                                    progress=lambda message: report_progress(run_dir, "preparing", message)), encoding="utf-8")
     started = time.time()
     rc, console = execute_eg("RUNFILE", project, submitted, display_name or source.name, 0, 0, run_dir, tables)
     log_files = list((run_dir / "logs").glob("*.log"))
@@ -1231,7 +1242,9 @@ def runner_run(args: argparse.Namespace) -> int:
     init_dir = Path(args.init_dir).expanduser().resolve() if getattr(args, "init_dir", None) else None
     if init_dir is not None and not init_dir.is_dir(): raise FileNotFoundError(init_dir)
     parameters = Path(args.parameters).expanduser().resolve() if getattr(args, "parameters", None) else None
-    result = run_job(source, project, tables, lib, not args.no_notify, init_dir=init_dir, parameters=parameters)
+    inbox = Path(args.inbox).expanduser().resolve() if getattr(args, "inbox", None) else None
+    if inbox is not None and not inbox.is_dir(): raise FileNotFoundError(inbox)
+    result = run_job(source, project, tables, lib, not args.no_notify, init_dir=init_dir, extra_init_dir=inbox, parameters=parameters)
     label = {"SUCCESS": "DONE", "SAS_ERROR": "DONE WITH SAS ERRORS", "FAILED": "RUNNER FAILED"}[result["status"]]
     print(f"{label}: {source.name}")
     print(result["run_dir"])
@@ -2016,6 +2029,7 @@ def parser() -> argparse.ArgumentParser:
     rw.add_argument("--no-notify", action="store_true"); rw.set_defaults(func=runner_watch)
 
     rr.add_argument("--init-dir", help="folder containing shared _*.sas initialization files")
+    rr.add_argument("--inbox", help="also prepend _*.sas initialization from this inbox; does not queue or move files")
     rw.add_argument("--init-dir", help="folder containing shared _*.sas initialization files")
     rw.add_argument("--inbox", help="folder to watch; _*.sas files here initialize jobs instead of being queued")
 
