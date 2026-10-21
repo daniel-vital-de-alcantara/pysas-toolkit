@@ -129,7 +129,8 @@ def compose(app, value, *, require_egp=False):
                          row_start=row["row_start"] if row["mode"] == "lines" else None,
                          row_end=row["row_end"] if row["mode"] == "lines" else None)
         if row["mode"] == "section" and not row["section"]: raise ValueError(f"Row {index}: enter a section name.")
-        selected = select_graph_text(text, selection)
+        try: selected = select_graph_text(text, selection)
+        except ValueError as exc: raise ValueError(f"Row {index}: {exc}") from exc
         if not selected.strip(): raise ValueError(f"Row {index}: the selected code is empty.")
         scope = "Section " + row["section"] if row["mode"] == "section" else f"Lines {row['row_start'] or 1}–{row['row_end'] or 'end'}" if row["mode"] == "lines" else "Whole file"
         # Comments are informational only; never let a filename close a SAS comment.
@@ -288,3 +289,19 @@ def combine_tables(paths, destination):
         return sheets
     finally:
         workbook.close(); temporary.unlink(missing_ok=True)
+
+
+def inspector_files(files):
+    """Prioritize requested outputs/source; keep bridge diagnostics in the run ZIP."""
+    internal = {'status.txt', 'stream-plan.json', 'stream-result.json', 'execution/request.json',
+                'execution/result.json', 'execution/_bridge.vbs', 'execution/_automation.xml',
+                'execution/source.sas', 'execution/submitted.sas', 'tables-index.json'}
+    def rank(file):
+        name = file['name'].replace('\\', '/')
+        if name == 'execution/worker.txt':
+            file.update(is_log=True, log_label='Engine worker')
+        if name in internal: file['internal'] = True
+        if file.get('is_log'):
+            return (0, {'run.log': 0, 'execution/sas.log': 1, 'execution/console.txt': 2, 'execution/worker.txt': 3}.get(name, 4), name)
+        return (1, 0 if name == 'tables.xlsx' else 1 if name.startswith('execution/html/') else 2 if name.startswith('execution/tables/') else 3 if name == 'source.sas' else 4 if name == 'stream.json' else 5, name)
+    return sorted(files, key=rank)

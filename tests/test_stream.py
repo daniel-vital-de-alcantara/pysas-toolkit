@@ -146,6 +146,10 @@ class StreamTests(unittest.TestCase):
         details=self.app.details(self.app.relative(folder));self.assertTrue(details['whole_run']);self.assertEqual(details['status'],'SUCCESS')
         self.assertTrue(any(f['name']=='stream.json' for f in details['files']))
         self.assertTrue(any(f['is_log'] and f['name'].endswith('sas.log') for f in details['files']))
+        outputs=[f for f in details['files'] if not f.get('internal') and not f.get('is_log')]
+        self.assertTrue(outputs[0]['name'].replace('\\','/').startswith('execution/html/'))
+        self.assertTrue(next(f for f in details['files'] if f['name'].replace('\\','/')=='execution/worker.txt')['is_log'])
+        self.assertEqual(next(f for f in details['files'] if f['name']=='run.log')['is_log'],True)
 
     def test_stream_errors_and_partial_exports_never_become_success(self):
         self.doc['export_tables']=True

@@ -104,6 +104,7 @@
 <section id="page-stream" class="page" hidden>
 <div class="panel">
 <div class="panel-header"><div><div class="panel-number">RUN STREAM</div><h2>One submission, in your order</h2></div><button id="stream-restore" type="button" class="secondary" data-keytip="J">Restore JSON</button><input id="stream-import" type="file" accept=".json" hidden></div>
+<p id="stream-import-status" class="hint" role="status" aria-live="polite"></p>
 <p class="hint">Choose a connection EGP, then add the code you want to submit. Each row runs after the previous row in the same SAS session. Add any _libs or parameter programs as the first rows.</p>
 <label>Run name<input id="stream-name" maxlength="120" value="Untitled stream" placeholder="A name you can find in Overview"></label>
 <div class="stream-connection"><label>Connection EGP<select id="stream-egp" data-keytip="E"><option value="">Choose an EGP</option></select></label><button id="stream-browse-egp" type="button" class="secondary">Browse EGP…</button><input id="stream-egp-upload" type="file" accept=".egp" hidden></div>

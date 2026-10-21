@@ -1307,6 +1307,7 @@ class Workbench:
                     owner = command; self_task = dict(matched); status = matched['status']; name = read_json(path/'run-display.json',{}).get('name') or matched.get('display_name') or matched.get('name') or name
                     break
         files, limited = self.describe_files(path, tasks, str(self_task.get("key")) if self_task else None)
+        if (path / 'stream-plan.json').is_file(): files = ui_stream.inspector_files(files)
         if owner and (self.storage/(owner['id']+'.txt')).is_file():
             # The global command console belongs to its top-level task, not each child.
             if path == self.run_folder(relative):
