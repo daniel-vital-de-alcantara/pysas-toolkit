@@ -11,7 +11,7 @@ request_path = Path(sys.argv[1])
 root = request_path.parent
 request = json.loads(request_path.read_text(encoding="utf-8"))
 config = json.loads(Path(request["egp_path"]).read_text(encoding="utf-8"))
-(root / "observed.json").write_text(json.dumps(dict(request=request, text=(root / "submitted.sas").read_text(encoding="utf-8"))), encoding="utf-8")
+(root / "observed.json").write_text(json.dumps(dict(request=request, text=(root / "submitted.sas").read_bytes().decode("utf-8"))), encoding="utf-8")
 if config.get("change_source"):
     Path(request["sas_path"]).write_text("changed after submission;", encoding="utf-8")
 if config.get("delay"):

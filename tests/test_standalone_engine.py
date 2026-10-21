@@ -50,6 +50,8 @@ class StandaloneEngineTests(unittest.TestCase):
         self.assertIn('run_sas',child.stdout)
 
     def test_requested_outputs_full_log_and_exact_source_are_returned_and_saved(self):
+        # Assert exact CRLF preservation on every development platform too.
+        self.sas.write_bytes(self.sas.read_bytes().replace(b'\r\n', b'\n').replace(b'\n', b'\r\n'))
         original = self.sas.read_bytes()
         (self.root/'_libs.sas').write_text('must not be automatically prepended;')
         with patch.dict(os.environ,{'PYSAS_SHARED_WORK_PATH':'must not be injected'}):
@@ -214,7 +216,7 @@ class StandaloneEngineWindowsTests(unittest.TestCase):
         result=self.run_engine(export_tables=True)
         self.assertTrue(result.success,result.errors);self.assertEqual(result.server,'SASApp')
         self.assertEqual(len(result.html_files),2);self.assertEqual(len(result.table_files),2)
-        self.assertEqual(engine._decode((self.output/'executed.sas').read_bytes()),self.sas.read_text(encoding='utf-8'))
+        self.assertEqual(engine._decode((self.output/'executed.sas').read_bytes()),engine._decode(self.sas.read_bytes()))
         self.assertTrue((self.output/'closed.txt').exists());self.assertTrue((self.output/'quit.txt').exists())
         self.assertEqual(result.log,'NOTE: completed café')
 
