@@ -6,16 +6,16 @@
 <title>PySAS Workbench</title>
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/style.css">
-<script src="/app.js" defer></script><script src="/keyboard.js" defer></script><script src="/graph.js" defer></script>
+<script src="/app.js" defer></script><script src="/keyboard.js" defer></script><script src="/graph.js" defer></script><script src="/stream.js" defer></script>
 </head>
 <body>
 <p id="list-keyboard-help" class="sr-only">Use Up and Down to browse rows, Home and End to jump, Left and Right for row actions, and Enter to open. Tab leaves the list.</p>
 <aside class="sidebar"><a class="brand" href="#overview"><img src="/icon.svg" width="34" height="34" alt=""><span>PySAS<small>WORKBENCH</small></span></a>
-<nav aria-label="Main navigation"><button data-page="overview" class="nav">Overview<span>01</span></button><button data-page="runner" class="nav">Run<span>02</span></button><button data-page="graph" class="nav">Graph<span>03</span></button><button data-page="tools" class="nav">Projects<span>04</span></button><button data-page="servers" class="nav">Servers<span>05</span></button><button data-page="files" class="nav">Settings<span>06</span></button></nav>
+<nav aria-label="Main navigation"><button data-page="overview" class="nav">Overview<span>01</span></button><button data-page="runner" class="nav">Run<span>02</span></button><button data-page="stream" class="nav">Run stream<span>03</span></button><button data-page="graph" class="nav">Graph<span>04</span></button><button data-page="tools" class="nav">Projects<span>05</span></button><button data-page="servers" class="nav">Servers<span>06</span></button><button data-page="files" class="nav">Settings<span>07</span></button></nav>
 <div class="side-footer">
 <span class="connection"><i id="connection-dot"></i><span id="connection">Connecting</span></span><small id="version">Local workspace</small>
 </div><div class="app-actions">
-<button id="quit-app" class="subtle">Quit app</button><button id="keyboard-help" class="subtle" type="button" title="Alt or F10: O Overview, R Run, G Graph, P Projects, V Servers, S Settings; X page commands">Keyboard · Alt</button><button id="refresh" class="subtle">Refresh</button>
+<button id="quit-app" class="subtle">Quit app</button><button id="keyboard-help" class="subtle" type="button" title="Alt or F10: O Overview, R Run, T Run stream, G Graph, P Projects, V Servers, S Settings; X page commands">Keyboard · Alt</button><button id="refresh" class="subtle">Refresh</button>
 </div></aside>
 <main><header><div>
 <div class="eyebrow">SAS ENTERPRISE GUIDE</div>
@@ -101,6 +101,26 @@
 <div id="inbox" class="panel"></div>
 <div class="section-heading"><h2>Schedules</h2></div>
 <div id="schedule-activity"></div></section>
+<section id="page-stream" class="page" hidden>
+<div class="panel">
+<div class="panel-header"><div><div class="panel-number">RUN STREAM</div><h2>One submission, in your order</h2></div><button id="stream-restore" type="button" class="secondary" data-keytip="J">Restore JSON</button><input id="stream-import" type="file" accept=".json" hidden></div>
+<p class="hint">Choose a connection EGP, then add the code you want to submit. Each row runs after the previous row in the same SAS session. Add any _libs or parameter programs as the first rows.</p>
+<label>Run name<input id="stream-name" maxlength="120" value="Untitled stream" placeholder="A name you can find in Overview"></label>
+<div class="stream-connection"><label>Connection EGP<select id="stream-egp" data-keytip="E"><option value="">Choose an EGP</option></select></label><button id="stream-browse-egp" type="button" class="secondary">Browse EGP…</button><input id="stream-egp-upload" type="file" accept=".egp" hidden></div>
+<p id="stream-egp-status" class="hint" role="status" aria-live="polite"></p>
+<details><summary>Connection options</summary><label>EGP code node for the SAS server (optional)<input id="stream-server-program" maxlength="120" placeholder="Only needed if this EGP uses several SAS servers"></label><p class="hint">The engine inherits this node's Server connection. It submits the source below; it does not run the node's existing code.</p></details>
+</div>
+<div class="section-heading"><div><h2>Files to submit</h2><p>Whole files, inclusive line ranges, or scheduler sections. Use ↑ / ↓ to browse rows; Tab to edit a selection.</p></div><button id="stream-add" type="button" class="secondary" data-keytip="A">Add row</button></div>
+<div id="stream-rows" data-key-list data-keytip="F" tabindex="0" aria-label="Stream files" aria-describedby="list-keyboard-help"></div>
+<div class="panel stream-submit">
+<div class="stream-options"><label class="check"><input id="stream-html" type="checkbox" checked>Extract HTML results</label><label class="check"><input id="stream-tables" type="checkbox">Extract output tables to Excel</label><label class="check"><input id="stream-consolidate" type="checkbox" disabled>Combine tables into one workbook</label></div>
+<p class="hint">Combining creates tables.xlsx with one sheet per exported table. Individual exports are retained for recovery. No initialization files are added automatically.</p>
+<div class="actions"><button id="stream-estimate" type="button" class="secondary" data-keytip="I">Estimate time</button><button id="stream-source" type="button" class="secondary" data-keytip="S">Get source</button><button id="stream-export" type="button" class="secondary" data-keytip="D">Export JSON</button><button id="stream-run" type="button" class="primary" data-keytip="R" disabled>Run stream ↗</button></div>
+<p id="stream-estimate-result" class="hint" role="status"></p><p id="stream-status" class="hint" role="status" aria-live="polite"></p>
+<div id="stream-artifacts"></div>
+<p class="hint">Export JSON saves every row, selection, option, EGP and SAS file. Restore JSON replaces this editor with that saved stream. Each run also keeps its own portable JSON, source, logs and outputs in Tasks.</p>
+</div><div id="stream-execution" class="panel" hidden></div>
+</section>
 <section id="page-graph" class="page" hidden>
 <div class="graph-intro"><div><h2>Dependency graph <span class="badge">Preview</span></h2><p>One program or a full schedule. Arrows point from a prerequisite to the program that waits for it.</p></div><span id="graph-save-state" role="status">New graph</span></div>
 <div class="graph-toolbar panel">

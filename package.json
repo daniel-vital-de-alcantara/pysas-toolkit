@@ -2,7 +2,7 @@
   "name": "pysas-workbench-tests",
   "private": true,
   "scripts": {
-    "test": "node --test tests/test_ui.cjs tests/test_graph.cjs tests/test_run_form.cjs"
+    "test": "node --test tests/test_ui.cjs tests/test_graph.cjs tests/test_run_form.cjs tests/test_stream.cjs"
   },
   "devDependencies": {
     "jsdom": "26.1.0"

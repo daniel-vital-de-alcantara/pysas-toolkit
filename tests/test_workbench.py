@@ -368,6 +368,36 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(launch.call_args.args[0]['action'],'schedule')
         self.assertEqual(self.request('GET','/graph.js')[0],200)
 
+    def test_stream_http_upload_compose_download_portable_restore_and_worker_routing(self):
+        import ui_stream
+        from urllib.parse import quote
+        headers={'X-PySAS-Token':self.server.token}
+        self.assertEqual(self.request('POST','/api/stream-source','{}')[0],403)
+        status,body,_=self.request('POST','/api/upload?target=stream&name=sample.sas',b'%let ids=12;\n%put &ids.;',headers)
+        self.assertEqual(status,200,body);source=json.loads(body)
+        status,body,_=self.request('POST','/api/upload?target=stream&name=connection.egp',b'project',headers)
+        self.assertEqual(status,200,body);project=json.loads(body)
+        document=dict(format=ui_stream.FORMAT,name='HTTP stream',egp=project,server_program='',
+                      rows=[dict(id='one',file=source,mode='lines',row_start=None,row_end=1,section='')],
+                      export_html=True,export_tables=False,consolidate_tables=False)
+        payload=json.dumps({'stream':document})
+        status,body,_=self.request('POST','/api/stream-source',payload,headers)
+        self.assertEqual(status,200,body);path=json.loads(body)['path']
+        status,body,_=self.request('GET','/api/download?path='+quote(path))
+        self.assertEqual(status,200);self.assertIn(b'%let ids=12;',body);self.assertNotIn(b'%put &ids.;',body)
+        status,body,_=self.request('POST','/api/stream-export',payload,headers)
+        self.assertEqual(status,200,body);saved=self.server.app.resolve(json.loads(body)['path']).read_bytes()
+        status,body,_=self.request('POST','/api/stream-import',saved,headers)
+        self.assertEqual(status,200,body);restored=json.loads(body)['stream']
+        self.assertEqual(restored['rows'][0]['row_end'],1);self.assertNotEqual(restored['egp']['path'],project['path'])
+        status,body,_=self.request('POST','/api/stream-estimate',payload,headers)
+        self.assertEqual(status,200,body);self.assertIsNone(json.loads(body)['seconds'])
+        with patch.object(self.server.app,'launch',return_value={'id':'stream-worker'}) as launch:
+            status,body,_=self.request('POST','/api/stream-run',payload,headers)
+            self.assertEqual(status,200,body);self.assertEqual(launch.call_args.args[0]['action'],'stream')
+        self.assertEqual(self.request('GET','/stream.js')[0],200)
+        self.assertEqual(self.request('POST','/api/stream-import',b'{invalid',headers)[0],400)
+
     def test_log_summary_and_context_http(self):
         log=self.root/'sample.log';log.write_text('ERROR: first\nNOTE: done\nWARNING: last\n')
         status,body,_=self.request('GET','/api/log-summary?path=sample.log')

@@ -13,7 +13,7 @@ from pysas import schedule_lock
 from ui_data import export_backup, safe_files, write_archive
 
 ACTIVE = {'RUNNING', 'STOPPING', 'CANCELLING', 'PENDING'}
-FAILED = {'FAILED', 'SAS_ERROR', 'CONNECTION_LOST', 'CANCELLED', 'STOPPED', 'STOPPED_ON_ERROR', 'BLOCKED_DEPENDENCY'}
+FAILED = {'FAILED', 'SAS_ERROR', 'EXPORT_ERROR', 'TIMED_OUT', 'CONNECTION_LOST', 'CANCELLED', 'STOPPED', 'STOPPED_ON_ERROR', 'BLOCKED_DEPENDENCY'}
 FINISHED = FAILED | {'SUCCESS', 'PARTIAL', 'SKIPPED_SUCCESS', 'SKIPPED_PREVIOUS'}
 
 
@@ -44,7 +44,7 @@ def folder_size(folder):
 
 
 def storage_usage(app):
-    return {'bytes': sum(folder_size(p) for p in (*[base for base,_ in app.run_bases()], app.storage/'artifacts', app.settings/'parameters', app.settings/'graphs', app.tasks/'graph-sources')) + sum(p.stat().st_size for p in app.storage.glob('*') if p.is_file() and not p.is_symlink() and p.suffix in {'.txt', '.json', '.jsonl'}), 'export_bytes': folder_size(app.storage/'exports'), 'measured': time.time()}
+    return {'bytes': sum(folder_size(p) for p in (*[base for base,_ in app.run_bases()], app.storage/'artifacts', app.settings/'parameters', app.settings/'graphs', app.tasks/'graph-sources', app.tasks/'stream-sources')) + sum(p.stat().st_size for p in app.storage.glob('*') if p.is_file() and not p.is_symlink() and p.suffix in {'.txt', '.json', '.jsonl'}), 'export_bytes': folder_size(app.storage/'exports'), 'measured': time.time()}
 
 
 class Exports:
@@ -121,7 +121,7 @@ def protected_runs(app):
         # UNKNOWN may be an unmonitored worker after a crash; do not delete its output.
         held = any(j['status']=='WORKING' and j['scope']=='command' and Path(j['path_source']).name==c['id'] for j in app.exports.jobs.values())
         if c.get('status') in ACTIVE | {'UNKNOWN'} or held:
-            if c.get('action') in {'schedule', 'continue'}:
+            if c.get('action') in {'schedule', 'continue', 'stream'}:
                 folder = app.run_folder(c.get('path') or c.get('resume_path'))
                 if folder: protected.add(folder)
             for t in c.get('tasks', {}).values():

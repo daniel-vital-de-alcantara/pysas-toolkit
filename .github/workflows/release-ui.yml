@@ -30,7 +30,8 @@ jobs:
       - run: node --check ui/app.js
       - run: node --check ui/keyboard.js
       - run: node --check ui/graph.js
-      - run: node --test tests/test_ui.cjs tests/test_graph.cjs tests/test_run_form.cjs
+      - run: node --check ui/stream.js
+      - run: node --test tests/test_ui.cjs tests/test_graph.cjs tests/test_run_form.cjs tests/test_stream.cjs
   release:
     needs: test
     if: startsWith(github.ref, 'refs/tags/')

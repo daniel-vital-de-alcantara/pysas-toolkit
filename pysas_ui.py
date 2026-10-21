@@ -30,12 +30,13 @@ import ui_servers
 import ui_explore
 from ui_logs import LogIndex
 import ui_graph
+import ui_stream
 import ui_paths
 import ui_storage
 import windows_clipboard
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.34"
+VERSION = "0.4.0-preview.35"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 TEXT_SUFFIXES = {".sas", ".log", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".xml"}
@@ -198,9 +199,9 @@ class Workbench:
     def upload(self, query, stream, length):
         destination = query.get("target", ["inputs"])[0]
         folders = self.folders()
-        if destination == "graph":
+        if destination in {"graph", "stream"}:
             if Path(query.get("name", [""])[0]).suffix.casefold() not in {".sas", ".egp"}: raise ValueError("Graph sources must be SAS or EGP files.")
-            folder = self.tasks / "graph-sources"
+            folder = self.tasks / ("graph-sources" if destination == "graph" else "stream-sources")
             folder.mkdir(exist_ok=True)
         elif destination == "bundle":
             folder = self.code_root(query.get("code_root", [""])[0])
@@ -211,6 +212,12 @@ class Workbench:
         else:
             raise ValueError("Unknown upload destination.")
         name = query.get("name", [""])[0]
+        original_name = name
+        if destination == "stream":
+            if Path(name).name != name or "\\" in name: raise ValueError("Use a filename without folders.")
+            name = uuid.uuid4().hex + Path(name).suffix.lower()
+            limit = ui_stream.SOURCE_LIMIT if Path(name).suffix.lower() == ".sas" else ui_stream.EGP_LIMIT
+            if length > limit: raise ValueError("Run stream accepts SAS files up to 16 MB and EGP templates up to 64 MB.")
         if destination in {"inbox", "init"} and Path(name).suffix.lower() != ".sas":
             raise ValueError("The inbox and initialization folders accept SAS files only.")
         if destination == "init" and not name.startswith("_"):
@@ -222,6 +229,11 @@ class Workbench:
             try:
                 result = receive_upload(folder, name, stream, length)
                 if destination == "graph": result["path"] = self.relative(Path(result["path"]))
+                if destination == "stream":
+                    try: result = ui_stream.describe(self, result["path"], original_name)
+                    except BaseException:
+                        (folder / name).unlink(missing_ok=True)
+                        raise
                 return result
             finally:
                 self.uploading = False
@@ -489,8 +501,27 @@ class Workbench:
             args.append("--recursive")
         return action, args
 
-    def launch(self, data):
+    def launch(self, data, *, stream_prepared=None):
         data = dict(data)
+        if data.get("action") == "stream" and stream_prepared is None:
+            if os.name != "nt": raise ValueError("SAS execution requires Windows with Enterprise Guide.")
+            # Snapshot/estimate outside the status lock, even on slow input/data disks.
+            # The upload reservation prevents backups/folder changes during preparation.
+            with self.upload_lock:
+                with self.lock:
+                    if self.storage_busy: raise ValueError("Wait for the saved-data operation to finish.")
+                    if getattr(self, "closing", False): raise ValueError("PySAS is closing and finishing its active jobs.")
+                    self.uploading = True
+                prepared = None
+                try:
+                    prepared = ui_stream.prepare(self, data.get("stream"))
+                    return self.launch(data, stream_prepared=prepared)
+                except BaseException:
+                    if prepared and not any(c.get("path") == self.relative(prepared[0]) for c in self.commands.values()):
+                        shutil.rmtree(prepared[0])
+                    raise
+                finally:
+                    self.uploading = False
         if data.get("action") == "server-refresh":
             level = data.get("level") or ("libraries" if data.get("libraries_only") else "full")
             if level not in {"libraries", "tables", "columns", "full", "preview"}: raise ValueError("Unknown metadata level.")
@@ -508,7 +539,12 @@ class Workbench:
             data["template"] = self.server_template(data.get("template", ""))
             if level == "preview":
                 data["_query"] = ui_explore.request(catalog, libraries[0], data["table"], data.get("limit", 100), data.get("filters"), data.get("join", "AND"))
-        action, args = self.arguments(data)
+        stream = data.get("action") == "stream"
+        if stream:
+            if os.name != "nt": raise ValueError("SAS execution requires Windows with Enterprise Guide.")
+            action, args = "stream", []
+        else:
+            action, args = self.arguments(data)
         script = self.script
         # Reading source files must not hold the status/clock lock on slow disks.
         run_plan = self.run_plan(data) if action == "run" else None
@@ -524,6 +560,10 @@ class Workbench:
             if data.get("graph_id") and any(c.get("graph_id") == data["graph_id"] and c["status"] in ACTIVE for c in self.commands.values()):
                 raise ValueError("This graph is already running. Stop it or wait for it to finish.")
             display_name = self.display_name(data.get("display_name", ""))
+            if stream:
+                stream_folder, stream_document, stream_estimate = stream_prepared
+                display_name = stream_document["name"]
+                args = [str(stream_folder)]
             identifier = uuid.uuid4().hex
             item = {"id": identifier, "action": action, "args": list(args),
                     "name": data.get("program") or data.get("workbook") or data.get("run_dir") or action.replace("-", " "),
@@ -534,6 +574,11 @@ class Workbench:
             item["default_name"] = item["name"]
             item["display_name"] = display_name
             if display_name: item["name"] = display_name
+            if stream:
+                item.update(path=self.relative(stream_folder), estimate=stream_estimate,
+                            run_log=self.relative(stream_folder / "run.log"))
+                item["tasks"]["stream"] = dict(key="stream", name=display_name, kind="stream", status="RUNNING",
+                    path=item["path"], started=item["started"], estimate=stream_estimate, can_cancel_file=True)
             if action == "continue":
                 previous = self.input_path(data["run_dir"])
                 item["resume_path"] = self.relative(previous)
@@ -636,9 +681,19 @@ class Workbench:
             env.pop("PYSAS_UI_LEGACY_ROOT", None)
             # Neither normal output nor events depend on the HTTP/history reader.
             with (self.storage / (identifier + ".txt")).open("wb", buffering=0) as output:
-                process = subprocess.Popen([python, "-u", str(APP_DIR / "ui_worker.py"), str(script), *args],
-                                           cwd=self.root, stdin=None, stdout=output,
-                                           stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", env=env, **isolation)
+                command = [python, "-u", str(APP_DIR / "stream_worker.py"), *args] if stream else [python, "-u", str(APP_DIR / "ui_worker.py"), str(script), *args]
+                try:
+                    process = subprocess.Popen(command,
+                                               cwd=self.root, stdin=None, stdout=output,
+                                               stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", env=env, **isolation)
+                except OSError as exc:
+                    if stream:
+                        item.update(status="FAILED", finished=time.time(), elapsed=0, message="Could not start stream worker: " + str(exc))
+                        item["tasks"]["stream"].update(status="FAILED", elapsed=0, message=item["message"])
+                        self.commands[identifier] = item; self.save(item)
+                        (stream_folder / "status.txt").write_text("source=" + display_name + "\nstatus=FAILED\nelapsed_seconds=0\n", encoding="utf-8")
+                        (stream_folder / "run.log").write_text("ERROR: " + item["message"] + "\n", encoding="utf-8")
+                    raise
             self.commands[identifier] = item
             self.processes[identifier] = process
             try:
@@ -660,6 +715,9 @@ class Workbench:
             item["path"] = self.relative(result["path"])
             item["egp_result"] = {key: result[key] for key in ("programs", "flows", "warnings")}
             item["message"] = f"Extracted {result['programs']} programs in {result['flows']} process-flow folders. {len(result['warnings'])} extraction warnings; inspect the console for details."
+        elif kind == "stream-result":
+            item.update(path=self.relative(event["path"]), stream_status=event["status"], message=event["message"], elapsed=event["elapsed"])
+            item["run_log"] = self.relative(Path(event["path"]) / "run.log")
         elif kind == "bundle-result":
             item["bundle_result"] = event["result"]
         elif kind == "schedule-state":
@@ -817,6 +875,20 @@ class Workbench:
             item["status"] = "STOPPED" if item["status"] == "STOPPING" and rc in {0, 130} else ("SUCCESS" if rc == 0 else "FAILED")
             if snapshot_status:
                 item["status"] = snapshot_status
+            if item["action"] == "stream" and item.get("stream_status"):
+                item["status"] = item["stream_status"]
+            elif item["action"] == "stream":
+                # An abrupt worker failure must not leave a successful/forever-running stream.
+                item["status"] = "FAILED"
+                item["message"] = "Stream worker ended without a final result. Inspect Command console for the error."
+                folder = self.resolve(item["path"])
+                try:
+                    with (folder / "run.log").open("a", encoding="utf-8") as log:
+                        log.write("\nERROR: " + item["message"] + "\n")
+                    (folder / "status.txt").write_text("source=" + item["name"] + "\nstatus=FAILED\nelapsed_seconds=" + str(item["elapsed"]) + "\n", encoding="utf-8")
+                except OSError as exc:
+                    item["message"] += " Could not save failure log: " + str(exc)
+                item["tasks"]["stream"].update(status="FAILED", elapsed=item["elapsed"], message=item["message"])
             if item["status"] == "STOPPED" and item["action"] in {"schedule", "continue"}:
                 item["message"] = "Schedule stopped. No further tasks will launch."
             for task in item["tasks"].values():
@@ -922,7 +994,7 @@ class Workbench:
 
     def save_run_name(self, item):
         if not item.get("display_name"): return
-        paths = [item.get("path")] if item["action"] in {"schedule", "continue"} else [t.get("path") for t in item.get("tasks", {}).values()] if item["action"] == "run" else []
+        paths = [item.get("path")] if item["action"] in {"schedule", "continue", "stream"} else [t.get("path") for t in item.get("tasks", {}).values()] if item["action"] == "run" else []
         for value in paths:
             folder = self.run_folder(value)
             if folder and folder.is_dir():
@@ -1047,7 +1119,8 @@ class Workbench:
         for command in commands:
             for task in command.get("tasks", {}).values():
                 if task.get("status") in {"RUNNING", "CANCELLING", "PENDING"}:
-                    task["estimate"] = {"seconds": 0, "samples": 0} if task.get("skip") or task.get("status") in {"SKIPPED_SUCCESS", "SKIPPED_PREVIOUS"} else estimate_task(task, samples)
+                    if task.get("kind") != "stream":
+                        task["estimate"] = {"seconds": 0, "samples": 0} if task.get("skip") or task.get("status") in {"SKIPPED_SUCCESS", "SKIPPED_PREVIOUS"} else estimate_task(task, samples)
             if command.get("status") in ACTIVE and command.get("action") in {"schedule", "continue"} and command.get("tasks"):
                 args = command.get("args", [])
                 workers = args[args.index("--workers") + 1] if "--workers" in args else 10
@@ -1222,6 +1295,8 @@ class Workbench:
                 matched = next((t for t in command.get('tasks',{}).values() if self.history_key(t.get('path'))==self.history_key(relative)), None)
                 if direct:
                     owner = command; status = command['status']; name = command.get('display_name') or name
+                    if command.get('action') == 'stream' and command.get('tasks', {}).get('stream'):
+                        self_task = dict(command['tasks']['stream'])
                     if not tasks: tasks = [dict(t,task_id=t.get('key'),program=t.get('name')) for t in command.get('tasks',{}).values() if self.history_key(t.get('path')) != self.history_key(relative)]
                     for task in tasks:
                         saved = command.get('tasks',{}).get(task['task_id'],{})
@@ -1369,7 +1444,7 @@ class Handler(BaseHTTPRequestHandler):
                     tasks = list(self.server.app.commands[identifier].get("tasks", {}).values())[-8:]
                 for task in tasks:
                     if task.get("path"):
-                        stage = self.server.app.resolve(task["path"]) / "console.txt"
+                        stage = self.server.app.resolve(task["path"]) / ("execution/console.txt" if task.get("kind") == "stream" else "console.txt")
                         if stage.is_file():
                             console += "\n\n--- " + str(task.get("name", task.get("key", "File"))) + " ---\n" + read_text(stage, limit=8000, tail=True)
                 self.respond({"text": console})
@@ -1412,7 +1487,7 @@ class Handler(BaseHTTPRequestHandler):
                     while chunk := f.read(256 * 1024):
                         self.wfile.write(chunk)
             else:
-                name = {"/": "index.html", "/app.js": "app.js", "/keyboard.js": "keyboard.js", "/graph.js": "graph.js", "/style.css": "style.css", "/icon.svg": "icon.svg"}.get(url.path)
+                name = {"/": "index.html", "/app.js": "app.js", "/keyboard.js": "keyboard.js", "/graph.js": "graph.js", "/stream.js": "stream.js", "/style.css": "style.css", "/icon.svg": "icon.svg"}.get(url.path)
                 if not name:
                     self.respond({"error": "Not found."}, 404)
                     return
@@ -1445,6 +1520,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.connection.settimeout(60)
                 self.respond(self.server.app.backup(self.rfile, length))
                 return
+            if url.path == "/api/stream-import":
+                if not 0 < length <= ui_stream.JSON_LIMIT: raise ValueError("Run stream JSON must be 128 MB or smaller.")
+                self.connection.settimeout(120)
+                raw = self.rfile.read(length)
+                if len(raw) != length: raise ValueError("Stream JSON upload was interrupted.")
+                self.respond({"stream": ui_stream.import_document(self.server.app, raw)})
+                return
             if url.path == "/api/upload":
                 if not 0 <= length <= UPLOAD_LIMIT:
                     raise ValueError("Each file must be 512 MB or smaller.")
@@ -1471,6 +1553,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond({"nodes": len(graph["nodes"]), "setup": len(graph["setup"]), "workers": graph["workers"]})
             elif self.path == "/api/graph-run":
                 self.respond(ui_graph.launch(self.server.app, data))
+            elif self.path == "/api/stream-file":
+                self.respond(ui_stream.describe(self.server.app, data.get("path", "")))
+            elif self.path in {"/api/stream-source", "/api/stream-export"}:
+                self.respond(ui_stream.artifact(self.server.app, data.get("stream"), "source" if self.path.endswith("source") else "json"))
+            elif self.path == "/api/stream-estimate":
+                self.respond(ui_stream.estimate(self.server.app, data.get("stream")))
+            elif self.path == "/api/stream-run":
+                self.respond(self.server.app.launch(dict(action="stream", stream=data.get("stream"))))
             elif self.path == "/api/export":
                 self.respond(self.server.app.exports.start(data.get("scope"), data.get("path", "")))
             elif self.path == "/api/cleanup":

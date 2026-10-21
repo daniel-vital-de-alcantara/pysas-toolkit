@@ -98,11 +98,12 @@ def export_backup(app, configs_only=False, progress=None, destination=None, *, m
                             bases.append(child)
         entries = [(p, ('.pysas-ui/parameters/'+p.name if p.parent==app.settings/'parameters' else '.pysas-ui/graphs/'+p.name if p.parent==app.settings/'graphs' else portable(app.relative(p)))) for base in bases for p in safe_files(base) if p.name not in {'.schedule.lock', '_cancel.request'}]
         if not configs_only:
-            sources = app.tasks / 'graph-sources'
-            if sources.is_dir() and not sources.is_symlink():
-                entries.extend((p, portable(app.relative(p))) for p in sources.iterdir()
-                               if p.is_file() and not p.is_symlink() and p.suffix.lower() in {'.sas', '.egp'}
-                               and (before is None or getattr(p.stat(), 'st_birthtime', p.stat().st_ctime) <= before))
+            for name in ('graph-sources', 'stream-sources'):
+                sources = app.tasks / name
+                if sources.is_dir() and not sources.is_symlink():
+                    entries.extend((p, portable(app.relative(p))) for p in sources.iterdir()
+                                   if p.is_file() and not p.is_symlink() and p.suffix.lower() in {'.sas', '.egp'}
+                                   and (before is None or getattr(p.stat(), 'st_birthtime', p.stat().st_ctime) <= before))
             for command in manifest["commands"]:
                 identifier = command["id"]
                 p = app.storage / (identifier + '.txt')
@@ -149,7 +150,7 @@ def restore_backup(app, stream, length):
                 if len(parts)==3 and parts[:2]==('.pysas-ui','graphs'):
                     if not re.fullmatch(r'[a-zA-Z0-9_-]{1,64}\.json',parts[2]) or i.file_size>2*1024**2: raise ValueError('Invalid graph backup entry.')
                     allowed=True
-                if len(parts)==3 and parts[:2]==('tasks','graph-sources'):
+                if len(parts)==3 and parts[0]=='tasks' and parts[1] in {'graph-sources','stream-sources'}:
                     if PurePosixPath(parts[2]).suffix.lower() not in {'.sas','.egp'} or i.file_size>512*1024**2: raise ValueError('Invalid graph source backup entry.')
                     allowed=True
                 if len(parts) == 3 and parts[:2] == ('.pysas-ui', 'parameters'):
@@ -221,12 +222,13 @@ def restore_backup(app, stream, length):
             parameter_settings = dict(parameter_settings)
             parameter_settings['last'] = parameter_moves.get(parameter_settings.get('last'), '')
             if not parameter_settings['last']: parameter_settings['enabled'] = False
-        graph_sources=unpacked/'tasks/graph-sources'
-        if graph_sources.exists():
-            for source in graph_sources.iterdir():
-                target=app.tasks/'graph-sources'/source.name
-                if target.exists():target=target.with_name(source.stem+'_import_'+uuid.uuid4().hex[:8]+source.suffix)
-                mappings['tasks/graph-sources/'+source.name]=portable(app.relative(target));moves.append((source,target))
+        for name in ('graph-sources', 'stream-sources'):
+            graph_sources=unpacked/'tasks'/name
+            if graph_sources.exists():
+                for source in graph_sources.iterdir():
+                    target=app.tasks/name/source.name
+                    if target.exists():target=target.with_name(source.stem+'_import_'+uuid.uuid4().hex[:8]+source.suffix)
+                    mappings['tasks/'+name+'/'+source.name]=portable(app.relative(target));moves.append((source,target))
         ids = {}
         for item in manifest['commands']:
             if not isinstance(item, dict) or not isinstance(item.get('tasks', {}), dict) or not isinstance(item.get('args', []), list) or not isinstance(item.get('started'), (int, float)):
@@ -361,6 +363,7 @@ def duration_history(root, commands, bases=None, resolve=None):
             samples[identity] = {'key': key, 'seconds': seconds, 'time': stamp}
         except (ValueError, TypeError): pass
     for command in commands:
+        if command.get('action') == 'stream': continue  # A stream total is not a timing for any one row.
         for task in command.get('tasks', {}).values():
             if task.get('path'):
                 add(task, portable(str(resolve(task['path']) if resolve else (root/portable(task['path'])).resolve())), command.get('started', 0))
@@ -368,6 +371,7 @@ def duration_history(root, commands, bases=None, resolve=None):
         if not base.exists(): continue
         for folder in base.iterdir():
             if not folder.is_dir() or folder.is_symlink(): continue
+            if (folder / 'stream-plan.json').is_file(): continue
             if resolve and resolve(str(folder)) != folder.resolve(): continue
             try:
                 stamp = folder.stat().st_mtime
@@ -464,7 +468,7 @@ def remaining_work(commands, queued, samples, now):
     forecasts = []
     for command in commands:
         if command.get('status') not in {'RUNNING', 'STOPPING'}: continue
-        if command.get('action') not in {'run', 'watch', 'schedule', 'continue', 'server-refresh'}: continue
+        if command.get('action') not in {'run', 'watch', 'schedule', 'continue', 'server-refresh', 'stream'}: continue
         args = command.get('args', [])
         workers = int(args[args.index('--workers')+1]) if '--workers' in args else 1
         tasks = [dict(t) for t in command.get('tasks', {}).values()]
@@ -481,12 +485,14 @@ def remaining_work(commands, queued, samples, now):
                 ends.add(key); continue
             if status not in {'RUNNING', 'CANCELLING', 'PENDING'}: continue
             if command['status'] == 'STOPPING' and status == 'PENDING': continue
-            seconds = 0 if task.get('skip') else estimate_task(task, samples)['seconds']
+            stream_estimate = task.get('estimate', {}) if command.get('action') == 'stream' else {}
+            seconds = stream_estimate.get('seconds') if command.get('action') == 'stream' else 0 if task.get('skip') else estimate_task(task, samples)['seconds']
             running = status in {'RUNNING', 'CANCELLING'}
             if seconds is not None and running:
                 seconds -= max(0, now - (task.get('started') or now))
                 if seconds <= 0: seconds = None  # Do not announce zero while SAS still runs.
             unknown += seconds is None
+            if seconds is not None: unknown += stream_estimate.get('unknown', 0)
             known += seconds is not None and not task.get('skip')
             if running: heapq.heappush(heap, (max(0, seconds or 0), key))
             else: pending[key] = (task, seconds or 0)

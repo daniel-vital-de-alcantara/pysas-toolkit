@@ -39,7 +39,9 @@ is required. Inaccessible members remain listed with unknown metadata; readable 
 with warnings and incomplete storage totals. Saved snapshots remain available offline and travel with saved-data
 backups; missing metadata is shown as unknown.
 
-The released command-line toolkit is version 0.3.18; the released UI preview is 0.4.0-preview.34.
+The released command-line toolkit is version 0.3.18; the released UI preview is 0.4.0-preview.35.
+
+Preview.35 adds **Run stream**: order uploaded SAS files, select whole files/line ranges/scheduler sections, export the combined source or a portable JSON, and submit once through the separate `engine.py`. Includes output choices, optional combined Excel tables, historical estimates and existing Overview/Inspect integration. See [Run stream](docs/run-stream.md).
 
 Preview.34 preserves the selected single-file initialization override during inventory refresh, shows a server-validated ordered file plan before launch, and checks the plan again in the worker. Each single-file run keeps a consolidated `run.log`, initialization/parameter snapshots and submitted source, including successful runs. Shared initialization can be chosen explicitly even when Settings has a saved override. See [single-file initialization](docs/single-file-initialization.md).
 

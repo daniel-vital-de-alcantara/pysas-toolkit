@@ -1,4 +1,4 @@
-PySAS Workbench 0.4.0-preview.34
+PySAS Workbench 0.4.0-preview.35
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
@@ -343,3 +343,12 @@ program names and process flows from project.xml, like MagicRoot. Output contain
 and download/copy its entire ZIP. Source encodings are preserved; duplicates get
 numbered names. Repack accepts edits from either named source view, with explicit
 conflicts if both copies differ. See docs/egp-extraction.md.
+
+New in preview.35
+- Run stream (Alt, T): browse an EGP and ordered SAS files; select whole files,
+  inclusive line ranges or scheduler sections, and submit one combined program.
+- Get source; portable JSON export/restore includes all SAS and EGP inputs.
+- Extract HTML/tables; optionally combine exported tables into tables.xlsx.
+- Historical estimates, elapsed time, stop, Overview/Inspect and run ZIP support.
+- Run stream uses the independent engine.py; existing Run/Graph/scheduler remain.
+- See docs/run-stream.md and docs/engine.md.

@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  const navigation={overview:"O",runner:"R",graph:"G",tools:"P",files:"S",servers:"V"};
+  const navigation={overview:"O",runner:"R",stream:"T",graph:"G",tools:"P",files:"S",servers:"V"};
   function codes(count){const width=Math.max(1,Math.ceil(Math.log(Math.max(1,count))/Math.log(26)));return Array.from({length:count},(_,i)=>{let code="";for(let n=0;n<width;n++){code=alphabet[i%26]+code;i=Math.floor(i/26);}return code;});}
   // Reserve explicit hints first. Allocate fallback letters from the control's
   // label, across the whole scope (including off-screen and disabled controls).
