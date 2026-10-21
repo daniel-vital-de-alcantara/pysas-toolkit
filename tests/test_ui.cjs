@@ -12,10 +12,10 @@ const snapshot = {now:100,windows:false,openpyxl:true,files:[],commands:[],histo
 const context = {
   document:{getElementById:node,querySelectorAll:()=>[],addEventListener(){},modelContext:{registerTool(t){registered.push(t)}}},
   window:{addEventListener(){}}, location:{hash:''},history:{replaceState(){}},
-  URLSearchParams,fetch:async()=>({ok:true,json:async()=>snapshot}),setInterval(){},AbortController,Date,console
+  URLSearchParams,FormData:class {constructor(){return []}},fetch:async()=>({ok:true,json:async()=>snapshot}),setInterval(){},setTimeout(){},clearTimeout(){},AbortController,Date,console
 };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={runInitializationText,applyInspector,inspectorState:()=>inspectorTab,taskRecords,tasksTable,inspectorFiles,logSymbol,setInspectorTab,renderSample:(value)=>{previewResult=value;previewPage=0;renderPreviewRows();},runFlow,logSummaryMarkup,logContextMarkup,remainingText,focusTarget,putMarkup,catalogIssues,setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8')+'\nglobalThis.helpers={runInitializationMarkup,applyInspector,inspectorState:()=>inspectorTab,taskRecords,tasksTable,inspectorFiles,logSymbol,setInspectorTab,renderSample:(value)=>{previewResult=value;previewPage=0;renderPreviewRows();},runFlow,logSummaryMarkup,logContextMarkup,remainingText,focusTarget,putMarkup,catalogIssues,setCopyTarget,copyFile,storageSize,catalogRows,duration,elapsed,timer,esc,badge,taskTable,commandCards,syncClock,clockSeconds,taskScope,scheduleStopControl,expectedText,putParameters,parameterFields};',context);
 const h = context.helpers;
 test('elapsed formatting supports seconds, hours, and runs longer than a day',()=>{
   assert.equal(h.duration(65.9),'00:01:05');
@@ -425,11 +425,12 @@ test('inspector opens Outputs after success and Logs for failure, active or part
 test('page-command hints remain reachable from the bottom keyboard button',()=>{const f=keyboardFixture(3);f.doc.getElementById=id=>id==='keyboard-help'?f.controls[2]:null;f.api.show();f.key('keydown','X');assert.equal(f.api.active,true);f.key('keydown','A');assert.equal(f.controls[0].clicked,1);});
 
 
-test('single-file initialization preview exposes inbox files and hidden default overrides',()=>{
-  const snapshot={initialization_files:['C:/inbox/_10_libs.SAS','C:/shared/_20_macros.sas'],preferences:{default_lib:''}};
-  assert.match(h.runInitializationText(snapshot),/_10_libs.SAS → _20_macros.sas/);
-  assert.match(h.runInitializationText({...snapshot,preferences:{default_lib:'C:/other.sas'}}),/override: C:\/other.sas.*replaces all shared/);
-  assert.match(h.runInitializationText({...snapshot,preferences:{default_lib:'C:/default.sas'}},'C:/explicit.sas'),/override: C:\/explicit.sas/);
-  assert.match(h.runInitializationText({initialization_files:[]}),/No shared/);
-  assert.match(h.runInitializationText({}),/Reading shared/);
+test('single-file plan displays ordered full paths, editor parameters and override semantics',()=>{
+  const plan={mode:'override',override:'C:/other/init.sas',folders:['C:/shared'],files:[{name:'init.sas',path:'C:/other/init.sas',role:'initialization'},{name:'_cases.sas',path:null,role:'parameters'},{name:'<extract>.sas',path:'C:/source/<extract>.sas',role:'program'}]};
+  const markup=h.runInitializationMarkup(plan);
+  assert.match(markup,/One initialization override replaces/);
+  assert.match(markup,/C:\/other\/init.sas/);assert.match(markup,/Current parameter editor contents/);
+  assert.match(markup,/&lt;extract&gt;.sas/);assert.doesNotMatch(markup,/<extract>/);
+  assert.ok(markup.indexOf('init.sas')<markup.indexOf('_cases.sas'));assert.ok(markup.indexOf('_cases.sas')<markup.indexOf('&lt;extract&gt;'));
+  assert.match(h.commandCards([{id:'single',name:'Extract',tasks:{},run_log:'tasks/files/single/run.log',status:'SUCCESS'}]),/Download full run log/);
 });

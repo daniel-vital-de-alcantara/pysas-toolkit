@@ -25,11 +25,12 @@ jobs:
         with:
           node-version: '22'
       - run: python -m pip install openpyxl
+      - run: npm ci --ignore-scripts
       - run: python -m unittest discover -s tests -v
       - run: node --check ui/app.js
       - run: node --check ui/keyboard.js
       - run: node --check ui/graph.js
-      - run: node --test tests/test_ui.cjs tests/test_graph.cjs
+      - run: node --test tests/test_ui.cjs tests/test_graph.cjs tests/test_run_form.cjs
   release:
     needs: test
     if: startsWith(github.ref, 'refs/tags/')

@@ -19,6 +19,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import pysas_ui as ui
+import pysas
 import ui_worker as worker
 
 
@@ -408,6 +409,29 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(status, 403)
         status, _, _ = self.request('POST', '/api/parameters/import?name=bad.py', b'code', headers)
         self.assertEqual(status, 400)
+
+    def test_single_run_plan_http_uses_exact_form_override_and_downloads_full_log(self):
+        headers={'X-PySAS-Token':self.server.token}
+        (self.root/'job.sas').write_text('target;')
+        (self.root/'_auto.sas').write_text('auto;')
+        (self.root/'override.SAS').write_text('override;')
+        data=dict(program='job.sas',initialization_mode='override',lib='override.SAS',use_parameters=True,parameters_name='_cases.sas',parameters_text='%let ids=1;')
+        payload=json.dumps(data)
+        self.assertEqual(self.request('POST','/api/run-plan',payload)[0],403)
+        status,body,_=self.request('POST','/api/run-plan',payload,headers)
+        self.assertEqual(status,200,body);plan=json.loads(body)
+        self.assertEqual([f['name'] for f in plan['files']],['override.SAS','_cases.sas','job.sas'])
+        self.assertEqual(plan['files'][0]['path'],str((self.root/'override.SAS').resolve()))
+        self.assertIsNone(plan['files'][1]['path'])
+        for extra in ({'lib':''},{'lib':'../outside.sas'},{'initialization_mode':'bad'}):
+            self.assertEqual(self.request('POST','/api/run-plan',json.dumps({**data,**extra}),headers)[0],400)
+        prepared=pysas.single_file_inputs(self.root/'job.sas',self.root/'override.SAS',self.root,self.root/'runner/inbox',parameter_text='%let ids=1;',parameter_name='_cases.sas')
+        folder=self.server.app.tasks/'files/test';folder.mkdir(parents=True)
+        (folder/'logs').mkdir();(folder/'logs/sas.log').write_text('NOTE: sample output')
+        log=pysas.write_run_log(folder,prepared['plan'],'SUCCESS',1)
+        from urllib.parse import urlencode
+        status,body,_=self.request('GET','/api/download?'+urlencode({'path':self.server.app.relative(log)}))
+        self.assertEqual(status,200,body);self.assertIn(b'FILES IN SUBMISSION ORDER',body);self.assertIn(b'NOTE: sample output',body)
 
     def test_copy_file_post_requires_token_and_passes_real_file_not_its_text(self):
         folder = self.root/'runs/copy'; folder.mkdir(parents=True)

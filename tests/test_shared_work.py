@@ -45,15 +45,16 @@ class SharedWorkTests(unittest.TestCase):
 
     def test_every_execution_launch_gets_snapshot_and_disabled_drops_inherited_config(self):
         self.app.update_shared_work(dict(enabled=True, path='/remote/work', libref='VDI'))
+        (self.root/'job.sas').write_text('target;')
         with patch.object(ui.subprocess, 'Popen', return_value=Mock()) as spawn, patch.object(ui.threading, 'Thread'):
             for action in ['run', 'watch', 'schedule']:
                 with patch.object(self.app, 'arguments', return_value=(action, [action])):
-                    identifier = self.app.launch({'action': action})['id']
+                    identifier = self.app.launch({'action': action,'program':'job.sas'})['id']
                 self.assertEqual(spawn.call_args.kwargs['env']['PYSAS_SHARED_WORK_PATH'], '/remote/work')
                 self.assertEqual(self.app.commands[identifier]['shared_work']['libref'], 'VDI')
             self.app.update_shared_work(dict(enabled=False, path='/remote/work'))
             with patch.dict(os.environ, {'PYSAS_SHARED_WORK_PATH': '/stale'}), patch.object(self.app, 'arguments', return_value=('run', ['run'])):
-                self.app.launch({'action': 'run'})
+                self.app.launch({'action': 'run','program':'job.sas'})
             self.assertNotIn('PYSAS_SHARED_WORK_PATH', spawn.call_args.kwargs['env'])
         self.app.processes.clear()
 

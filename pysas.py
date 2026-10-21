@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PySAS 0.3.17 — portable SAS Enterprise Guide command-line utilities.
+"""PySAS 0.3.18 — portable SAS Enterprise Guide command-line utilities.
 
 Keep this file beside the EGP, scheduler workbook and any top-level _*.sas
 initialisation files it should use.  Python 3.9+ is recommended.  ``rich`` is
@@ -32,7 +32,7 @@ from typing import Any, Iterable
 from xml.etree import ElementTree as ET
 
 
-VERSION = "0.3.17"
+VERSION = "0.3.18"
 ROOT_DIR = Path(__file__).resolve().parent
 CODEBASE_FILE = "codebase.sasbundle.txt"
 BACKUP_FOLDER = "_codebase_backups"
@@ -1008,33 +1008,70 @@ def shared_work_code():
             "/* PYSAS_SHARED_WORK_END */\n")
 
 
+def single_file_inputs(source: Path, explicit_lib: Path | None = None,
+                       init_dir: Path | None = None, extra_init_dir: Path | None = None,
+                       parameters: Path | None = None, *, parameter_text: str | None = None,
+                       parameter_name: str | None = None) -> dict[str, Any]:
+    """Resolve and read one submission once; preview and execution share this plan."""
+    source = source.resolve()
+    parameters = parameters.resolve() if parameters is not None else None
+    if parameters == source or explicit_lib is not None and parameters == explicit_lib.resolve():
+        raise ValueError("Choose a parameters file separate from the program and initialization override.")
+    if explicit_lib is not None and explicit_lib.resolve() == source:
+        raise ValueError("Choose an initialization override separate from the program.")
+    initialization = [path for path in init_files(explicit_lib, init_dir, extra_init_dir)
+                      if path.resolve() not in {source, parameters}]
+    files, code = [], []
+    def add(role, name, path, text):
+        files.append(dict(order=len(files) + 1, role=role, name=name, path=str(path) if path else None,
+                          sha256=hashlib.sha256(normalized(text).encode("utf-8")).hexdigest()))
+        code.append(text)
+    for path in initialization:
+        add("initialization", path.name, path.resolve(), read_text(path))
+    if parameters is not None or parameter_text is not None:
+        add("parameters", parameter_name or (parameters.name if parameters else "_cases.sas"), parameters,
+            read_text(parameters) if parameter_text is None else parameter_text)
+    add("program", source.name, source, read_text(source))
+    folders = list(dict.fromkeys(str(path.resolve()) for path in (init_dir or ROOT_DIR, extra_init_dir) if path is not None))
+    plan = dict(format="pysas-single-file-plan-1", mode="override" if explicit_lib else "shared",
+                override=str(explicit_lib.resolve()) if explicit_lib else None, folders=folders, files=files)
+    # The parameter editor is snapshotted to a new path at launch. Its name and
+    # contents define its identity; its temporary storage path does not.
+    identity = {**plan, "files": [{**item, "path": None if item["role"] == "parameters" else item["path"]} for item in files]}
+    plan["revision"] = hashlib.sha256(json.dumps(identity, sort_keys=True).encode("utf-8")).hexdigest()
+    return dict(plan=plan, code=code)
+
+
 def compose_sas(source: Path, result_dir: Path, explicit_lib: Path | None = None,
                 init_dir: Path | None = None, extra_init_dir: Path | None = None,
                 parameters: Path | None = None, parameter_source: Path | None = None,
-                *, progress=None) -> str:
+                *, progress=None, prepared=None) -> str:
+    prepared = prepared or single_file_inputs(source, explicit_lib, init_dir, extra_init_dir,
+                                             parameter_source or parameters,
+                                             parameter_text=read_text(parameters) if parameters is not None else None)
+    plan = prepared["plan"]
     parts = ["options iomlogautoflush;\n", shared_work_code(),
              f"%let PYSAS_RESULT_DIR=\"{result_dir.as_posix()}\";\n",
              "/* PYSAS_LIB_START */\n"]
-    selected_parameters = (parameter_source or parameters).resolve() if parameters is not None else None
-    initialization = [path for path in init_files(explicit_lib, init_dir, extra_init_dir)
-                      if selected_parameters is None or path.resolve() != selected_parameters]
     if progress:
-        if explicit_lib:
-            progress(f"Initialization override: {explicit_lib} (replaces shared _*.sas files)")
+        if plan["mode"] == "override":
+            progress(f"Initialization override: {plan['override']} (replaces shared _*.sas files)")
         else:
-            folders = [init_dir or ROOT_DIR] + ([extra_init_dir] if extra_init_dir is not None else [])
-            progress(f"Shared initialization: {len(initialization)} file(s), alphabetical order. Folders: " + ", ".join(str(p) for p in dict.fromkeys(folders)))
-    for path in initialization:
-        parts += [f"/* PYSAS_INIT_FILE_START: {path.name} */\n", normalized(read_text(path)),
-                  f"/* PYSAS_INIT_FILE_END: {path.name} */\n"]
-        if progress: progress(f"Appended shared initialization: {path}")
-    parts += ["/* PYSAS_LIB_END */\n", shared_work_code()]
-    if parameters is not None:
-        parts += ["/* PYSAS_PARAMETERS_START */\n", normalized(read_text(parameters)), "/* PYSAS_PARAMETERS_END */\n"]
-        if progress: progress(f"Appended parameters: {(parameter_source or parameters).name}")
-    parts += [f"/* PYSAS_JOB_START: {source.name} */\n",
-              normalized(read_text(source)), f"/* PYSAS_JOB_END: {source.name} */\n"]
-    if progress: progress(f"Appended program: {source.name}")
+            progress(f"Shared initialization: {sum(f['role'] == 'initialization' for f in plan['files'])} file(s), alphabetical order. Folders: " + ", ".join(plan["folders"]))
+    initialization_closed = False
+    for item, text in zip(plan["files"], prepared["code"]):
+        role, name, order = item["role"], item["name"], item["order"]
+        if role != "initialization" and not initialization_closed:
+            parts += ["/* PYSAS_LIB_END */\n", shared_work_code()]
+            initialization_closed = True
+        marker = {"initialization": "INIT_FILE", "parameters": "PARAMETERS", "program": "JOB"}[role]
+        label = name.replace("*/", "* /").replace("\n", " ").replace("\r", " ")
+        parts += [f"/* PYSAS_{marker}_START: {label} */\n",
+                  f"%put NOTE: PYSAS_FILE_START|{order}|{role};\n", normalized(text),
+                  f"%put NOTE: PYSAS_FILE_END|{order}|{role};\n",
+                  f"/* PYSAS_{marker}_END: {label} */\n"]
+        if progress:
+            progress(f"Appended {'shared initialization' if role == 'initialization' else role}: {item['path'] or name}")
     return "".join(parts)
 
 
@@ -1179,15 +1216,52 @@ def saved_runs(kind):
     return ROOT_DIR / "runs" if kind == "schedules" else ROOT_DIR / "runner" / "runs"
 
 
+def write_run_log(run_dir: Path, plan: dict[str, Any], status: str, elapsed: float, message: str = "") -> Path:
+    """Keep the ordered plan, preparation and complete SAS/automation logs together."""
+    target = run_dir / "run.log"
+    fd, name = tempfile.mkstemp(prefix=".run-log-", suffix=".tmp", dir=run_dir)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as output:
+            output.write(f"PySAS {VERSION} — Full single-file run log\nStatus: {status}\nElapsed: {elapsed:.1f} seconds\n")
+            output.write(f"Plan: {plan['revision']}\n")
+            if plan["mode"] == "override":
+                output.write(f"Initialization override: {plan['override']}\nThis one file replaces the shared _*.sas list.\n")
+            else:
+                output.write("Shared initialization folders: " + ", ".join(plan["folders"]) + "\n")
+            output.write("\nFILES IN SUBMISSION ORDER\n")
+            for item in plan["files"]:
+                output.write(f"{item['order']}. {item['role']}: {item['path'] or item['name']}\n")
+                output.write(f"   Snapshot: {item.get('snapshot', 'not yet saved')}\n   SHA256 (submitted text): {item['sha256']}\n")
+            if not any(item['role'] == 'initialization' for item in plan['files']):
+                output.write("No initialization files were selected.\n")
+            output.write("\nAll files are prepended into one submission, in the order above.\n")
+            output.write("SAS log markers PYSAS_FILE_START|N and PYSAS_FILE_END|N identify when SAS reaches each source.\n")
+            output.write("The plan alone is not proof that SAS reached or completed every source.\n")
+            if message: output.write("\nMessage: " + message + "\n")
+            evidence = [(run_dir / "preparation.txt", False)]
+            evidence += [(path, False) for path in sorted((run_dir / "logs").glob("*.log"))]
+            evidence.append((run_dir / "console.txt", True))
+            for path, console in evidence:
+                if path.is_file():
+                    output.write("\n" + "=" * 80 + "\n" + str(path.relative_to(run_dir)) + "\n" + "=" * 80 + "\n")
+                    append_schedule_log_file(output, path, console)
+            if not any((run_dir / "logs").glob("*.log")):
+                output.write("\nNo SAS log is available yet.\n" if status == "RUNNING" else "\nNo SAS log was produced. Check preparation and automation output above.\n")
+        temporary.replace(target)
+        return target
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def run_job(source: Path, project: Path, tables: bool, explicit_lib: Path | None,
             notify_user: bool, runs_dir: Path | None = None, display_name: str | None = None,
             init_dir: Path | None = None, extra_init_dir: Path | None = None,
-            parameters: Path | None = None) -> dict[str, Any]:
-    if parameters is not None:
-        parameters = Path(parameters).resolve()
-        if parameters == source.resolve() or explicit_lib is not None and parameters == explicit_lib.resolve():
-            raise ValueError("Choose a parameters file separate from the program and initialization override.")
-        parameter_code = read_text(parameters)  # Read once; the archived copy is what will execute.
+            parameters: Path | None = None, expected_plan: str | None = None) -> dict[str, Any]:
+    prepared = single_file_inputs(source, explicit_lib, init_dir, extra_init_dir, parameters)
+    plan = prepared["plan"]
+    if expected_plan and expected_plan != plan["revision"]:
+        raise ValueError("The single-file inputs changed after preview. Refresh the execution plan and run again; no code was submitted.")
     logical_stem = re.sub(r"(?i)\.tables$", "", source.stem)
     base = safe_name(logical_stem)
     root = runs_dir or saved_runs("files")
@@ -1199,19 +1273,31 @@ def run_job(source: Path, project: Path, tables: bool, explicit_lib: Path | None
     source_dir = run_dir / "source"
     source_dir.mkdir()
     shutil.copy2(source, source_dir / source.name)
-    parameter_copy = None
-    if parameters is not None:
-        parameter_folder = run_dir / "parameters"
-        parameter_folder.mkdir()
-        parameter_copy = parameter_folder / parameters.name
-        parameter_copy.write_text(parameter_code, encoding="utf-8")
-        print(f"Parameters: {parameters.name} (after shared initialization, before {source.name})", flush=True)
+    for item, text in zip(plan["files"], prepared["code"]):
+        if item["role"] == "program":
+            item["snapshot"] = "source/" + source.name
+            continue
+        folder = run_dir / ("initialization" if item["role"] == "initialization" else "parameters")
+        folder.mkdir(exist_ok=True)
+        snapshot = folder / (f"{item['order']:02d}__{item['name']}" if item["role"] == "initialization" else item["name"])
+        snapshot.write_text(text, encoding="utf-8")
+        item["snapshot"] = snapshot.relative_to(run_dir).as_posix()
+    (run_dir / "execution-plan.json").write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
     submitted = run_dir / "_submitted.sas"
-    submitted.write_text(compose_sas(source, run_dir / "results", explicit_lib, init_dir, extra_init_dir,
-                                    parameters=parameter_copy, parameter_source=parameters,
-                                    progress=lambda message: report_progress(run_dir, "preparing", message)), encoding="utf-8")
+    def preparation(message):
+        with (run_dir / "preparation.txt").open("a", encoding="utf-8") as output:
+            output.write(message + "\n")
+        report_progress(run_dir, "preparing", message)
+    submitted.write_text(compose_sas(source, run_dir / "results", prepared=prepared, progress=preparation), encoding="utf-8")
     started = time.time()
-    rc, console = execute_eg("RUNFILE", project, submitted, display_name or source.name, 0, 0, run_dir, tables)
+    write_run_log(run_dir, plan, "RUNNING", 0)
+    try:
+        rc, console = execute_eg("RUNFILE", project, submitted, display_name or source.name, 0, 0, run_dir, tables)
+    except Exception as exc:
+        elapsed = time.time() - started
+        (run_dir / "status.txt").write_text(f"status=FAILED\nsource={source.name}\nelapsed_seconds={elapsed:.1f}\n", encoding="utf-8")
+        write_run_log(run_dir, plan, "FAILED", elapsed, str(exc))
+        raise
     log_files = list((run_dir / "logs").glob("*.log"))
     sas_error = any(detect_sas_error(p) for p in log_files)
     if rc == 130: status = "CANCELLED"
@@ -1223,13 +1309,12 @@ def run_job(source: Path, project: Path, tables: bool, explicit_lib: Path | None
         f"status={status}\nsource={source.name}\nstarted={datetime.fromtimestamp(started).isoformat(timespec='seconds')}\n"
         f"finished={datetime.now().isoformat(timespec='seconds')}\nelapsed_seconds={elapsed:.1f}\n",
         encoding="utf-8")
-    if status == "SUCCESS":
-        try: submitted.unlink()
-        except OSError: pass
+    run_log = write_run_log(run_dir, plan, status, elapsed)
     if notify_user:
         label = "completed" if status == "SUCCESS" else ("completed with SAS errors" if status == "SAS_ERROR" else "runner failed")
         notify("PySAS", f"{source.name}: {label}", error=status != "SUCCESS")
-    return {"name": source.name, "status": status, "run_dir": run_dir, "elapsed": elapsed, "console": console}
+    return {"name": source.name, "status": status, "run_dir": run_dir, "elapsed": elapsed, "console": console,
+            "run_log": run_log, "execution_plan": plan}
 
 
 def runner_run(args: argparse.Namespace) -> int:
@@ -1244,8 +1329,9 @@ def runner_run(args: argparse.Namespace) -> int:
     parameters = Path(args.parameters).expanduser().resolve() if getattr(args, "parameters", None) else None
     inbox = Path(args.inbox).expanduser().resolve() if getattr(args, "inbox", None) else None
     if inbox is not None and not inbox.is_dir(): raise FileNotFoundError(inbox)
-    result = run_job(source, project, tables, lib, not args.no_notify, init_dir=init_dir, extra_init_dir=inbox, parameters=parameters)
-    label = {"SUCCESS": "DONE", "SAS_ERROR": "DONE WITH SAS ERRORS", "FAILED": "RUNNER FAILED"}[result["status"]]
+    result = run_job(source, project, tables, lib, not args.no_notify, init_dir=init_dir, extra_init_dir=inbox, parameters=parameters,
+                     expected_plan=getattr(args, "expected_plan", None))
+    label = {"SUCCESS": "DONE", "SAS_ERROR": "DONE WITH SAS ERRORS", "FAILED": "RUNNER FAILED", "CANCELLED": "STOPPED"}[result["status"]]
     print(f"{label}: {source.name}")
     print(result["run_dir"])
     return 0 if result["status"] == "SUCCESS" else 1
@@ -2030,6 +2116,7 @@ def parser() -> argparse.ArgumentParser:
 
     rr.add_argument("--init-dir", help="folder containing shared _*.sas initialization files")
     rr.add_argument("--inbox", help="also prepend _*.sas initialization from this inbox; does not queue or move files")
+    rr.add_argument("--expected-plan", help=argparse.SUPPRESS)
     rw.add_argument("--init-dir", help="folder containing shared _*.sas initialization files")
     rw.add_argument("--inbox", help="folder to watch; _*.sas files here initialize jobs instead of being queued")
 

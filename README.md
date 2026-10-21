@@ -1,12 +1,12 @@
 # PySAS Toolkit
 
-**PySAS 0.3.17** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
+**PySAS 0.3.18** is a single-file, Windows-focused command-line toolkit for automating repeatable SAS Enterprise Guide workflows.
 
 It grew out of day-to-day model-development and consulting work where large SAS processes were difficult to inspect, rerun, parallelise, move between environments and review consistently. The current implementation brings those workflows together in one portable `pysas.py` utility.
 
 ## What it does
 
-| Component | Status in 0.3.17 | Purpose |
+| Component | Status in 0.3.18 | Purpose |
 | --- | --- | --- |
 | SAS bundle utility | Implemented | Pack, verify and safely unpack SAS source trees with SHA-256 integrity metadata and backups |
 | EGP tools | Implemented | Inspect EGP archives, extract embedded SAS programs and conservatively repack them into an EGP template |
@@ -39,7 +39,9 @@ is required. Inaccessible members remain listed with unknown metadata; readable 
 with warnings and incomplete storage totals. Saved snapshots remain available offline and travel with saved-data
 backups; missing metadata is shown as unknown.
 
-The released command-line toolkit is version 0.3.17; the released UI preview is 0.4.0-preview.33.
+The released command-line toolkit is version 0.3.18; the released UI preview is 0.4.0-preview.34.
+
+Preview.34 preserves the selected single-file initialization override during inventory refresh, shows a server-validated ordered file plan before launch, and checks the plan again in the worker. Each single-file run keeps a consolidated `run.log`, initialization/parameter snapshots and submitted source, including successful runs. Shared initialization can be chosen explicitly even when Settings has a saved override. See [single-file initialization](docs/single-file-initialization.md).
 
 Preview.33 fixes single-file runs omitting `_*.sas` files from the watcher inbox. Shared initialization from both configured folders now precedes parameters and the program. Run shows the effective list or initialization override, and Console records the appended files. See [single-file initialization](docs/single-file-initialization.md).
 
@@ -47,7 +49,7 @@ Preview.32 adds a separate **Graph** tab for linked SAS files or embedded EGP pr
 
 ## Requirements
 
-PySAS 0.3.17 is designed for controlled Windows environments with:
+PySAS 0.3.18 is designed for controlled Windows environments with:
 
 - Python 3.9+ recommended;
 - SAS Enterprise Guide installed and configured for the target SAS environment;
@@ -305,7 +307,7 @@ Important limitations include:
 
 ## Version
 
-Current published implementation: **0.3.17**.
+Current published implementation: **0.3.18**.
 
 ```powershell
 py pysas.py version

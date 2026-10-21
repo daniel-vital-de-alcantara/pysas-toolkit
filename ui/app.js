@@ -5,6 +5,7 @@ let state = null, page = "overview", selectedCommand = null, selectedPath = null
 let inspectorTab="files", inspectorDetail=null, inspectorTrail=[], inspectorReturnScroll=0;
 let copyTarget=null, copyBusy=false, detailsReturnFocus=null;
 let sharedWorkInitialized=false, preferencesInitialized=false, inspectorPolling=false;
+let runPlan=null, runPlanKey="", runPlanRequest=0, runPlanPending=null, runPlanTimer=null, singleLaunching=false;
 let logView={path:null,kind:"all",offset:0,issue:null,revision:""}, logRequest=0;
 let previewBuilderSignature=null, previewResult=null, previewResultId=null, previewLoadingId=null, previewPage=0, dictionarySignature=null, dictionaryOffset=0, dictionaryTimer=null, dictionaryRequest=0, dictionaryJob=null;
 let selectedServerTable=null;
@@ -27,7 +28,7 @@ async function api(path, data) { const response = await fetch(path, data === und
 function error(message) { $("error").textContent = message; $("error").hidden = !message; }
 function navigate(next) { if(next==="history")next="overview"; if($("details-dialog").open)closeInspector(true); if(next==="scheduler"){next="runner";$("run-mode").value="multiple";} page = titles[next] ? next : "overview"; document.querySelectorAll(".page").forEach(p=>p.hidden = p.id !== `page-${page}`); document.querySelectorAll(".nav").forEach(n=>{n.classList.toggle("active", n.dataset.page===page); if(n.dataset.page===page)n.setAttribute("aria-current","page");else n.removeAttribute("aria-current");}); document.body?.classList.toggle("graph-page",page==="graph");$("page-title").textContent=titles[page]; history.replaceState(null,"",`#${page}`); runFlow(); render(); if(state)globalThis.PySASGraph?.update(state,page); }
 function fillSelect(select, values) { const signature = JSON.stringify(values); if (select.dataset.signature === signature) return; const current=select.value, first=select.options[0]?.textContent || "Select a file"; select.innerHTML=`<option value="">${esc(first)}</option>` + values.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join(""); if(values.includes(current))select.value=current; select.dataset.signature=signature; }
-function files() { if(globalThis.PySASKeys?.active)return; fillSelect($("parameter-files"),state.parameters_settings?.files || []); if(state.folders && !foldersInitialized){for(const key of ["inputs","init","inbox"])$("folder-"+key).value=state.folders[key];foldersInitialized=true;}const settings=state.bundle_settings || {paths:[],last:""};fillSelect($("saved-bundle-path"),settings.paths);$("recent-code-folders").innerHTML=settings.paths.map(p=>`<option value="${esc(p)}"></option>`).join("");if(!bundlePathsInitialized){$("bundle-code-root").value=settings.last;$("saved-bundle-path").value=settings.paths.includes(settings.last)?settings.last:"";bundlePathsInitialized=true;} document.querySelectorAll("select[data-files]").forEach(s=>{const values=state.files.filter(f=>f.toLowerCase().endsWith("."+s.dataset.files));if(s.value&&(s.id==="default-egp"||s.id==="default-lib"||s.closest?.("form")?.id==="watch-form")&&!values.includes(s.value))values.push(s.value);fillSelect(s,values);}); fillSelect($("previous-schedule"),state.history.filter(h=>h.kind==="schedule"&&!active(h)&&!["UNKNOWN","SUCCESS"].includes(h.status)).map(h=>h.path)); }
+function files() { if(globalThis.PySASKeys?.active)return; fillSelect($("parameter-files"),state.parameters_settings?.files || []); if(state.folders && !foldersInitialized){for(const key of ["inputs","init","inbox"])$("folder-"+key).value=state.folders[key];foldersInitialized=true;}const settings=state.bundle_settings || {paths:[],last:""};fillSelect($("saved-bundle-path"),settings.paths);$("recent-code-folders").innerHTML=settings.paths.map(p=>`<option value="${esc(p)}"></option>`).join("");if(!bundlePathsInitialized){$("bundle-code-root").value=settings.last;$("saved-bundle-path").value=settings.paths.includes(settings.last)?settings.last:"";bundlePathsInitialized=true;} document.querySelectorAll("select[data-files]").forEach(s=>{const values=state.files.filter(f=>f.toLowerCase().endsWith("."+s.dataset.files));if(s.value&&!values.includes(s.value))values.push(s.value);fillSelect(s,values);}); fillSelect($("previous-schedule"),state.history.filter(h=>h.kind==="schedule"&&!active(h)&&!["UNKNOWN","SUCCESS"].includes(h.status)).map(h=>h.path)); }
 function taskScope(task) {
   const parts=[];
   if(task.section)parts.push(`Section ${task.section}`);
@@ -75,7 +76,7 @@ function fileActions(target, label="file") {
   const query=Object.entries(target).map(([key,value])=>`${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join("&");
   return `<span class="file-actions"><a class="subtle" href="/api/download?${query}" download>Download ${esc(label)} ↓</a><button type="button" class="subtle" data-copy-target="${esc(JSON.stringify(target))}" ${state?.windows?"":"disabled"} title="Copy the actual file to the Windows clipboard">Copy file</button><span class="hint file-action-status" role="status"></span></span>`;
 }
-function scheduleLogLink(command) { return command?.schedule_log?fileActions({path:command.schedule_log},"schedule log"):""; }
+function scheduleLogLink(command) { const path=command?.schedule_log||command?.run_log;return path?fileActions({path},command.schedule_log?"schedule log":"full run log"):""; }
 function commandCards(commands, showTasks=false) { if(!commands.length)return empty("No command activity", "Commands launched from this workbench will appear here.");return commands.map(c=>`<article class="command-card"><div class="command-head"><div><strong>${esc(c.name)}</strong>${badge(c.status,c.status==="STOPPING"&&["schedule","continue"].includes(c.action)?"Stopping schedule":null)}${timer(c)}${c.estimate?estimateMarkup(c.estimate):""}<small>${date(c.started)}${c.code_root?` · ${esc(c.code_root)}`:""}${c.parameters?` · Parameters: ${esc(c.parameters.name)}`:""}${c.shared_work?` · Shared WORK: ${esc(c.shared_work.libref)}`:""}</small></div>${scheduleStopControl(c)}<button class="subtle" data-command="${esc(c.id)}">Console →</button></div>${c.parts>1?`<p class="hint">Continued in ${c.parts} parts · total active time excludes pauses${c.timing_estimated?" · earlier time estimated":""}. Final task outputs and consolidated log are in one folder.</p>`:""}${c.message?`<p class="empty-small">${esc(c.message)}</p>`:""}${c.egp_result&&c.path?`<p><button class="secondary" data-path="${esc(c.path)}">Inspect extracted programs →</button></p>`:""}${c.bundle_result?`<p class="hint">${c.bundle_result.added} added · ${c.bundle_result.changed} changed · ${c.bundle_result.deleted} deleted (other files retained)${c.bundle_result.backup?` <button class="subtle" data-open-backup="${esc(c.id)}" ${state?.windows?"":"disabled"}>Open backup folder</button>`:""}</p>`:""}${c.download?fileActions({command:c.id},"bundle"):""}${scheduleLogLink(c)}${showTasks&&Object.keys(c.tasks).length?taskTable(Object.values(c.tasks),c.id):""}</article>`).join(""); }
 function focusIdentity(){const el=document.activeElement;return el?{el,id:el.id,data:JSON.stringify(el.dataset||{}),tag:el.tagName,list:el.closest?.("[data-key-list]")?.getAttribute("aria-label"),scope:el.closest?.("dialog,.page,.run-inspector")?.id}:null;}
 function focusTarget(saved){return !saved?null:saved.el.isConnected?saved.el:saved.id?$(saved.id):saved.data!=="{}"?Array.from(document.querySelectorAll("button,a[href]")).find(el=>el.tagName===saved.tag&&JSON.stringify(el.dataset)===saved.data&&(!saved.scope||el.closest?.("dialog,.page,.run-inspector")?.id===saved.scope)&&(!saved.list||el.closest?.("[data-key-list]")?.getAttribute("aria-label")===saved.list)):null;}
@@ -99,7 +100,10 @@ async function refreshInspector(){
   catch(e){$("file-preview").textContent=e.message;}finally{inspectorPolling=false;}
 }
 function runFlow(){
+  const override=$("run-init-mode").value==="override";
+  $("run-init-file").hidden=!override;$("run-init").disabled=!override;$("run-init").required=override;
   renderRunInitialization();
+  runPlanButton();
   const multiple=$("run-mode").value==="multiple";
   $("run-form").hidden=multiple;$("multiple-options").hidden=!multiple;
   $("single-options").hidden=!$("run-source").value;
@@ -118,16 +122,45 @@ function initializePreferences(){
   preferencesInitialized=true;
 }
 function formData(form) { const data=Object.fromEntries(new FormData(form));form.querySelectorAll('input[type="checkbox"]').forEach(c=>data[c.name]=c.checked);return data; }
-function runInitializationText(snapshot,selected=""){
-  const override=selected||snapshot?.preferences?.default_lib;
-  if(override)return `Initialization override: ${override}. This replaces all shared _*.sas files; parameters are appended afterward.`;
-  if(!Array.isArray(snapshot?.initialization_files))return "Reading shared initialization files…";
-  const files=snapshot.initialization_files;
-  return files.length?`Shared initialization (${files.length}): ${files.map(p=>p.split(/[\\/]/).pop()).join(" → ")}. Parameters are appended afterward.`:`No shared _*.sas files found. Check the initialization folder and watcher inbox in Settings.`;
+function runPlanSelection(data){return {program:data.program||"",initialization_mode:data.initialization_mode||"default",lib:data.initialization_mode==="override"?data.lib||"":"",use_parameters:data.use_parameters===true,...(data.use_parameters?{parameters_name:data.parameters_name,parameters_text:data.parameters_text}:{})};}
+function runPlanSignature(data){return JSON.stringify([runPlanSelection(data),state?.folders,state?.preferences?.default_lib,state?.initialization_files]);}
+function runInitializationMarkup(plan){
+  const description=plan.mode==="override"?`One initialization override replaces the shared _*.sas list: ${plan.override}`:`Shared initialization, alphabetically. Folders: ${plan.folders.join(" · ")}`;
+  return `<p class="hint">${esc(description)}</p>${plan.files.some(f=>f.role==="initialization")?"":'<p class="hint">No initialization files found. Check Shared initialization and Watcher inbox in Settings.</p>'}<ol>${plan.files.map(f=>`<li><strong>${esc(f.name)}</strong><span class="badge">${esc({initialization:"Initialization",parameters:"Parameters",program:"Program"}[f.role]||f.role)}</span><code>${esc(f.path||"Current parameter editor contents")}</code></li>`).join("")}</ol>`;
 }
-function renderRunInitialization(){if(state)$("run-initialization").textContent=runInitializationText(state,$("run-form").elements?.lib?.value||"");}
-$("run-form").elements?.lib?.addEventListener("change",renderRunInitialization);
-async function launch(data, form) { if(data.action==="run"&&data.use_parameters&&parameterLoading){error("Wait for the parameter file to finish loading.");return;}const button=form?.querySelector('[type="submit"]');if(button)button.disabled=true;error("");try{const result=await api("/api/launch",data);await refresh();await showCommand(result.id);}catch(e){error(e.message);}finally{if(button)button.disabled=false;}}
+function runPlanButton(){const button=$("run-submit");button.dataset.blocked=runPlan&&!runPlanPending?"0":"1";button.disabled=!state?.windows||button.dataset.blocked==="1"||singleLaunching;}
+async function updateRunPlan(data,force=false){
+  const signature=runPlanSignature(data);
+  if(!force&&signature===runPlanKey)return runPlanPending||runPlan;
+  const request=++runPlanRequest;runPlanKey=signature;runPlan=null;
+  if(!data.program){runPlanPending=null;$("run-initialization").textContent="Select a program to see exactly which files will be submitted.";$("run-plan-status").textContent="";runPlanButton();return null;}
+  $("run-initialization").textContent="Checking the selected files…";$("run-plan-status").textContent="";
+  runPlanPending=(async()=>{
+    try{const plan=await api("/api/run-plan",runPlanSelection(data));if(request!==runPlanRequest)return null;runPlan=plan;$("run-initialization").innerHTML=runInitializationMarkup(plan);$("run-plan-status").textContent="Ready. These files will be prepended in this order; their contents are checked again at launch.";return plan;}
+    catch(e){if(request===runPlanRequest){$("run-initialization").textContent="Execution plan unavailable.";$("run-plan-status").textContent=e.message;}return null;}
+    finally{if(request===runPlanRequest){runPlanPending=null;runPlanButton();}}
+  })();runPlanButton();return runPlanPending;
+}
+function renderRunInitialization(force=false){if(state)return updateRunPlan(formData($("run-form")),force);}
+$("run-init-mode").addEventListener("change",runFlow);
+$("run-init").addEventListener("change",()=>renderRunInitialization());
+$("refresh-run-plan").addEventListener("click",()=>renderRunInitialization(true));
+for(const id of ["parameter-name","parameter-text"]){$(id).addEventListener("input",()=>{clearTimeout(runPlanTimer);runPlan=null;runPlanButton();runPlanTimer=setTimeout(()=>renderRunInitialization(true),200);});}
+async function launch(data, form) {
+  const single=data.action==="run";
+  if(single&&singleLaunching)return;
+  if(single&&data.use_parameters&&parameterLoading){$("run-plan-status").textContent="Wait for the parameter file to finish loading.";return;}
+  const button=form?.querySelector('[type="submit"]');if(button)button.disabled=true;if(single)singleLaunching=true;error("");
+  try{
+    if(single){const previewed=runPlan?.revision;const plan=await updateRunPlan(data,true);if(!plan)return;
+      if(!previewed||previewed!==plan.revision){$("run-plan-status").textContent="The files changed. Review the updated list, then click Run program again. No code was submitted.";return;}
+      if(form&&runPlanSignature(formData(form))!==runPlanSignature(data)){$("run-plan-status").textContent="The selection changed while checking. Review the file list, then run again.";await renderRunInitialization(true);return;}
+      data={...data,plan_revision:plan.revision};
+    }
+    const result=await api("/api/launch",data);await refresh();await showCommand(result.id);
+  }catch(e){if(single){$("run-plan-status").textContent=e.message;runPlan=null;}else error(e.message);}
+  finally{if(single){singleLaunching=false;runPlanButton();}else if(button)button.disabled=false;}
+}
 function bindForm(id, action) { $(id).addEventListener("submit",event=>{event.preventDefault();launch({...formData(event.currentTarget),action},event.currentTarget);}); }
 function putMarkup(id,html){const node=$(id);if(node.dataset.markup===html)return;const saved=focusIdentity();node.innerHTML=html;node.dataset.markup=html;restoreFocus(saved);globalThis.PySASKeys?.refreshLists();}
 function rememberInspector(){if(!$("details-dialog").open)return;inspectorTrail.push({path:selectedPath,command:selectedCommand,tab:inspectorTab,preview:selectedPreview,scroll:$("details-dialog").scrollTop});}
@@ -256,7 +289,7 @@ $("restore-form").addEventListener("submit",async event=>{
 });
 
 
-function parameterFields(){ $("parameters-editor").hidden=!$("use-parameters").checked; }
+function parameterFields(){ $("parameters-editor").hidden=!$("use-parameters").checked;renderRunInitialization(); }
 function putParameters(result, saved){
   $("parameter-name").value=result.name;$("parameter-text").value=result.text;
   parameterLoadedName=saved?result.name:"";parameterRevision=saved?result.revision:null;

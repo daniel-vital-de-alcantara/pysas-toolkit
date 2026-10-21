@@ -217,7 +217,13 @@ class SchedulerParityTests(unittest.TestCase):
     def test_ui_file_parameters_include_mixed_case_inbox_initialization_in_order(self):
         self.check_ui_file_parameters(use_inbox=True)
 
-    def check_ui_file_parameters(self,use_inbox=False):
+    def test_ui_explicit_initialization_override_is_submitted_before_parameters(self):
+        self.check_ui_file_parameters(use_override=True)
+
+    def test_ui_explicit_initialization_override_works_without_parameters(self):
+        self.check_ui_file_parameters(use_override=True,use_parameters=False)
+
+    def check_ui_file_parameters(self,use_inbox=False,use_override=False,use_parameters=True):
         (self.root/'pysas.py').write_text((ROOT/'pysas.py').read_text(encoding='utf-8') + '\nVBS = ' + repr(self.current), encoding='utf-8')
         self.programs = [('Seed', 'seed;', 'TARGET_SERVER')]
         project = self.project()
@@ -227,11 +233,18 @@ class SchedulerParityTests(unittest.TestCase):
             (shared/'_20_macros.sAs').write_text('macro_token;',encoding='utf-8')
         else:
             (self.root/'_libs.sas').write_text('library_token;', encoding='utf-8')
+        override=self.root/'custom_initialization.SAS'
+        if use_override:
+            (self.root/'_libs.sas').write_text('must_not_run;',encoding='utf-8')
+            override.write_text('library_token;',encoding='utf-8')
         source = self.root/'extract.sas'; source.write_text('job_token;', encoding='utf-8')
         app = ui.Workbench(self.root)
         try:
             if use_inbox:app.update_folders({'init':str(shared),'inbox':str(inbox)})
-            identifier = app.launch(dict(action='run', program=str(source), template=str(project), use_parameters=True, parameters_name='_cases.sas', parameters_text='%let city=café;'))['id']
+            data=dict(action='run', program=str(source), template=str(project), use_parameters=use_parameters, parameters_name='_cases.sas', parameters_text='%let city=café;')
+            if use_override:data.update(initialization_mode='override',lib=str(override))
+            plan=app.run_plan(data)
+            identifier = app.launch({**data,'plan_revision':plan['revision']})['id']
             exit_code = app.processes[identifier].wait(timeout=30)
             deadline = time.monotonic()+10
             while identifier in app.processes and time.monotonic()<deadline: time.sleep(.05)
@@ -242,14 +255,26 @@ class SchedulerParityTests(unittest.TestCase):
             task = next(iter(item['tasks'].values()))
             folder = self.root/task['path']
             code = engine.read_text(next((folder/'code').glob('*.sas')))
-            self.assertLess(code.index('library_token;'), code.index('%let city=café;'))
+            self.assertLess(code.index('library_token;'), code.index('job_token;'))
             if use_inbox:
                 self.assertLess(code.index('library_token;'),code.index('macro_token;'))
                 self.assertLess(code.index('macro_token;'),code.index('%let city=café;'))
                 self.assertIn('Shared initialization: 2 file(s)',console)
                 self.assertTrue((inbox/'_10_libs.SAS').is_file())
-            self.assertLess(code.index('%let city=café;'), code.index('job_token;'))
-            self.assertEqual((folder/'parameters/_cases.sas').read_text(encoding='utf-8'), '%let city=café;')
+            if use_parameters:
+                self.assertLess(code.index('library_token;'), code.index('%let city=café;'))
+                self.assertLess(code.index('%let city=café;'), code.index('job_token;'))
+                self.assertEqual((folder/'parameters/_cases.sas').read_text(encoding='utf-8'), '%let city=café;')
+            else:self.assertNotIn('%let city=café;',code)
+            if use_override:
+                self.assertNotIn('must_not_run;',code)
+                self.assertEqual(code.count('library_token;'),1)
+                self.assertEqual(plan['files'][0]['path'],str(override.resolve()))
+            log=(self.root/item['run_log']).read_text(encoding='utf-8')
+            self.assertIn('FILES IN SUBMISSION ORDER',log);self.assertIn('NOTE: completed',log)
+            self.assertIn(plan['revision'],log)
+            self.assertTrue((folder/'_submitted.sas').is_file())
+            self.assertEqual(code.count('%put NOTE: PYSAS_FILE_START|'),len(plan['files']))
         finally:
             for process in list(app.processes.values()):
                 if process.poll() is None: process.kill(); process.wait()

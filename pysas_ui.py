@@ -23,7 +23,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
-from pysas import text_encoding, schedule_state, shared_work_settings, init_files
+from pysas import text_encoding, schedule_state, shared_work_settings, init_files, single_file_inputs
 from ui_data import archive_folder, export_backup, restore_backup, duration_history, estimate_task, estimate_schedule, index_samples, remaining_work
 import ui_parameters
 import ui_servers
@@ -35,7 +35,7 @@ import ui_storage
 import windows_clipboard
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.33"
+VERSION = "0.4.0-preview.34"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 TEXT_SUFFIXES = {".sas", ".log", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".xml"}
@@ -345,6 +345,41 @@ class Workbench:
         if len(projects) == 1: return str(projects[0].resolve())
         raise ValueError("Auto connection needs one EGP in the input folder or a previously successful run. Choose a connection once if you use several servers.")
 
+    def run_initialization(self, data):
+        mode = data.get("initialization_mode") or "default"
+        if mode not in {"default", "shared", "override"}:
+            raise ValueError("Choose shared initialization or a single-file override.")
+        if mode == "shared": return None
+        value = data.get("lib") or (self.preferences()["default_lib"] if mode == "default" else "")
+        if mode == "override" and not value:
+            raise ValueError("Select the initialization override file, or choose shared initialization.")
+        path = self.input_path(value) if value else None
+        if path and (not path.is_file() or path.suffix.casefold() != ".sas"):
+            raise ValueError("The initialization override must be an existing .sas file.")
+        return path
+
+    def prepare_run(self, data):
+        """Validate the actual Run form using the standalone engine's resolver."""
+        value = data.get("program")
+        if not value: raise ValueError("Select a SAS program to see its execution plan.")
+        source = self.input_path(value)
+        if not source.is_file() or source.suffix.casefold() != ".sas":
+            raise ValueError("Select an existing SAS program.")
+        folders = self.folders()
+        for key in ("init", "inbox"):
+            if not Path(folders[key]).is_dir():
+                raise ValueError("The configured " + key + " folder is unavailable.")
+        name, text = None, None
+        if data.get("use_parameters") is True:
+            name = ui_parameters.parameter_name(data.get("parameters_name") or "_cases.sas")
+            text = ui_parameters.parameter_text(data.get("parameters_text"))
+            if not text.strip(): raise ValueError("Enter parameter code, or turn off parameters for this run.")
+        return single_file_inputs(source, self.run_initialization(data), Path(folders["init"]), Path(folders["inbox"]),
+                                  parameter_text=text, parameter_name=name)
+
+    def run_plan(self, data):
+        return self.prepare_run(data)["plan"]
+
     def arguments(self, data):
         action = data.get("action", "")
         choices = {
@@ -381,8 +416,11 @@ class Workbench:
             field = "project" if action == "schedule" else "template"
             if not data.get(field) and preferences["default_egp"]:
                 data[field] = preferences["default_egp"]
-            if action in {"run", "watch"} and not data.get("lib"):
+            if action == "watch" and not data.get("lib"):
                 data["lib"] = preferences["default_lib"]
+        if action == "run":
+            override = self.run_initialization(data)
+            data["lib"] = str(override) if override else ""
         project_field = "template" if action in {"run", "watch", "egp-pack"} else "project"
         if action in {"run", "watch", "schedule", "egp-pack", "egp-inspect", "egp-extract"} and not data.get(project_field) and Path(folders["inputs"]) != self.root:
             projects = sorted(Path(folders["inputs"]).glob("*.egp"))
@@ -472,7 +510,11 @@ class Workbench:
                 data["_query"] = ui_explore.request(catalog, libraries[0], data["table"], data.get("limit", 100), data.get("filters"), data.get("join", "AND"))
         action, args = self.arguments(data)
         script = self.script
+        # Reading source files must not hold the status/clock lock on slow disks.
+        run_plan = self.run_plan(data) if action == "run" else None
         with self.lock:
+            if run_plan is not None and data.get("plan_revision") and data["plan_revision"] != run_plan["revision"]:
+                raise ValueError("The execution plan changed. Review the updated file list and run again; no code was submitted.")
             if self.storage_busy and not self.exports.working():
                 raise ValueError("Wait for the saved-data operation to finish before starting another command.")
             if getattr(self, "closing", False):
@@ -539,6 +581,9 @@ class Workbench:
                 if level == "preview" and parent.get("connection") and parent["connection"] != item["server"]["connection"]:
                     raise ValueError("Connection initialization or shared WORK settings changed. Refresh libraries, tables and columns before previewing.")
             if action == "run":
+                item["execution_plan"] = run_plan
+                args.extend(["--expected-plan", run_plan["revision"]])
+                item["args"] = list(args)
                 enabled = data.get("use_parameters") is True
                 if enabled:
                     name = ui_parameters.parameter_name(data.get("parameters_name") or "_cases.sas")
@@ -648,6 +693,9 @@ class Workbench:
             task.update({k: v for k, v in event.items() if k not in {"event", "time", "path"}})
             if event.get("path"):
                 task["path"] = self.relative(event["path"])
+                if item.get("action") == "run":
+                    run_log = Path(event["path"]) / "run.log"
+                    if run_log.is_file(): item["run_log"] = self.relative(run_log)
             if kind == "start":
                 task.update(status="CANCELLING" if item.get("status") == "STOPPING" and item.get("action") in {"schedule", "continue"} else "RUNNING", started=event["time"])
                 task["message"] = "Stopping schedule…" if task["status"] == "CANCELLING" else ""
@@ -854,7 +902,7 @@ class Workbench:
 
     def inventory(self):
         paths = set()
-        roots = {self.root, Path(self.folders()["inputs"]), Path(self.folders()["init"])}
+        roots = {self.root, *(Path(value) for value in self.folders().values())}
         for root in sorted(roots):
             for base, dirs, names in os.walk(root):
                 dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in {"runner", "runs", "tasks", "settings", "__pycache__", "_codebase_backups", "node_modules", "release", "ui", "tests"} and not any((Path(base)/d).resolve().is_relative_to(folder) for folder in (self.tasks,self.settings)))
@@ -1433,6 +1481,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(self.server.app.select_parameters(data.get("name")))
             elif self.path == "/api/parameters/save":
                 self.respond(self.server.app.save_parameters(data))
+            elif self.path == "/api/run-plan":
+                self.respond(self.server.app.run_plan(data))
             elif self.path == "/api/metadata-job":
                 self.respond(self.server.app.metadata_jobs.start(data))
             elif self.path == "/api/metadata-job/stop":
