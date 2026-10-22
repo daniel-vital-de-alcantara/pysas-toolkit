@@ -35,6 +35,9 @@ def execute(folder, runner=run_sas):
     header = ["PySAS Run stream: " + document["name"], "Started: " + datetime.fromtimestamp(started, timezone.utc).isoformat(),
               "EGP: " + document["egp"]["name"], "Submitted as one SAS program, in this order:"]
     header.extend(f"  {s['position']}. {s['name']} · {s['scope']}" for s in plan["selections"])
+    if document.get('shared_work', {}).get('enabled'):
+        shared = document['shared_work']
+        header.insert(3, 'Shared WORK: ' + shared['libref'] + ' · ' + shared['path'] + ' (prepended before source cards)')
     header += ["Source: source.sas · portable choices: stream.json", "", "--- SAS log ---", ""]
     run_log.write_text("\n".join(header), encoding="utf-8")
     print("\n".join(header[:-3]), flush=True)

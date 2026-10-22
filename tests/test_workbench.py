@@ -398,6 +398,46 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(self.request('GET','/stream.js')[0],200)
         self.assertEqual(self.request('POST','/api/stream-import',b'{invalid',headers)[0],400)
 
+    def test_stream_preparation_returns_a_job_while_source_analysis_remains_available(self):
+        import egp_extract
+        headers={'X-PySAS-Token':self.server.token}
+        self.assertEqual(self.request('POST','/api/stream-job','{}')[0],403)
+        project=self.root/'connection.egp'
+        with zipfile.ZipFile(project,'w') as archive:
+            archive.writestr('project.xml','<ProjectCollection><Elements><Element Type="SAS.EG.ProjectElements.CodeTask"><Element><ID>A</ID><Label>Setup</Label></Element></Element></Elements></ProjectCollection>')
+            archive.writestr('A/code.sas',b'%let ids=12;')
+        entered,release=threading.Event(),threading.Event();original=egp_extract.inspect_project
+        def delayed(value):entered.set();release.wait(5);return original(value)
+        with patch.object(egp_extract,'inspect_project',side_effect=delayed):
+            try:
+                status,body,_=self.request('POST','/api/stream-job',json.dumps({'kind':'connection'}),headers)
+                self.assertEqual(status,200,body);job=json.loads(body);self.assertEqual(job['status'],'WORKING');self.assertTrue(entered.wait(1))
+                status,body,_=self.request('GET','/api/stream-job?id='+job['id'])
+                self.assertEqual(status,200,body);self.assertEqual(json.loads(body)['status'],'WORKING')
+                code='* (please do not delete) section_start: Macro;\n%let ids=12;\n* (please do not delete) section_end: Macro;'
+                status,body,_=self.request('POST','/api/stream-analyze',json.dumps({'code':code}),headers)
+                self.assertEqual(status,200,body);self.assertEqual(json.loads(body)['sections'],['Macro'])
+                status,body,_=self.request('GET','/api/state');self.assertEqual(status,200,body)
+            finally:release.set()
+        deadline=time.monotonic()+5
+        while time.monotonic()<deadline:
+            _,body,_=self.request('GET','/api/stream-job?id='+job['id']);result=json.loads(body)
+            if result['status']!='WORKING':break
+            time.sleep(.01)
+        self.assertEqual(result['status'],'READY',result);project=result['result']['egp']
+        status,body,_=self.request('POST','/api/stream-job',json.dumps({'kind':'program','project':project,'program_id':'A'}),headers)
+        self.assertEqual(status,200,body);identifier=json.loads(body)['id']
+        deadline=time.monotonic()+5
+        while time.monotonic()<deadline:
+            _,body,_=self.request('GET','/api/stream-job?id='+identifier);result=json.loads(body)
+            if result['status']!='WORKING':break
+            time.sleep(.01)
+        self.assertEqual(result['status'],'READY',result);self.assertEqual(result['result']['file']['lines'],1)
+        self.assertEqual(self.server.app.resolve(result['result']['file']['path']).read_bytes(),b'%let ids=12;')
+        self.assertEqual(self.request('GET','/api/stream-job?id=not-a-job')[0],400)
+        self.assertEqual(self.request('POST','/api/stream-job',json.dumps({'kind':'unknown'}),headers)[0],400)
+        self.assertEqual(self.request('POST','/api/stream-analyze',json.dumps({'code':12}),headers)[0],400)
+
     def test_log_summary_and_context_http(self):
         log=self.root/'sample.log';log.write_text('ERROR: first\nNOTE: done\nWARNING: last\n')
         status,body,_=self.request('GET','/api/log-summary?path=sample.log')

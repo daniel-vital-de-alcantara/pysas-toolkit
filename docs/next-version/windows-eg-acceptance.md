@@ -43,3 +43,11 @@ Status: target-environment checks pending. The user authorized publishing testin
 - Test a parallel graph, default 10 workers, skipped intermediate dependencies, per-file stop and Stop graph. Continue after an error using frozen source and retained successful outputs.
 - Modify a linked file after a run starts. Confirm the active run and continuation retain snapshots, while a new run uses the edited file.
 - Export/restore full saved data with uploaded graph sources, colliding names and configured external Tasks/Settings folders. Confirm graphs and continuation keep the correct associations.
+
+## Run stream acceptance
+
+- Start New run with a saved valid EGP and with none available. Check collapsed automatic connection options versus the expanded EGP request. Browse another project while automatic discovery is pending; the manual choice must remain selected. Reading metadata must not start SAS.
+- Mix a PC SAS file, inline macro definitions and several programs from an EGP's process flows. Check section tick lists, one-ended inclusive ranges, no-section instructions, blank/invalid selections and ready indicators. Review Get source for the exact chosen order and contents before execution.
+- Drag and use keyboard move buttons while programs are extracting. Edit a different card, delete a loading card and switch source types; the UI must remain editable and late results must not replace newer choices. Check narrow/high-DPI layout and focus/cursor preservation.
+- Enable shared WORK with a live owning session. Confirm the generated libname/USER setup precedes every selected card and that turning the checkbox off removes it. Run the mixed source once; verify intended server, macros, returned log, HTML/tables and the existing inspector/stop behavior.
+- Export/restore both older and current templates on another installation. Check original source encodings, nested EGP program order, inline code, selected sections, shared WORK and output options. Edit during template import; the imported draft must wait for Use imported template instead of replacing those edits.

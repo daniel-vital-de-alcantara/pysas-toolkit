@@ -36,4 +36,19 @@ py pysas.py egp pack extracted-project --template project.egp --output edited-pr
 
 Unsafe archive/manifest paths, encrypted entries, symbolic links and collisions are rejected. Extraction limits are 20,000 entries, 2 GB total expanded content, 256 MB per member and 16 MB for project.xml. A failed extraction or repack never replaces an existing output.
 
+## Standalone program reader
+
+`egp_extract.py` provides the process-flow catalog and code reader used by Run stream. It is a single standard-library Python file and works without PySAS, Enterprise Guide or a SAS connection. It handles the same classic/newer process-flow relationships, source encodings and duplicate program labels as the existing extractor.
+
+```powershell
+py egp_extract.py project.egp
+py egp_extract.py project.egp --json
+py egp_extract.py project.egp --output extracted-programs
+py egp_extract.py project.egp --output selected-programs --program CodeTask-A --program CodeTask-B
+```
+
+The catalog lists stable program IDs, names, flow names and embedded archive members. External sources are reported without reading their original paths. Unmapped embedded SAS files remain selectable under Unassigned. `--program` accepts catalog IDs, not display names; repeat it to limit extraction. Output preserves original source bytes in `01 SAS project files` and `03. By process flow`, stores the original EGP/project.xml under `02 Other files`, and writes `catalog.json`. An existing output folder is never overwritten.
+
+This reader exports source programs for reuse and selection. Continue using `pysas.py egp extract` / `egp pack` for the editable manifest and round-trip repacking workflow described above.
+
 Reference behavior was compared with [MagicRoot's extractor](https://github.com/HephaestusGodOfFire/magicroot/blob/8e6cb7b/src/magicroot/pysas/extract_egp.py). PySAS's implementation remains standalone and adds safe staging, complete manifests and repacking conflict checks.

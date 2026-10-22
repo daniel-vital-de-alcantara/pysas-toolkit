@@ -700,4 +700,4 @@ function showMigration(job){$("migration-status").textContent=job.message+(job.s
 $("import-legacy-runs").addEventListener("click",async()=>{try{showMigration(await api("/api/import-legacy-runs",{}));}catch(e){$("migration-status").textContent=e.message;}});
 setInterval(async()=>{if(!migrationRunning||migrationPolling)return;migrationPolling=true;try{showMigration(await api("/api/data-migration"));if(!migrationRunning)await refresh(true);}catch(e){$("migration-status").textContent=e.message;}finally{migrationPolling=false;}},1000);
 
-globalThis.PySASGraphHost={request:api,refresh,inspect:showCommand,inspectPath:showPath,fileActions,timer,badge,expectedText};
+globalThis.PySASGraphHost={request:api,navigate,refresh,inspect:showCommand,inspectPath:showPath,fileActions,timer,badge,expectedText};

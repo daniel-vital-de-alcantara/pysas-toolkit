@@ -1,4 +1,4 @@
-PySAS Workbench 0.4.0-preview.35
+PySAS Workbench 0.4.0-preview.36
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
@@ -352,3 +352,16 @@ New in preview.35
 - Historical estimates, elapsed time, stop, Overview/Inspect and run ZIP support.
 - Run stream uses the independent engine.py; existing Run/Graph/scheduler remain.
 - See docs/run-stream.md and docs/engine.md.
+
+New in preview.36
+- Run stream starts with New run or Restore template, then a compact run name
+  and automatic connection EGP selection. Connection options expand if needed.
+- Compact, draggable cards: SAS file, Write code, or ordered EGP programs.
+- Existing sections appear as checkboxes. Cards show loading/ready/incomplete
+  status; submission controls appear when all selections are valid.
+- Use shared WORK explicitly through its checkbox and Settings link.
+- File reading, EGP extraction and section scanning leave the editor usable.
+- Portable templates retain inline code, selected EGP programs and shared WORK.
+  Earlier Run stream templates remain importable.
+- Terminal EGP catalog/extraction: py egp_extract.py project.egp --json
+- See docs/run-stream.md and docs/egp-extraction.md.

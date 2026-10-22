@@ -31,12 +31,13 @@ import ui_explore
 from ui_logs import LogIndex
 import ui_graph
 import ui_stream
+import ui_stream_jobs
 import ui_paths
 import ui_storage
 import windows_clipboard
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.35"
+VERSION = "0.4.0-preview.36"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 TEXT_SUFFIXES = {".sas", ".log", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".xml"}
@@ -107,6 +108,7 @@ class Workbench:
         self.catalog_lock = threading.RLock()
         self.catalog_cache = {}
         self.metadata_jobs = ui_explore.Jobs(self)
+        self.stream_jobs = ui_stream_jobs.Jobs(self)
         self.list_cache = {}
         self.cache_loading = set()
         self.cache_generation = 0
@@ -177,7 +179,7 @@ class Workbench:
 
     def update_data_locations(self, data):
         with self.lock:
-            if self.processes or self.uploading or self.storage_busy or self.metadata_jobs.working():
+            if self.processes or self.uploading or self.storage_busy or self.metadata_jobs.working() or self.stream_jobs.working():
                 raise ValueError("Finish commands and stop the watcher before changing data folders.")
             paths = ui_paths.locations(self.root, data)
             for path in paths.values():
@@ -1412,6 +1414,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(self.server.app.migration or {"status":"IDLE"})
             elif url.path == "/api/graphs":
                 self.respond(ui_graph.load(self.server.app, value("id")) if value("id") else {"graphs": ui_graph.listing(self.server.app), "sources": ui_graph.sources(self.server.app)})
+            elif url.path == "/api/stream-job":
+                self.respond(self.server.app.stream_jobs.get(value("id")))
             elif url.path == "/api/export-status":
                 self.respond(self.server.app.exports.get(value("id")))
             elif url.path == "/api/run-zip":
@@ -1535,6 +1539,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(self.server.app.upload(parse_qs(url.query), self.rfile, length))
                 return
             limit = 2 * 1024 * 1024 + 4096 if url.path in {"/api/graphs", "/api/graph-validate", "/api/graph-run"} else 1024 * 1024
+            if url.path.startswith('/api/stream-'): limit = 20 * 1024**2
             if length < 0 or length > limit:
                 raise ValueError("Request is too large.")
             data = json.loads(self.rfile.read(length))
@@ -1556,6 +1561,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(ui_graph.launch(self.server.app, data))
             elif self.path == "/api/stream-file":
                 self.respond(ui_stream.describe(self.server.app, data.get("path", "")))
+            elif self.path == "/api/stream-job":
+                self.respond(self.server.app.stream_jobs.start(data))
+            elif self.path == "/api/stream-analyze":
+                code = data.get('code')
+                if not isinstance(code, str) or len(code.encode('utf-8')) > ui_stream.INLINE_LIMIT: raise ValueError('Inline code must be 1 MB or smaller.')
+                self.respond(ui_stream.scan_source(code))
             elif self.path in {"/api/stream-source", "/api/stream-export"}:
                 self.respond(ui_stream.artifact(self.server.app, data.get("stream"), "source" if self.path.endswith("source") else "json"))
             elif self.path == "/api/stream-estimate":
@@ -1622,7 +1633,7 @@ class LocalServer(ThreadingHTTPServer):
                 self.app.stop(key)
             except (OSError, ValueError):
                 pass
-        while self.app.processes or getattr(self.app, "storage_busy", False) or self.app.metadata_jobs.working():
+        while self.app.processes or getattr(self.app, "storage_busy", False) or self.app.metadata_jobs.working() or self.app.stream_jobs.working():
             time.sleep(.2)
         self.shutdown()
 
@@ -1636,6 +1647,7 @@ class LocalServer(ThreadingHTTPServer):
         super().server_close()
         if hasattr(self, "app"):
             self.app.awake.close()
+            self.app.stream_jobs.close()
         for data_lock in getattr(self, "data_locks", []): data_lock.close()
         self.data_locks = []
         handle = getattr(self, "workspace_lock", None)

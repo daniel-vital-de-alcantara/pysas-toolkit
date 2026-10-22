@@ -44,8 +44,11 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(app_id(ROOT).startswith('PySAS.Workbench.'))
 
     def test_close_stops_watcher_and_waits_for_active_jobs(self):
+        source_busy,source_checked=threading.Event(),threading.Event();source_busy.set()
+        def sources_working():source_checked.set();return source_busy.is_set()
         app = SimpleNamespace(lock=threading.RLock(), processes={'watcher': object(), 'job': object()},
-                              commands={'watcher': {'action': 'watch'}, 'job': {'action': 'run'}}, stop=Mock(), metadata_jobs=SimpleNamespace(working=lambda:False))
+                              commands={'watcher': {'action': 'watch'}, 'job': {'action': 'run'}}, stop=Mock(),
+                              metadata_jobs=SimpleNamespace(working=lambda:False),stream_jobs=SimpleNamespace(working=sources_working))
         server = SimpleNamespace(app=app, shutdown=Mock())
         thread = threading.Thread(target=LocalServer.request_close, args=(server,))
         thread.start()
@@ -55,8 +58,12 @@ class LifecycleTests(unittest.TestCase):
             app.stop.assert_called_once_with('watcher')
             self.assertTrue(app.closing)
             server.shutdown.assert_not_called()
+            app.processes.clear()
+            self.assertTrue(source_checked.wait(1))
+            server.shutdown.assert_not_called()
         finally:
             app.processes.clear()
+            source_busy.clear()
             thread.join(3)
         server.shutdown.assert_called_once()
         LocalServer.request_close(server)

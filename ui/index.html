@@ -102,26 +102,29 @@
 <div class="section-heading"><h2>Schedules</h2></div>
 <div id="schedule-activity"></div></section>
 <section id="page-stream" class="page" hidden>
-<div class="panel">
-<div class="panel-header"><div><div class="panel-number">RUN STREAM</div><h2>One submission, in your order</h2></div><button id="stream-restore" type="button" class="secondary" data-keytip="J">Restore JSON</button><input id="stream-import" type="file" accept=".json" hidden></div>
-<p id="stream-import-status" class="hint" role="status" aria-live="polite"></p>
-<p class="hint">Choose a connection EGP, then add the code you want to submit. Each row runs after the previous row in the same SAS session. Add any _libs or parameter programs as the first rows.</p>
-<label>Run name<input id="stream-name" maxlength="120" value="Untitled stream" placeholder="A name you can find in Overview"></label>
-<div class="stream-connection"><label>Connection EGP<select id="stream-egp" data-keytip="E"><option value="">Choose an EGP</option></select></label><button id="stream-browse-egp" type="button" class="secondary">Browse EGP…</button><input id="stream-egp-upload" type="file" accept=".egp" hidden></div>
-<p id="stream-egp-status" class="hint" role="status" aria-live="polite"></p>
-<details><summary>Connection options</summary><label>EGP code node for the SAS server (optional)<input id="stream-server-program" maxlength="120" placeholder="Only needed if this EGP uses several SAS servers"></label><p class="hint">The engine inherits this node's Server connection. It submits the source below; it does not run the node's existing code.</p></details>
+<div id="stream-choice" class="panel stream-choice"><div><h2>Run stream</h2><p id="stream-start-hint" class="hint">Start fresh or restore a saved template.</p></div><div class="actions"><button id="stream-new" class="primary" type="button" data-keytip="N">New run</button><button id="stream-restore" class="secondary" type="button" data-keytip="J">Restore template</button><button id="stream-use-template" class="secondary" type="button" hidden>Use imported template</button><input id="stream-import" type="file" accept=".json" hidden></div><p id="stream-import-status" class="hint" role="status" aria-live="polite"></p></div>
+<div id="stream-workspace" hidden>
+<div id="stream-connection-card" class="panel stream-connection-card">
+<label class="stream-name-label">Run name<input id="stream-name" maxlength="120" value="Untitled stream" placeholder="A name you can find in Overview"></label>
+<details id="stream-connection-options"><summary>Connection options <span id="stream-connection-summary" class="hint"></span></summary>
+<div class="stream-connection"><label>Connection EGP<select id="stream-egp" data-keytip="E"><option value="">Automatic · use an available EGP</option></select></label><button id="stream-browse-egp" type="button" class="secondary">Browse EGP…</button><input id="stream-egp-upload" type="file" accept=".egp" hidden></div>
+<label>EGP code node for the SAS server (optional)<input id="stream-server-program" maxlength="120" list="stream-server-nodes" placeholder="Only needed if the EGP uses several SAS servers"><datalist id="stream-server-nodes"></datalist></label>
+<p class="hint">The EGP supplies the SAS connection. Add any setup or parameter code as source cards below.</p>
+</details><p id="stream-egp-status" class="hint" role="status" aria-live="polite"></p>
 </div>
-<div class="section-heading"><div><h2>Files to submit</h2><p>Whole files, inclusive line ranges, or scheduler sections. Use ↑ / ↓ to browse rows; Tab to edit a selection.</p></div><button id="stream-add" type="button" class="secondary" data-keytip="A">Add row</button></div>
-<div id="stream-rows" data-key-list data-keytip="F" tabindex="0" aria-label="Stream files" aria-describedby="list-keyboard-help"></div>
-<div class="panel stream-submit">
-<div class="stream-options"><label class="check"><input id="stream-html" type="checkbox" checked>Extract HTML results</label><label class="check"><input id="stream-tables" type="checkbox">Extract output tables to Excel</label><label class="check"><input id="stream-consolidate" type="checkbox" disabled>Combine tables into one workbook</label></div>
-<p class="hint">Combining creates tables.xlsx with one sheet per exported table. Individual exports are retained for recovery. No initialization files are added automatically.</p>
-<div class="actions"><button id="stream-estimate" type="button" class="secondary" data-keytip="I">Estimate time</button><button id="stream-source" type="button" class="secondary" data-keytip="S">Get source</button><button id="stream-export" type="button" class="secondary" data-keytip="D">Export JSON</button><button id="stream-run" type="button" class="primary" data-keytip="R" disabled>Run stream ↗</button></div>
-<p id="stream-estimate-result" class="hint" role="status"></p><p id="stream-status" class="hint" role="status" aria-live="polite"></p>
-<div id="stream-artifacts"></div>
-<p class="hint">Export JSON saves every row, selection, option, EGP and SAS file. Restore JSON replaces this editor with that saved stream. Each run also keeps its own portable JSON, source, logs and outputs in Tasks.</p>
-</div><div id="stream-execution" class="panel" hidden></div>
-</section>
+<div id="stream-files-stage" hidden>
+<article id="stream-shared-work-card" class="panel stream-shared-work"><label class="check"><input id="stream-shared-work" type="checkbox" data-keytip="W"><span>Use shared WORK<small id="stream-shared-work-info"></small></span></label><button id="stream-shared-settings" class="text-button" type="button">Shared WORK settings ↗</button><p id="stream-shared-work-status" class="hint" role="status"></p></article>
+<div id="stream-rows" data-key-list data-keytip="F" tabindex="0" aria-label="Source cards" aria-describedby="list-keyboard-help"></div>
+<button id="stream-add" type="button" class="stream-add secondary" data-keytip="A">＋ Add file or code</button>
+<div id="stream-submit-card" class="panel stream-submit">
+<div id="stream-readiness" role="status" aria-live="polite"></div>
+<div id="stream-ready-controls" hidden>
+<div class="stream-options"><label class="check"><input id="stream-html" type="checkbox" checked>HTML results</label><label class="check"><input id="stream-tables" type="checkbox">Output tables to Excel</label><label class="check"><input id="stream-consolidate" type="checkbox" disabled>Combine tables into one workbook</label></div>
+<div class="actions"><button id="stream-estimate" type="button" class="secondary" data-keytip="I">Estimate time</button><button id="stream-source" type="button" class="secondary" data-keytip="S">Get source</button><button id="stream-export" type="button" class="secondary" data-keytip="D">Export template JSON</button><button id="stream-run" type="button" class="primary" data-keytip="R" disabled>Run stream ↗</button></div>
+<p class="hint">The source runs as one SAS submission, in card order. Combined tables keep the original exports for recovery.</p>
+</div><p id="stream-estimate-result" class="hint" role="status"></p><p id="stream-status" class="hint" role="status" aria-live="polite"></p><div id="stream-artifacts"></div>
+</div></div><div id="stream-execution" class="panel" hidden></div>
+</div></section>
 <section id="page-graph" class="page" hidden>
 <div class="graph-intro"><div><h2>Dependency graph <span class="badge">Preview</span></h2><p>One program or a full schedule. Arrows point from a prerequisite to the program that waits for it.</p></div><span id="graph-save-state" role="status">New graph</span></div>
 <div class="graph-toolbar panel">
