@@ -398,6 +398,25 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(self.request('GET','/stream.js')[0],200)
         self.assertEqual(self.request('POST','/api/stream-import',b'{invalid',headers)[0],400)
 
+    def test_task_graph_editor_routes_save_restore_portable_json_without_execution(self):
+        import ui_task_graph
+        headers={'X-PySAS-Token':self.server.token}
+        self.assertEqual(self.request('POST','/api/task-graphs','{}')[0],403)
+        value=dict(format=ui_task_graph.FORMAT,id='task_plan',name='HTTP task plan',nodes=[dict(id='A',name='Extract',x=-30,y=70,rows=[dict(id='sourceA',source_kind='inline',code='%let ids=12;')]),dict(id='B',name='Report',x=400,y=100,rows=[dict(id='sourceB',source_kind='inline',code='%put &ids.;')])],setup=[],edges=[{'from':'A','to':'B'}],viewport=dict(x=-130,y=200,zoom=.75))
+        payload=json.dumps({'graph':value})
+        with patch.object(self.server.app,'launch',side_effect=AssertionError('Editor cannot execute SAS')):
+            status,body,_=self.request('POST','/api/task-graphs',payload,headers);self.assertEqual(status,200,body)
+            status,body,_=self.request('GET','/api/task-graphs?id=task_plan');self.assertEqual(status,200,body);self.assertEqual(json.loads(body)['graph']['viewport'],value['viewport'])
+            status,body,_=self.request('POST','/api/task-graph-check',payload,headers);self.assertEqual(status,200,body);self.assertEqual(json.loads(body)['edges'],1)
+            status,body,_=self.request('POST','/api/task-graph-export',payload,headers);self.assertEqual(status,200,body)
+            path=json.loads(body)['path'];status,raw,_=self.request('GET','/api/download?path='+path);self.assertEqual(status,200)
+            status,body,_=self.request('POST','/api/task-graph-import',raw,headers);self.assertEqual(status,200,body);restored=json.loads(body)['graph']
+            self.assertEqual(restored['edges'],value['edges']);self.assertNotEqual(restored['id'],value['id'])
+        for path in ('/source-cards.js','/graph.css'):
+            status,body,_=self.request('GET',path);self.assertEqual(status,200,body)
+        value['edges'].append({'from':'B','to':'A'})
+        self.assertEqual(self.request('POST','/api/task-graph-check',json.dumps({'graph':value}),headers)[0],400)
+
     def test_stream_preparation_returns_a_job_while_source_analysis_remains_available(self):
         import egp_extract
         headers={'X-PySAS-Token':self.server.token}

@@ -1,13 +1,13 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.36 is a separate browser UI for the standalone PySAS
+The Workbench 0.4.0-preview.37 is a separate browser UI for the standalone PySAS
 0.3.18 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
 
-Current pages are Overview, Run, Graph, Projects, Servers and Settings. Overview
+Current pages are Overview, Run, Run stream, Graph, Projects, Servers and Settings. Overview
 contains the searchable Tasks list; the old History URL redirects there. The
-[Graph guide](graph-runner.md) covers JSON dependency plans and the
+[Graph guide](graph-runner.md) covers the task-canvas editor preview (execution comes later), the [Run stream guide](run-stream.md) covers combined submissions, and the
 [portable data guide](overview-inspector-unreleased.md) covers Tasks/Settings
 locations and the current inspector. The earlier workflow details below remain
 useful for the standalone Run/Excel commands.

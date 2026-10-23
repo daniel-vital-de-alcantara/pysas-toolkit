@@ -13,7 +13,7 @@ It grew out of day-to-day model-development and consulting work where large SAS 
 | Standalone runner | Implemented | Run a SAS file through SAS Enterprise Guide automation with shared init code, logs and results |
 | Watch-folder runner | Implemented | Watch an inbox, execute stable `.sas` files concurrently and keep timestamped run folders |
 | Table extraction | Implemented | Export output datasets to one Excel workbook for `.tables.sas` jobs or `--tables` runs |
-| JSON dependency graphs | Implemented | Link SAS/EGP programs on a canvas or run graph JSON through the same scheduler |
+| JSON dependency graphs | CLI implemented; task editor preview | Run legacy graph JSON through the scheduler; design new stream-task plans on a canvas |
 | Excel dependency scheduler | Implemented | Run EGP programs according to dependencies, skip/error rules and a parallelism limit |
 | Schedule continuation | Implemented | Resume a prior schedule while automatically skipping tasks that already completed successfully |
 
@@ -39,7 +39,9 @@ is required. Inaccessible members remain listed with unknown metadata; readable 
 with warnings and incomplete storage totals. Saved snapshots remain available offline and travel with saved-data
 backups; missing metadata is shown as unknown.
 
-The released command-line toolkit is version 0.3.18; the released UI preview is 0.4.0-preview.36.
+The released command-line toolkit is version 0.3.18; the released UI preview is 0.4.0-preview.37.
+
+Preview.37 rebuilds **Graph** as a canvas that fills the window beside the navigation, with draggable task nodes, Run stream-style source editors, dependency ports, ordered shared setup, undo/redo and portable JSON. This is an editor preview; task-graph execution will be connected to the new engine later. See the [task graph guide](docs/graph-runner.md).
 
 Preview.36 refines **Run stream** with staged setup, automatic EGP selection, compact draggable cards, inline SAS, multiple section checkboxes, ordered EGP program selection and local background-loading indicators. Portable templates retain these choices; earlier Run stream JSON remains importable. The reusable reader is also available as `python egp_extract.py project.egp --json`. See [Run stream](docs/run-stream.md).
 

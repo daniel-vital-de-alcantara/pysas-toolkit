@@ -148,7 +148,7 @@ def restore_backup(app, stream, length):
                 seen.add(name.casefold())
                 allowed = (len(parts) >= 4 and parts[:2] in {('tasks','files'),('tasks','schedules')}) or name == 'manifest.json' or (len(parts) >= 3 and parts[0] == 'runs') or (len(parts) >= 4 and parts[:2] == ('runner', 'runs')) or (len(parts) >= 4 and parts[:2] == ('.pysas-ui', 'artifacts')) or (len(parts) == 2 and parts[0] == '.pysas-ui' and re.fullmatch(r'[a-zA-Z0-9_-]+\.txt', parts[1]))
                 if len(parts)==3 and parts[:2]==('.pysas-ui','graphs'):
-                    if not re.fullmatch(r'[a-zA-Z0-9_-]{1,64}\.json',parts[2]) or i.file_size>2*1024**2: raise ValueError('Invalid graph backup entry.')
+                    if not re.fullmatch(r'[a-zA-Z0-9_-]{1,64}\.json',parts[2]) or i.file_size>20*1024**2: raise ValueError('Invalid graph backup entry.')
                     allowed=True
                 if len(parts)==3 and parts[0]=='tasks' and parts[1] in {'graph-sources','stream-sources'}:
                     if PurePosixPath(parts[2]).suffix.lower() not in {'.sas','.egp'} or i.file_size>512*1024**2: raise ValueError('Invalid graph source backup entry.')
@@ -255,9 +255,9 @@ def restore_backup(app, stream, length):
         graph_ids={}
         graph_folder=unpacked/'.pysas-ui/graphs'
         if graph_folder.exists():
-            from pysas import validate_graph
+            from ui_task_graph import validate_saved
             for source in graph_folder.iterdir():
-                graph=validate_graph(json.loads(source.read_text(encoding='utf-8')))
+                graph=validate_saved(json.loads(source.read_text(encoding='utf-8')))
                 if graph.get('id') and graph['id']!=source.stem:raise ValueError('Graph ID does not match its backup filename.')
                 target=app.settings/'graphs'/source.name
                 if target.exists():target=target.with_name(uuid.uuid4().hex+'.json')

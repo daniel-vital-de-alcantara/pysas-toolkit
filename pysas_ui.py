@@ -30,6 +30,7 @@ import ui_servers
 import ui_explore
 from ui_logs import LogIndex
 import ui_graph
+import ui_task_graph
 import ui_stream
 import ui_stream_jobs
 import ui_paths
@@ -37,7 +38,7 @@ import ui_storage
 import windows_clipboard
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.36"
+VERSION = "0.4.0-preview.37"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 TEXT_SUFFIXES = {".sas", ".log", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".xml"}
@@ -1414,6 +1415,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(self.server.app.migration or {"status":"IDLE"})
             elif url.path == "/api/graphs":
                 self.respond(ui_graph.load(self.server.app, value("id")) if value("id") else {"graphs": ui_graph.listing(self.server.app), "sources": ui_graph.sources(self.server.app)})
+            elif url.path == "/api/task-graphs":
+                self.respond(ui_task_graph.load(self.server.app, value('id')) if value('id') else {'graphs': ui_task_graph.listing(self.server.app)})
             elif url.path == "/api/stream-job":
                 self.respond(self.server.app.stream_jobs.get(value("id")))
             elif url.path == "/api/export-status":
@@ -1492,7 +1495,7 @@ class Handler(BaseHTTPRequestHandler):
                     while chunk := f.read(256 * 1024):
                         self.wfile.write(chunk)
             else:
-                name = {"/": "index.html", "/app.js": "app.js", "/keyboard.js": "keyboard.js", "/graph.js": "graph.js", "/stream.js": "stream.js", "/style.css": "style.css", "/icon.svg": "icon.svg"}.get(url.path)
+                name = {"/": "index.html", "/app.js": "app.js", "/keyboard.js": "keyboard.js", "/graph.js": "graph.js", "/stream.js": "stream.js", "/source-cards.js": "source-cards.js", "/graph.css": "graph.css", "/style.css": "style.css", "/icon.svg": "icon.svg"}.get(url.path)
                 if not name:
                     self.respond({"error": "Not found."}, 404)
                     return
@@ -1532,6 +1535,13 @@ class Handler(BaseHTTPRequestHandler):
                 if len(raw) != length: raise ValueError("Stream JSON upload was interrupted.")
                 self.respond({"stream": ui_stream.import_document(self.server.app, raw)})
                 return
+            if url.path == '/api/task-graph-import':
+                if not 0 < length <= ui_stream.JSON_LIMIT: raise ValueError('Graph JSON must be 128 MB or smaller.')
+                self.connection.settimeout(120)
+                raw = self.rfile.read(length)
+                if len(raw) != length: raise ValueError('Graph JSON upload was interrupted.')
+                self.respond({'graph': ui_task_graph.import_document(self.server.app, raw)})
+                return
             if url.path == "/api/upload":
                 if not 0 <= length <= UPLOAD_LIMIT:
                     raise ValueError("Each file must be 512 MB or smaller.")
@@ -1540,6 +1550,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             limit = 2 * 1024 * 1024 + 4096 if url.path in {"/api/graphs", "/api/graph-validate", "/api/graph-run"} else 1024 * 1024
             if url.path.startswith('/api/stream-'): limit = 20 * 1024**2
+            if url.path.startswith('/api/task-graph'): limit = ui_task_graph.STORED_LIMIT
             if length < 0 or length > limit:
                 raise ValueError("Request is too large.")
             data = json.loads(self.rfile.read(length))
@@ -1550,6 +1561,13 @@ class Handler(BaseHTTPRequestHandler):
                 threading.Thread(target=self.server.request_close, daemon=True).start()
             elif self.path == "/api/graphs":
                 self.respond(ui_graph.save(self.server.app, data))
+            elif self.path == '/api/task-graphs':
+                self.respond(ui_task_graph.save(self.server.app, data))
+            elif self.path == '/api/task-graph-export':
+                self.respond(ui_task_graph.export(self.server.app, data.get('graph')))
+            elif self.path == '/api/task-graph-check':
+                graph = ui_task_graph.validate(data.get('graph'))
+                self.respond({'nodes': len(graph['nodes']), 'setup': len(graph['setup']), 'edges': len(graph['edges'])})
             elif self.path == "/api/graph-source":
                 self.respond(ui_graph.link_file(self.server.app, data))
             elif self.path == "/api/graph-egp":

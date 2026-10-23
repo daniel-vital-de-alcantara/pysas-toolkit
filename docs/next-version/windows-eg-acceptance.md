@@ -37,12 +37,19 @@ Status: target-environment checks pending. The user authorized publishing testin
 - Extract a representative real project. Compare program labels, classic/newer flow membership and source bytes with the original/MagicRoot output. Verify duplicate names, linked-program warnings and full-folder ZIP.
 - Edit one flat file, then a grouped copy, and repack into a new EGP. Open it in Enterprise Guide, confirm only intended source edits and other project elements preserved. Conflicting edits must be reported before any output is published.
 
-## Graph execution acceptance
+## Legacy CLI graph execution acceptance
 
 - Compare a linked SAS node and an embedded EGP node with their existing Run/terminal executions. Confirm each uses the intended server, selected section/rows and ordered shared setup.
 - Test a parallel graph, default 10 workers, skipped intermediate dependencies, per-file stop and Stop graph. Continue after an error using frozen source and retained successful outputs.
 - Modify a linked file after a run starts. Confirm the active run and continuation retain snapshots, while a new run uses the edited file.
 - Export/restore full saved data with uploaded graph sources, colliding names and configured external Tasks/Settings folders. Confirm graphs and continuation keep the correct associations.
+
+## Task graph editor acceptance (preview.37)
+
+- Confirm the canvas fills the window beside the navigation at 100%, 150% and 200% scaling and in narrow windows. Add tasks, open/close the drawer, select another card while editing, pan, zoom around the pointer, Fit and Arrange. Source editors must follow the selected task without losing other definitions.
+- Mix inline code, files, named sections/ranges and ordered EGP programs in one task. Keep editing a second task while extraction finishes on the first; delete a loading task and undo/redo edits. No editor action may start SAS or submit a legacy scheduler command.
+- Link by dragging ports, click-to-link, the toolbar and the prerequisite picker. Use keyboard browsing/linking/movement, remove links and reject duplicate, circular, self and setup dependencies.
+- Reorder shared setup cards by dragging and buttons. Export/restore on a second installation: sources, setup order, outputs, connection choice, dependencies, positions and viewport must survive. Test concurrent edits during import/export and saved-file revision conflicts. Legacy documents must open as new drafts without replacing the originals.
 
 ## Run stream acceptance
 

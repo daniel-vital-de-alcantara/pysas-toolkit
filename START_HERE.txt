@@ -1,4 +1,4 @@
-PySAS Workbench 0.4.0-preview.36
+PySAS Workbench 0.4.0-preview.37
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
@@ -50,7 +50,8 @@ What is included
 - Runner, watcher, schedule, schedule continuation, bundles, and EGP tools.
 - Scheduler task statuses, individual task clocks, and total schedule duration.
 - Overview Tasks combines searchable runs and commands; inspect Outputs/Logs/Tasks.
-- Graph tab: SAS/EGP program cards, dependency arrows and ordered shared setup.
+- Graph tab: canvas task editor, Run stream-style sources, dependencies and shared
+  setup. Save/export the plan; execution will be connected in a later version.
 - Portable Tasks and Settings folders, reusable between installations.
 - Excel previews (up to 100 data rows, 30 columns and 10 sheets per workbook).
 - Standalone pysas.py 0.3.18; existing CLI commands still work.
@@ -115,8 +116,9 @@ status is marked Unknown; check its console and output before rerunning.
 History lists up to 500 run folders and 200 commands. Run inspectors list up
 to 1,000 files. Very large workspaces may take longer to refresh.
 
-Schedule dependencies can be managed in Excel through Run, or in the new Graph
-canvas/JSON workflow. There is no calendar-based scheduler. Stop file ends its
+Run executes Excel dependency schedules; legacy graph JSON still runs through
+the CLI. The new Graph canvas designs task plans for later engine integration.
+There is no calendar-based scheduler. Stop file ends its
 owned local automation process; Stop schedule/graph prevents further launches
 and stops that schedule's active local automation processes.
 
@@ -365,3 +367,16 @@ New in preview.36
   Earlier Run stream templates remain importable.
 - Terminal EGP catalog/extraction: py egp_extract.py project.egp --json
 - See docs/run-stream.md and docs/egp-extraction.md.
+
+New in preview.37
+- Graph is now a canvas-first task editor, with a details drawer and floating
+  controls beside the existing left navigation. No Run graph action in this UI.
+- Each node holds ordered source cards: SAS files, inline code or EGP programs.
+- Drag nodes and link their ports to define dependencies; cycles are rejected.
+- Shared setup cards are ordered separately, for prepending before every task.
+- File > Save graph keeps a local draft. Export/Restore JSON includes source
+  snapshots, setup, dependencies, positions and the canvas view.
+- Pan, zoom, Fit, Arrange, undo/redo and keyboard movement/linking are available.
+- This release focuses on editing; graph execution with engine.py comes later.
+- Existing Run stream and terminal execution workflows remain available.
+- See docs/graph-runner.md.
