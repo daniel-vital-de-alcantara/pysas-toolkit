@@ -16,7 +16,7 @@ WScript.Echo "Console bridge completed"
 '''
 _console_probe_execute = execute_eg
 
-def execute_eg(*args):
+def execute_eg(*args, **kwargs):
     import ctypes
     from ctypes import wintypes as W
     def probe():
@@ -57,6 +57,6 @@ def execute_eg(*args):
     observer = threading.Thread(target=probe)
     observer.start()
     try:
-        return _console_probe_execute(*args)
+        return _console_probe_execute(*args, **kwargs)
     finally:
         observer.join(10)

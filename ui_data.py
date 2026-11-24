@@ -1,6 +1,7 @@
 """Portable run archives and historical duration estimates; no SAS execution."""
 from __future__ import annotations
 import csv
+import ui_projects
 from datetime import datetime
 import heapq
 import json
@@ -81,7 +82,7 @@ def write_archive(out, entries, progress=None, manifest=None):
 def backup_manifest(app, configs_only=False):
     return json.loads(json.dumps(dict(format=FORMAT, scope='configs' if configs_only else 'all', workspace=str(app.root), folders=app.folders(),
                         bundle_settings=app.bundle_settings(), commands=[] if configs_only else list(app.commands.values()),
-                        parameters_settings=ui_parameters.settings(app.settings), shared_work=app.shared_work(), preferences=app.preferences())))
+                        parameters_settings=ui_parameters.settings(app.settings), shared_work=app.shared_work(), preferences=app.preferences(), projects=ui_projects.registry(app))))
 
 
 def export_backup(app, configs_only=False, progress=None, destination=None, *, manifest=None, before=None):
@@ -186,6 +187,8 @@ def restore_backup(app, stream, length):
         bundle = manifest['bundle_settings']
         if not isinstance(bundle.get('paths', []), list) or any(not isinstance(p, str) for p in bundle.get('paths', [])) or not isinstance(bundle.get('last', ''), str):
             raise ValueError('Backup bundle paths are invalid.')
+        projects = manifest.get('projects', {})
+        if not isinstance(projects, dict) or any(not isinstance(p, dict) or not isinstance(p.get('path'), str) or not isinstance(p.get('name', ''), str) or len(p.get('name', ''))>120 for p in projects.values()): raise ValueError('Backup project folders are invalid.')
         old_root = portable(manifest['workspace'])
         mappings = {}
         moves = []
@@ -267,6 +270,12 @@ def restore_backup(app, stream, length):
         commands = []
         for original in manifest['commands']:
             item = remap(original)
+            if original.get('launch_request'):
+                relative=portable(original['launch_request'])
+                if relative.startswith(old_root+'/'):relative=relative[len(old_root)+1:]
+                spec=(unpacked/relative).resolve()
+                if not spec.is_relative_to(unpacked.resolve()) or not spec.is_file() or spec.stat().st_size>20*1024**2:raise ValueError('Backup launch configuration is missing or invalid.')
+                spec.write_text(json.dumps(remap(json.loads(spec.read_text(encoding='utf-8'))),ensure_ascii=False),encoding='utf-8')
             old_id = original['id']
             item['id'] = ids[old_id]
             if item.get('graph_id') in graph_ids:item['graph_id']=graph_ids[item['graph_id']]
@@ -288,7 +297,7 @@ def restore_backup(app, stream, length):
             if not Path(folders.get(key, '')).is_dir() or not folders.get(key):
                 missing.append(key)
                 folders[key] = defaults[key]
-        settings = {'folders.json': folders, 'bundle-paths.json': remap(manifest.get('bundle_settings', {}))}
+        settings = {'folders.json': folders, 'bundle-paths.json': remap(manifest.get('bundle_settings', {})), 'projects.json': remap(manifest.get('projects', {}))}
         if parameter_settings is not None:
             settings['parameters-settings.json'] = parameter_settings
         if 'shared_work' in manifest:

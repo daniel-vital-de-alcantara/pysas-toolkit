@@ -249,6 +249,16 @@ class WorkbenchTests(unittest.TestCase):
 
 
 class ObservationTests(unittest.TestCase):
+    def test_single_file_stop_requested_before_eg_submission_is_forwarded_to_engine(self):
+        engine = worker.load_engine(ROOT / 'pysas.py')
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); control = root / 'run.stop'; control.touch()
+            with contextlib.redirect_stdout(io.StringIO()):
+                worker.observe(engine, cancel_file=str(control))
+                with patch.object(engine.subprocess, 'Popen', side_effect=AssertionError('Stopped run must not start EG')):
+                    rc, text = engine.execute_eg('RUNFILE', root/'p.egp', root/'source.sas', 'test.sas', 0, 0, root/'result', False)
+            self.assertEqual(rc, 130); self.assertIn('Stopped by user before', text)
+
     def test_adapter_calls_original_functions_and_reports_events(self):
         engine = worker.load_engine(ROOT / "pysas.py")
         calls = []
@@ -341,6 +351,58 @@ class HttpTests(unittest.TestCase):
         result = response.status, response.read(), dict(response.getheaders())
         connection.close()
         return result
+
+    def test_submit_ack_precedes_preparation_and_state_stop_remain_available(self):
+        headers = {'X-PySAS-Token': self.server.token}
+        self.assertEqual(self.request('POST', '/api/submit', '{"action":"bundle-pack"}')[0], 403)
+        entered, release = threading.Event(), threading.Event(); original = self.server.app.arguments
+        def delayed(data):
+            entered.set(); release.wait(5); return original(data)
+        with patch.object(self.server.app, 'arguments', side_effect=delayed), patch('pysas_ui.subprocess.Popen', side_effect=AssertionError('Cancelled preparation cannot launch')):
+            try:
+                started = time.monotonic()
+                status, raw, _ = self.request('POST', '/api/submit', '{"action":"bundle-pack"}', headers)
+                self.assertEqual(status, 200, raw); self.assertLess(time.monotonic()-started, 1)
+                result = json.loads(raw); self.assertTrue(result['command']['preparing']); self.assertTrue(entered.wait(1))
+                status, raw, _ = self.request('GET', '/api/state')
+                self.assertEqual(status, 200, raw); self.assertEqual(json.loads(raw)['commands'][0]['id'], result['id'])
+                status, raw, _ = self.request('POST', '/api/stop', json.dumps({'id': result['id']}), headers)
+                self.assertEqual(status, 200, raw)
+            finally: release.set()
+            deadline = time.monotonic()+5
+            while self.server.app.launches.working() and time.monotonic()<deadline: time.sleep(.01)
+        self.assertEqual(self.server.app.commands[result['id']]['status'], 'CANCELLED')
+
+    def test_project_and_refresh_http_routes_keep_folder_versions_and_refresh_known_sources(self):
+        import ui_stream
+        headers = {'X-PySAS-Token': self.server.token}
+        source = self.root/'extract.sas'; source.write_text('%let ids=1;')
+        connection = self.root/'connection.egp'; connection.write_bytes(b'egp')
+        document = dict(format=ui_stream.FORMAT, name='Fresh stream', egp=ui_stream.describe(self.server.app, connection), rows=[dict(id='one',file=ui_stream.describe(self.server.app, source))])
+        source.write_text('%let ids=2;\n%put &ids.;')
+        status, raw, _ = self.request('POST', '/api/stream-refresh', json.dumps({'stream':document}), headers)
+        self.assertEqual(status, 200, raw); fresh = json.loads(raw)
+        self.assertEqual(fresh['stream']['rows'][0]['file']['lines'], 2); self.assertGreater(fresh['checked_at'], 0)
+        self.assertNotEqual(fresh['stream']['rows'][0]['file']['sha256'], document['rows'][0]['file']['sha256'])
+        result = self.server.app.launches.start({'action':'bundle-pack'})
+        deadline=time.monotonic()+8
+        while (self.server.app.launches.working() or self.server.app.processes) and time.monotonic()<deadline: time.sleep(.01)
+        self.assertEqual(self.server.app.commands[result['id']]['status'], 'SUCCESS')
+        import ui_projects
+        project = ui_projects.listing(self.server.app)[0]
+        status, raw, _ = self.request('POST', '/api/project-name', json.dumps({'id':project['id'],'name':'Daily extracts'}), headers)
+        self.assertEqual(status, 200, raw)
+        status, raw, _ = self.request('GET', '/api/project-details?id='+project['id'])
+        self.assertEqual(status, 200, raw); detail=json.loads(raw)
+        self.assertEqual(detail['name'], 'Daily extracts'); self.assertEqual(detail['project_versions'][0]['id'], result['id'])
+        with patch('windows_clipboard.copy_file') as clipboard:
+            status, raw, _ = self.request('POST', '/api/project-copy', json.dumps({'id':project['id']}), headers)
+            self.assertEqual(status, 200, raw); self.assertTrue(clipboard.call_args.args[0].is_file())
+        with patch.object(self.server.app.launches, 'start', return_value={'id':'next','command':{}}) as start:
+            status, raw, _ = self.request('POST', '/api/project-update', json.dumps({'id':project['id']}), headers)
+            self.assertEqual(status, 200, raw); self.assertEqual(start.call_args.args[0]['action'], 'bundle-pack')
+            status, raw, _ = self.request('POST', '/api/rerun', json.dumps({'command':result['id']}), headers)
+            self.assertEqual(status, 200, raw); self.assertEqual(start.call_args.args[0].get('code_root') or str(self.server.app.root), str(self.server.app.root))
 
     def test_graph_http_upload_save_validate_and_launch_use_existing_worker(self):
         headers={'X-PySAS-Token':self.server.token}

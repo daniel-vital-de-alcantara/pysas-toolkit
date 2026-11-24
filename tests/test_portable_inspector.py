@@ -141,7 +141,7 @@ class PortableInspectorTests(unittest.TestCase):
 
     def test_command_and_child_names_stay_independent_and_command_artifacts_can_be_zipped(self):
         run,child=self.seed();self.app.rename_run({'path':self.app.relative(child),'name':'Check the extract'})
-        self.assertEqual(self.app.details(self.app.relative(child))['name'],'Check the extract');self.assertEqual(self.app.details(self.app.relative(run))['name'],'demo')
+        self.assertEqual(self.app.details(self.app.relative(child))['name'],'Check the extract');self.assertEqual(self.app.details(self.app.relative(run))['name'],'Schedule')
         self.app.commands['bundle']=dict(id='bundle',action='bundle-pack',status='SUCCESS',name='Bundle',args=[],tasks={},started=1)
         artifact=self.app.storage/'artifacts/bundle';artifact.mkdir(parents=True);(artifact/'code.txt').write_text('bundle bytes')
         self.app.rename_run({'command':'bundle','name':'My bundle'})

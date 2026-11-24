@@ -1,6 +1,6 @@
 # Local workbench preview
 
-The Workbench 0.4.0-preview.37 is a separate browser UI for the standalone PySAS
+The Workbench 0.4.0-preview.38 is a separate browser UI for the standalone PySAS
 0.3.18 command-line engine. Download the Python ZIP from GitHub Releases, extract
 it completely, and double-click `START_PYSAS.bat` on Windows. See
 [`START_HERE.txt`](../START_HERE.txt) for setup and requirements.
@@ -17,6 +17,18 @@ W Shared WORK / I Inbox watcher / S Storage / U Uploads / B Backups / P Power.
 Choose a displayed action inside that section. Escape returns one level.
 
 For single-file initialization, parameters, overrides and the optional CLI inbox, see [the initialization guide](single-file-initialization.md).
+
+## Launches, Projects and versions
+
+Run, schedule, Continue and Run stream move immediately to Overview. A **Preparing run** entry appears in Running now while inputs are read, source is built and outputs are prepared. Execution replaces preparation in the same entry, keeping the same run ID. Preparation can be cancelled. Errors finish that entry with a message and console evidence; execution does not open the inspector automatically.
+
+Projects has separate **Pack bundle** and **Unpack bundle** controls. Its **Project folders** list groups activity by code folder, showing the folder's final name (or a name you give it), latest update and version count. Each row offers **Copy latest file**, **Update bundle** using the remembered pack options, and **Inspect**. The folder inspector opens **Versions**, listing dated packs/unpacks with their status and original downloadable/copyable bundle. The name editor names the folder entry; it does not rename directories. Unpack still requires the existing overwrite confirmation and creates the normal backups. Concurrent bundle operations in the same folder are rejected to preserve version artifacts.
+
+Use Alt, P for Projects. Pack prefers P, Unpack U, and the folder list V within its page hints. Enter a list and use Up/Down for folders or versions, Left/Right for row actions, and Enter to activate. Inspector actions keep their usual toolbar letters; V chooses a dated version, R runs again, and C continues an interrupted schedule.
+
+Overview's Tasks history uses one row for each **exact visible name**, with a version count. Active files remain separate in Running now, with their individual stop controls. Inspect has a dated version selector and keeps the selected version during polling. Grouping changes only the view: saved attempts, outputs and logs remain separate. A schedule's continuations still belong to the same schedule folder and retain its consolidated log and pause-adjusted clock.
+
+Finished-run inspectors offer **Run again**, creating a new run from saved choices and current input files. Interrupted schedules also offer **Continue schedule**, which keeps the existing folder, successful tasks and continuation behavior. Some older runs lack enough input information to replay; the app directs you to choose the inputs in Run. Saved launch choices, folder names and immutable bundles are included in saved-data backups.
 
 ## Running files and elapsed time
 
@@ -35,9 +47,9 @@ launches tasks through the existing dependency engine, and supports continuing
 previous schedule runs. The task list displays dependencies and statuses.
 Continue follows the existing engine's semantics, including its skip rules.
 
-Bundles & EGP provides all existing bundle and project commands. Save your
-frequently used code folders and select one before packing, verifying, or
-unpacking. Paths and the last-used folder persist in `.pysas-ui/bundle-paths.json`.
+Projects provides bundle and EGP commands. Save your
+frequently used code folders and select one before packing or
+unpacking. Paths and the last-used folder persist in `Settings/bundle-paths.json`; folder names and pack preferences use `Settings/projects.json`.
 The single-file CLI supports the same behavior through optional `--root` on
 bundle subcommands. Omitting it preserves the original script-folder default. Bundle unpack
 always retains the engine's backup behavior. The UI confirms that restoration

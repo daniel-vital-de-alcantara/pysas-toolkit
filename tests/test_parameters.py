@@ -220,7 +220,7 @@ class ParameterTests(unittest.TestCase):
 
     def test_real_ui_worker_validates_override_and_retains_full_log_with_parameters(self):
         stub='''
-def execute_eg(mode, project, submitted, name, first, last, run_dir, tables):
+def execute_eg(mode, project, submitted, name, first, last, run_dir, tables, cancel_file=None):
     (run_dir/'code').mkdir()
     (run_dir/'logs').mkdir()
     (run_dir/'code/actual.sas').write_text(submitted.read_text(encoding='utf-8'),encoding='utf-8')

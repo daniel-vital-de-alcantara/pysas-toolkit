@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import statistics
 import uuid
+import time
 
 from engine import _decode
 from pysas import select_graph_text, shared_work_settings
@@ -44,7 +45,12 @@ def file_ref(value, suffix):
     digest = value.get("sha256", "")
     if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise ValueError("Stream source is missing its checksum. Choose the file again.")
-    return dict(path=value["path"], name=name, sha256=digest)
+    result = dict(path=value["path"], name=name, sha256=digest)
+    origin = value.get('origin_path')
+    if origin is not None:
+        if not isinstance(origin, str) or not origin or len(origin)>4096 or '\x00' in origin: raise ValueError('Invalid original source path.')
+        result['origin_path'] = origin
+    return result
 
 
 def selection(value, *, legacy=False):
@@ -153,11 +159,60 @@ def describe(app, path, name=None):
     if path.stat().st_size > (SOURCE_LIMIT if suffix == ".sas" else EGP_LIMIT):
         raise ValueError("Run stream accepts SAS files up to 16 MB and EGP templates up to 64 MB.")
     raw = path.read_bytes()
-    result = dict(path=app.relative(path), name=name or path.name, sha256=hashlib.sha256(raw).hexdigest())
+    result = dict(path=app.relative(path) or str(path), name=name or path.name, sha256=hashlib.sha256(raw).hexdigest())
+    result.update(modified=path.stat().st_mtime, checked_at=time.time())
+    if not path.is_relative_to(app.tasks) and not path.is_relative_to(app.storage): result['origin_path'] = str(path)
     if suffix == ".sas":
         text = _decode(raw)
         result.update(scan_source(text))
     return result
+
+
+def refresh_document(app, value):
+    """Refresh known paths, retaining scope/order; uploads remain explicit copies."""
+    document = validate(value)
+    shared = app.shared_work()
+    document['shared_work'] = dict(shared, enabled=document['shared_work']['enabled'])
+    linked, snapshots, changed_projects = {}, {}, set()
+    for ref, suffix in asset_refs(document):
+        if not ref: continue
+        previous_hash = ref['sha256']
+        origin = ref.get('origin_path')
+        if not origin:
+            path = app.input_path(ref['path'])
+            if not path.is_relative_to(app.tasks) and not path.is_relative_to(app.storage): origin = str(path)
+        if origin:
+            if origin not in linked: linked[origin] = describe(app, origin)
+            name = ref['name']; ref.update(linked[origin], origin_path=origin, name=name)
+        else:
+            key = (ref['path'], ref['sha256'])
+            if key not in snapshots:
+                raw = read_asset(app, ref, suffix)
+                snapshots[key] = dict(checked_at=time.time(), modified=app.input_path(ref['path']).stat().st_mtime)
+                if suffix == '.sas': snapshots[key].update(scan_source(_decode(raw)))
+            ref.update(snapshots[key])
+        if suffix == '.egp' and previous_hash != ref['sha256']: changed_projects.add(ref['path'])
+    for row in document['rows']:
+        if row['source_kind'] == 'inline': row['analysis'] = scan_source(row['code'])
+        if row['source_kind'] != 'egp' or not row['project']: continue
+        import egp_extract
+        import io
+        if row['project']['path'] not in changed_projects and all(p['file'] for p in row['programs']): continue
+        raw_project = read_asset(app, row['project'], '.egp')
+        for program in row['programs']:
+            _, raw = egp_extract.read_program(io.BytesIO(raw_project), program['program_id'], limit=SOURCE_LIMIT)
+            digest = hashlib.sha256(raw).hexdigest()
+            if program['file'] and program['file']['sha256'] == digest: continue
+            with app.upload_lock:
+                with app.lock:
+                    if app.storage_busy: raise ValueError('Wait for the saved-data operation to finish.')
+                    app.uploading = True
+                try:
+                    folder = app.tasks/'stream-sources'; folder.mkdir(exist_ok=True)
+                    target = folder/(uuid.uuid4().hex+'.sas'); target.write_bytes(raw)
+                    program['file'] = describe(app, target, program['file']['name'] if program['file'] else egp_extract.egp_component(program['name'],limit=175)+'.sas')
+                finally: app.uploading = False
+    return document
 
 
 def read_asset(app, ref, suffix):
@@ -298,6 +353,12 @@ def import_document(app, raw):
             for ref, suffix in asset_refs(document):
                 if ref:
                     ref["path"] = paths[ref["sha256"]]
+                    # Portable templates keep their embedded copies when the
+                    # original PC/path is unavailable. Existing local links stay live.
+                    if ref.get('origin_path'):
+                        try: linked = app.input_path(ref['origin_path']).is_file()
+                        except (OSError, ValueError): linked = False
+                        if not linked: ref.pop('origin_path', None)
                     if Path(ref["name"]).suffix.lower() == ".sas":
                         ref.update(describe(app, ref["path"], ref["name"]))
         except BaseException:

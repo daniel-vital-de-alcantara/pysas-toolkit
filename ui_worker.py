@@ -38,7 +38,7 @@ def load_engine(script):
     return engine
 
 
-def observe(engine):
+def observe(engine, *, cancel_file=None):
     """Observe tasks and progress: the standalone engine owns execution and scheduling."""
     if hasattr(engine, "bundle_report"):
         original_report = engine.bundle_report
@@ -99,6 +99,8 @@ def observe(engine):
     def execute(mode, project, sas_path, program, row_start, row_end, run_dir, tables, **kwargs):
         if getattr(_context, "key", None):
             emit("location", key=_context.key, path=run_dir)
+        if cancel_file:
+            kwargs.setdefault("cancel_file", cancel_file)
         return original_execute(mode, project, sas_path, program, row_start, row_end, run_dir, tables, **kwargs)
     engine.execute_eg = execute
     if hasattr(engine, "report_progress"):
@@ -168,7 +170,7 @@ def main():
          script=str(Path(script).resolve()), python=sys.executable, pid=os.getpid(),
          console=console, arguments=arguments)
     print(f"PySAS engine {getattr(engine, 'VERSION', 'unknown')} | console={'attached' if console else 'inherited'}", flush=True)
-    observe(engine)
+    observe(engine, cancel_file=os.environ.get("PYSAS_UI_CONTROL_FILE") if arguments[:2] == ["runner", "run"] else None)
     if arguments[:2] == ["runner", "watch"]:
         def control():
             control_path = os.environ.get("PYSAS_UI_CONTROL_FILE")

@@ -1,4 +1,4 @@
-PySAS Workbench 0.4.0-preview.37
+PySAS Workbench 0.4.0-preview.38
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
@@ -380,3 +380,22 @@ New in preview.37
 - This release focuses on editing; graph execution with engine.py comes later.
 - Existing Run stream and terminal execution workflows remain available.
 - See docs/graph-runner.md.
+
+New in preview.38
+- Run/Continue immediately opens Overview with Preparing run in Running now.
+  Source preparation and SAS execution keep the same run entry; no automatic
+  inspector opening. Cancellation also works during preparation.
+- Projects has separate Pack bundle and Unpack bundle buttons. Folder rows
+  offer Copy latest file, Update bundle and Inspect; name folders in Inspect.
+  The Versions list retains dated packs/unpacks and their original bundles.
+- Run stream checks sources in the background and shows Last update beside
+  Ready. Link a Local SAS path to auto-refresh your working file. Uploaded
+  files remain independent copies. Linked paths must be inside the workspace
+  or an input folder configured in Settings.
+- Run rereads linked SAS/EGP paths and the current shared WORK location before
+  freezing the submission. A running job keeps its own frozen source.
+- Finished-run inspectors offer Run again; interrupted schedules also offer
+  Continue schedule. Alt hints include R Run again, C Continue and V Versions.
+- Overview history groups exact same visible names. Select a dated version
+  in Inspect; every active file still appears separately in Running now.
+- Folder names and saved launch settings travel with saved-data backups.

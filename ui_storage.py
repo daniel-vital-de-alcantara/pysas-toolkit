@@ -115,9 +115,10 @@ class Exports:
             return dict(self.jobs[identifier])
 
 
-def protected_runs(app):
+def protected_runs(app, exclude=None):
     protected = set()
     for c in app.commands.values():
+        if c['id'] == exclude: continue
         # UNKNOWN may be an unmonitored worker after a crash; do not delete its output.
         held = any(j['status']=='WORKING' and j['scope']=='command' and Path(j['path_source']).name==c['id'] for j in app.exports.jobs.values())
         if c.get('status') in ACTIVE | {'UNKNOWN'} or held:

@@ -3,7 +3,7 @@ from pathlib import Path, PurePosixPath
 import json
 import shutil
 
-CONFIGS = {'folders.json','bundle-paths.json','shared-work.json','preferences.json','parameters-settings.json'}
+CONFIGS = {'folders.json','bundle-paths.json','shared-work.json','preferences.json','parameters-settings.json','projects.json'}
 
 def locations(root, saved=None):
     file=root/'.pysas-locations.json'

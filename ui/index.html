@@ -115,10 +115,10 @@
 </div>
 <div id="stream-files-stage" hidden>
 <article id="stream-shared-work-card" class="panel stream-shared-work"><label class="check"><input id="stream-shared-work" type="checkbox" data-keytip="W"><span>Use shared WORK<small id="stream-shared-work-info"></small></span></label><button id="stream-shared-settings" class="text-button" type="button">Shared WORK settings ↗</button><p id="stream-shared-work-status" class="hint" role="status"></p></article>
-<div id="stream-rows" data-key-list data-keytip="F" tabindex="0" aria-label="Source cards" aria-describedby="list-keyboard-help"></div>
+<datalist id="stream-local-files"></datalist><div id="stream-rows" data-key-list data-keytip="F" tabindex="0" aria-label="Source cards" aria-describedby="list-keyboard-help"></div>
 <button id="stream-add" type="button" class="stream-add secondary" data-keytip="A">＋ Add file or code</button>
 <div id="stream-submit-card" class="panel stream-submit">
-<div id="stream-readiness" role="status" aria-live="polite"></div>
+<div id="stream-readiness" role="status" aria-live="polite"></div><div class="stream-refresh-line"><small id="stream-last-update" role="status"></small><button id="stream-refresh-now" type="button" class="text-button" data-keytip="H">Refresh sources</button></div>
 <div id="stream-ready-controls" hidden>
 <div class="stream-options"><label class="check"><input id="stream-html" type="checkbox" checked>HTML results</label><label class="check"><input id="stream-tables" type="checkbox">Output tables to Excel</label><label class="check"><input id="stream-consolidate" type="checkbox" disabled>Combine tables into one workbook</label></div>
 <div class="actions"><button id="stream-estimate" type="button" class="secondary" data-keytip="I">Estimate time</button><button id="stream-source" type="button" class="secondary" data-keytip="S">Get source</button><button id="stream-export" type="button" class="secondary" data-keytip="D">Export template JSON</button><button id="stream-run" type="button" class="primary" data-keytip="R" disabled>Run stream ↗</button></div>
@@ -150,13 +150,12 @@
 <form id="bundle-form" class="panel">
 <div class="panel-number">SAS SOURCE BUNDLES</div>
 <h2>Pack or unpack SAS source</h2>
-<label hidden="">Saved code folders<select id="saved-bundle-path" hidden=""><option value="">Workspace folder</option></select></label><datalist id="recent-code-folders"></datalist><label>Code folder<input name="code_root" id="bundle-code-root" placeholder="Leave blank for the workspace folder" spellcheck="false" list="recent-code-folders"></label><div class="actions">
+<label hidden="">Saved code folders<select id="saved-bundle-path" hidden=""><option value="">Workspace folder</option></select></label><datalist id="recent-code-folders"></datalist><label>Code folder<input name="code_root" id="bundle-code-root" data-keytip="C" placeholder="Leave blank for the workspace folder" spellcheck="false" list="recent-code-folders"></label><div class="actions">
 <button type="button" id="save-bundle-path" class="secondary" hidden="">Save path</button><button type="button" id="remove-bundle-path" class="subtle">Remove this folder from recents</button>
 </div>
 <p id="bundle-path-status" class="hint" role="status">Use a code folder; the last 10 folders are remembered automatically. Bundle files are relative to this folder.</p>
-<label>Action<select name="action" id="bundle-action"><option value="bundle-pack">Pack SAS source</option>
-<option value="bundle-unpack">Unpack bundle</option></select></label><label id="bundle-input-label">Bundle file<input name="bundle" placeholder="codebase.sasbundle.txt"></label><p class="hint">Bundle and output filenames are relative to the code folder above. Unpack restores into that folder and keeps PySAS’s automatic backups enabled.</p>
-<details><summary>Advanced bundle options</summary><label id="bundle-output-label">Output file<input name="output" placeholder="codebase.sasbundle.txt"></label><label class="check" id="recursive-label"><input name="recursive" type="checkbox">Include subfolders</label><button type="button" class="secondary" id="verify-bundle">Verify bundle only</button></details><button type="submit" class="primary">Pack / unpack</button>
+<label id="bundle-input-label">Bundle file<input name="bundle" placeholder="codebase.sasbundle.txt"></label><p class="hint">Bundle and output filenames are relative to the code folder above. Unpack restores into that folder and keeps PySAS’s automatic backups enabled.</p>
+<details><summary>Advanced bundle options</summary><label id="bundle-output-label">Output file<input name="output" placeholder="codebase.sasbundle.txt"></label><label class="check" id="recursive-label"><input name="recursive" type="checkbox">Include subfolders</label><button type="button" class="secondary" id="verify-bundle">Verify bundle only</button></details><div class="actions"><button type="submit" class="primary" data-keytip="P">Pack bundle</button><button id="bundle-unpack" type="button" class="secondary" data-keytip="U">Unpack bundle</button></div>
 </form>
 <details class="panel"><summary>Enterprise Guide project tools</summary><form id="egp-form" class="panel">
 <div class="panel-number">ENTERPRISE GUIDE PROJECTS</div>
@@ -168,7 +167,7 @@
 </form>
 </details>
 </div>
-<div class="section-heading"><h2>Command results</h2></div>
+<div class="section-heading"><h2>Project folders</h2><p>Bundles and versions, grouped by code folder.</p></div>
 <div id="tools-activity"></div></section>
 <section id="page-servers" class="page" hidden>
 <div class="split">
@@ -326,6 +325,7 @@
 <p class="hint">Stops idle sleep without clicking or typing. It does not override manual sleep, closing the lid, or your organization's lock policy. The setting resets when the server closes.</p>
 </div></details></section>
 <footer>PySAS engine 0.3.18 · Local execution <span>Closing the app finishes active jobs before exiting.</span></footer><section id="details-dialog" hidden="" class="run-inspector" aria-label="Run inspector" tabindex="-1"><div class="dialog-header"><button id="close-details" data-keytip="B" class="secondary" aria-label="Back to tasks">← Back</button><div><span class="eyebrow">TASK INSPECTOR</span><h2 id="detail-title">Task details</h2></div></div>
+<div id="inspector-version-region" class="inspector-versions" hidden><label for="inspector-version">Version</label><select id="inspector-version" data-keytip="V" aria-label="Choose saved version"></select><small id="inspector-version-count"></small></div>
 <div class="inspector-toolbar">
 <div class="inspector-tabs" role="group" aria-label="Inspect">
 <button type="button" data-keytip="F" data-inspector-tab="files" aria-pressed="true" title="Outputs · Alt F">Outputs</button><button type="button" data-keytip="L" data-inspector-tab="logs" aria-pressed="false" title="Logs · Alt L">Logs</button><button type="button" data-keytip="T" data-inspector-tab="tasks" aria-pressed="false" title="Tasks · Alt T" disabled>Tasks</button>

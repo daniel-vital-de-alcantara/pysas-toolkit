@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const path = require('node:path');
 const nodes = new Map(), registered = [];
 function node(id) {
-  if (!nodes.has(id)) nodes.set(id, {textContent:'', innerHTML:'', value:'', hidden:false, className:'', dataset:{}, addEventListener(){}, querySelectorAll(){return []}, classList:{toggle(){}}, options:[]});
+  if (!nodes.has(id)) nodes.set(id, {textContent:'', innerHTML:'', value:'', hidden:false, className:'', dataset:{}, setAttribute(name,value){this[name]=value;}, addEventListener(){}, querySelectorAll(){return []}, classList:{toggle(){}}, options:[]});
   return nodes.get(id);
 }
 const snapshot = {now:100,windows:false,openpyxl:true,files:[],commands:[],history:[],queued:[],token:'test',workspace:'test',version:'test'};

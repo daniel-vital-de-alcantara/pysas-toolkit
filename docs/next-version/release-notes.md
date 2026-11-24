@@ -1,28 +1,25 @@
-# PySAS Workbench 0.4.0-preview.37
+# PySAS Workbench 0.4.0-preview.38
 
-Graph is now a canvas-first task planner inspired by Control Tree. Define tasks with the source choices you know from Run stream, arrange them, link dependencies and export the complete plan to JSON.
+Launches now appear immediately in Overview, Projects keeps named folder histories, and Run stream follows current linked sources. Inspectors offer Run again/Continue and a dated version picker.
 
-Download **PySAS-Workbench-Python-0.4.0-preview.37.zip**, extract the whole ZIP and open **START_PYSAS.bat**. Python 3.10+ is required. Existing Run stream/runner execution still requires your Windows Enterprise Guide/SAS setup. The single-file CLI remains **pysas.py 0.3.18**.
+Download **PySAS-Workbench-Python-0.4.0-preview.38.zip**, extract the whole ZIP and open **START_PYSAS.bat**. Python 3.10+ and your existing Windows Enterprise Guide/SAS setup are required for execution. The standalone CLI remains **pysas.py 0.3.18**; `engine.py` and scheduler execution semantics are unchanged.
 
-## Graph editor
+## Changes
 
-- **Canvas fills the window beside the left navigation.** Floating controls and a details drawer leave the workspace available for the graph. Pan, zoom, Fit and Arrange help navigate larger plans.
-- **Tasks are Run stream-style definitions.** Each node holds one or more ordered source cards: PC SAS files, inline SAS, or selected EGP programs. Whole files, inclusive ranges and multiple named sections are available. Each source shows its loading/definition status.
-- **Drag and connect tasks.** Drag nodes into place; draw a link from a prerequisite's right-hand port to its dependent task. Click-to-link, a Link command and a prerequisite picker provide alternatives. Cycles, self-links and duplicate links are rejected.
-- **Special shared setup cards.** The top strip defines libraries, macros or parameters intended to be prepended before every task. Its order is separate from dependencies; reorder by dragging or Move earlier/later. Setup definitions are not separate jobs.
-- **Save and portable JSON.** File → Save graph stores a local draft. Export JSON includes source snapshots, inline code, task/setup order, dependencies, positions, viewport, connection and output choices. Download and Windows actual-file Copy are offered. Restore preserves choices on another installation and protects edits made while loading.
-- **Keyboard and editing.** Arrows browse tasks, Enter edits, Ctrl + arrows moves, Delete removes and Ctrl + Z / Ctrl + Shift + Z undo/redo graph changes. Ctrl + S saves. Duplicate retains sources with fresh IDs. Native text editing preserves its own undo.
-- **Background preparation.** EGP inspection, program extraction and inline analysis leave other tasks editable. Results stay with their task when selection changes and cannot recreate a deleted task. Normal polling preserves the editor cursor.
-- **Earlier data remains available.** Legacy graph files open as new task-plan drafts, preserving the originals; unavailable source paths prompt for browsing. Full/config-only backups understand the new definitions and remap colliding saved sources safely.
+- **Immediate Overview.** Run, schedule, Continue and Run stream show a Preparing run entry before preprocessing. Preparation and execution share the same run ID. Cancellation works before submission and during the handoff; preparation failures finish visibly instead of counting indefinitely. The inspector no longer opens automatically.
+- **Separate Pack and Unpack.** Projects has explicit buttons, retaining unpack confirmation and normal source backups.
+- **Project folders and versions.** Each folder has a short/default or custom name, last update and three actions: Copy latest file, Update bundle and Inspect. Update reuses its pack options. Inspect lists every saved pack/unpack version, with immutable original bundles available for Download/actual-file Copy. Parallel bundle operations in one folder are prevented.
+- **Fresh Run stream inputs.** Linked SAS/EGP paths are checked in the background, with Last update and Refresh sources beside Ready. Run rereads those paths and the current shared WORK location before freezing the submission. Uploaded files remain private copies; use Link local file to follow a known working path inside the workspace/configured input folders. Changed sections/ranges are revalidated; failed refreshes explain the problem locally. Unchanged refreshes keep existing source/JSON links.
+- **Run again or Continue.** Finished-run inspectors can launch a fresh run from saved choices. Interrupted schedules can continue in the same folder, retaining successful tasks, consolidated logs and active elapsed time. Older runs without sufficient input metadata prompt for inputs in Run.
+- **Grouped history.** Exact same visible names share one Overview Tasks row. Inspect has a dated version selector that stays on your chosen version while the app polls. Every active file remains individually visible and stoppable. Grouping does not merge or delete run folders.
+- **Keyboard and portability.** Folder/version lists use Up/Down and Left/Right. Inspector hints include V Versions, R Run again and C Continue. Folder labels and saved launch choices travel with saved-data backups; restore remaps installation paths. Portable stream templates retain embedded files when original links are unavailable.
 
-This is intentionally an **editor preview**. There is no Run graph action and these operations do not start SAS. Tasks use the Run stream source schema in preparation for connecting the new engine later. Existing Run stream, Run, watcher, Excel scheduler and terminal graph execution paths remain available.
+## Testing and upgrade
 
-## Try it
+Automated checks cover delayed preparation/HTTP acknowledgement, cancellation, real bundle workers and immutable versions, fresh source composition, external input folders, replay, backup path remapping, portable templates, keyboard navigation and actual interface DOM events. Windows/macOS/Linux release checks gate publication. Real SAS execution and desktop visual acceptance remain for testing on the target Windows computer; the development Mac was locked during review.
 
-Create two tasks, add inline or file sources, close the drawer and drag the first task's right port onto the second. Add a shared setup card, review its source order, then use File → Export JSON. Restore the JSON and verify the nodes, definitions, arrows and view. Output/connection/parallel choices are saved for later execution.
+Extract into a fresh folder. Close the prior app before pointing Settings → Storage and cleanup at your existing Tasks and Settings folders, then restart. Keep the prior installation and a saved-data backup while testing.
 
-Extract into a fresh folder. Close the prior app before pointing Settings → Storage and cleanup to your existing Tasks and Settings folders, then restart. Keep the previous installation and saved data.
+The Graph tab remains the task editor introduced in preview.37; connecting its tasks to `engine.py` remains a later step. Existing Run, watcher, Excel scheduler and terminal workflows remain available.
 
-Automated checks cover real editor DOM events, pointer/keyboard links, camera transforms, undo/redo, asynchronous source isolation, source composition/encoding, portable/legacy restoration, revision checks, HTTP routes, backups and the existing execution workflows. The Windows/macOS/Linux release checks gate publication. Desktop visual acceptance of the redesigned canvas remains pending in the target environment; the development Mac was locked.
-
-Read the [task graph guide](https://github.com/daniel-vital-de-alcantara/pysas-toolkit/blob/v0.4.0-preview.37/docs/graph-runner.md) and [Run stream guide](https://github.com/daniel-vital-de-alcantara/pysas-toolkit/blob/v0.4.0-preview.37/docs/run-stream.md), both included in the ZIP.
+Read the [workbench guide](https://github.com/daniel-vital-de-alcantara/pysas-toolkit/blob/v0.4.0-preview.38/docs/ui-workbench.md) and [Run stream guide](https://github.com/daniel-vital-de-alcantara/pysas-toolkit/blob/v0.4.0-preview.38/docs/run-stream.md), both included in the ZIP.

@@ -31,6 +31,8 @@ import ui_explore
 from ui_logs import LogIndex
 import ui_graph
 import ui_task_graph
+import ui_launch
+import ui_projects
 import ui_stream
 import ui_stream_jobs
 import ui_paths
@@ -38,7 +40,7 @@ import ui_storage
 import windows_clipboard
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.37"
+VERSION = "0.4.0-preview.38"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 TEXT_SUFFIXES = {".sas", ".log", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".xml"}
@@ -121,6 +123,7 @@ class Workbench:
         self.uploading = False
         self.storage_busy = False
         self.exports = ui_storage.Exports(self)
+        self.launches = ui_launch.Launches(self)
         self.cleanup_plans = {}
         for path in sorted(self.storage.glob("*.json")):
             item = read_json(path)
@@ -180,7 +183,7 @@ class Workbench:
 
     def update_data_locations(self, data):
         with self.lock:
-            if self.processes or self.uploading or self.storage_busy or self.metadata_jobs.working() or self.stream_jobs.working():
+            if self.processes or self.uploading or self.storage_busy or self.metadata_jobs.working() or self.stream_jobs.working() or self.launches.working():
                 raise ValueError("Finish commands and stop the watcher before changing data folders.")
             paths = ui_paths.locations(self.root, data)
             for path in paths.values():
@@ -504,7 +507,7 @@ class Workbench:
             args.append("--recursive")
         return action, args
 
-    def launch(self, data, *, stream_prepared=None):
+    def launch(self, data, *, stream_prepared=None, reserved_id=None):
         data = dict(data)
         if data.get("action") == "stream" and stream_prepared is None:
             if os.name != "nt": raise ValueError("SAS execution requires Windows with Enterprise Guide.")
@@ -513,12 +516,12 @@ class Workbench:
             with self.upload_lock:
                 with self.lock:
                     if self.storage_busy: raise ValueError("Wait for the saved-data operation to finish.")
-                    if getattr(self, "closing", False): raise ValueError("PySAS is closing and finishing its active jobs.")
+                    if getattr(self, "closing", False) and not reserved_id: raise ValueError("PySAS is closing and finishing its active jobs.")
                     self.uploading = True
                 prepared = None
                 try:
                     prepared = ui_stream.prepare(self, data.get("stream"))
-                    return self.launch(data, stream_prepared=prepared)
+                    return self.launch(data, stream_prepared=prepared, reserved_id=reserved_id)
                 except BaseException:
                     if prepared and not any(c.get("path") == self.relative(prepared[0]) for c in self.commands.values()):
                         shutil.rmtree(prepared[0])
@@ -556,23 +559,31 @@ class Workbench:
                 raise ValueError("The execution plan changed. Review the updated file list and run again; no code was submitted.")
             if self.storage_busy and not self.exports.working():
                 raise ValueError("Wait for the saved-data operation to finish before starting another command.")
-            if getattr(self, "closing", False):
+            if getattr(self, "closing", False) and not reserved_id:
                 raise ValueError("PySAS is closing and finishing its active jobs.")
-            if action == "watch" and any(c["action"] == "watch" and c["status"] in ACTIVE for c in self.commands.values()):
+            if action == "watch" and any(c["id"] != reserved_id and c["action"] == "watch" and c["status"] in ACTIVE for c in self.commands.values()):
                 raise ValueError("The watcher is already running in this workbench.")
-            if data.get("graph_id") and any(c.get("graph_id") == data["graph_id"] and c["status"] in ACTIVE for c in self.commands.values()):
+            if data.get("graph_id") and any(c["id"] != reserved_id and c.get("graph_id") == data["graph_id"] and c["status"] in ACTIVE for c in self.commands.values()):
                 raise ValueError("This graph is already running. Stop it or wait for it to finish.")
+            if action.startswith('bundle-'):
+                bundle_root = str(self.code_root(data.get('code_root')))
+                if any(c['id'] != reserved_id and c.get('action','').startswith('bundle-') and c.get('status') in ACTIVE and os.path.normcase(c.get('code_root') or str(self.root)) == os.path.normcase(bundle_root) for c in self.commands.values()):
+                    raise ValueError('This project folder already has an active bundle operation. Wait for it to finish.')
             display_name = self.display_name(data.get("display_name", ""))
             if stream:
                 stream_folder, stream_document, stream_estimate = stream_prepared
                 display_name = stream_document["name"]
                 args = [str(stream_folder)]
-            identifier = uuid.uuid4().hex
+            if reserved_id and self.launches.cancelled(reserved_id): raise InterruptedError('Cancelled before submission.')
+            identifier = reserved_id or uuid.uuid4().hex
+            reserved = self.commands.get(identifier, {})
             item = {"id": identifier, "action": action, "args": list(args),
                     "name": data.get("program") or data.get("workbook") or data.get("run_dir") or action.replace("-", " "),
                     "code_root": str(self.code_root(data.get("code_root"))) if action.startswith("bundle-") else None,
                     "started": time.time(), "finished": None, "status": "RUNNING", "tasks": {}, "message": "",
                     "can_cancel_file": True}
+            if reserved:
+                item.update(started=reserved['started'], launch_request=reserved.get('launch_request'), preparing=False)
             item["graph_id"] = data.get("graph_id")
             item["default_name"] = item["name"]
             item["display_name"] = display_name
@@ -589,11 +600,11 @@ class Workbench:
                     associated = sorted((c for c in self.commands.values() if c.get("graph_id") and c.get("path") == item["resume_path"]),
                                         key=lambda c: c["started"], reverse=True)
                     item["graph_id"] = associated[0]["graph_id"] if associated else read_json(previous / "graph.json", {}).get("id")
-                display_name = read_json(previous / "run-display.json", {}).get("name", "")
+                display_name = read_json(previous / "run-display.json", {}).get("name", "") or self.display_name(data.get("display_name", ""))
                 item["display_name"] = display_name
                 if display_name: item["name"] = display_name
                 item["elapsed_base"] = schedule_state(previous).get("elapsed", 0)
-                if previous in ui_storage.protected_runs(self) or self.exports.protects(previous): raise ValueError("This schedule is running or its ZIP is being prepared.")
+                if previous in ui_storage.protected_runs(self, exclude=reserved_id) or self.exports.protects(previous): raise ValueError("This schedule is running or its ZIP is being prepared.")
                 if not (previous / "schedule_state.json").is_file():
                     saved = sorted((c for c in self.commands.values() if c.get("path") == item["resume_path"] and c.get("elapsed") is not None), key=lambda c:c["started"], reverse=True)
                     if saved:
@@ -651,6 +662,7 @@ class Workbench:
             if action.startswith("bundle-"):
                 root = self.code_root(data.get("code_root"))
                 item["artifact"] = str(within(root, str(data.get("output" if action == "bundle-pack" else "bundle") or "codebase.sasbundle.txt")))
+                item['project_id'] = ui_projects.record(self, str(root), **({"output": data.get('output') or 'codebase.sasbundle.txt', "recursive": bool(data.get('recursive'))} if action=='bundle-pack' else {}))
             env = os.environ.copy()
             env.update(PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
             env.pop("PYSAS_LIVE_LOG", None)
@@ -683,7 +695,7 @@ class Workbench:
             env["PYSAS_RUNS_DIR"] = str(self.tasks)
             env.pop("PYSAS_UI_LEGACY_ROOT", None)
             # Neither normal output nor events depend on the HTTP/history reader.
-            with (self.storage / (identifier + ".txt")).open("wb", buffering=0) as output:
+            with (self.storage / (identifier + ".txt")).open("ab", buffering=0) as output:
                 command = [python, "-u", str(APP_DIR / "stream_worker.py"), *args] if stream else [python, "-u", str(APP_DIR / "ui_worker.py"), str(script), *args]
                 try:
                     process = subprocess.Popen(command,
@@ -758,8 +770,8 @@ class Workbench:
                     run_log = Path(event["path"]) / "run.log"
                     if run_log.is_file(): item["run_log"] = self.relative(run_log)
             if kind == "start":
-                task.update(status="CANCELLING" if item.get("status") == "STOPPING" and item.get("action") in {"schedule", "continue"} else "RUNNING", started=event["time"])
-                task["message"] = "Stopping schedule…" if task["status"] == "CANCELLING" else ""
+                task.update(status="CANCELLING" if item.get("status") == "STOPPING" and item.get("action") != "watch" else "RUNNING", started=event["time"])
+                task["message"] = "Stopping…" if task["status"] == "CANCELLING" else ""
             else:
                 task["finished"] = event["time"]
                 if task.get("path"):
@@ -909,25 +921,30 @@ class Workbench:
             process.stdin.close()
 
     def stop(self, identifier):
+        if self.launches.cancel(identifier): return {'ok': True}
         with self.lock:
             item = self.commands.get(identifier)
             process = self.processes.get(identifier)
-            if not item or not process or item["action"] not in {"watch", "schedule", "continue"} or item["status"] not in ACTIVE:
-                raise ValueError("Only an active watcher or schedule can be stopped here.")
+            if not item or not process or item["action"] not in {"watch", "schedule", "continue", "run", "stream"} or item["status"] not in ACTIVE:
+                raise ValueError("Choose an active run, watcher or schedule to stop.")
             if item["status"] == "STOPPING":
                 return {"ok": True}
             Path(item["control_file"]).write_text("stop", encoding="utf-8")
             item["status"] = "STOPPING"
             if item["action"] in {"schedule", "continue"}:
                 item["message"] = "Stopping this schedule: no new tasks; cancelling its active files…"
+            elif item["action"] in {"run", "stream"}:
+                item["message"] = "Stopping this run…"
+            if item["action"] != "watch":
                 for task in item["tasks"].values():
                     if task.get("status") == "RUNNING":
                         task["status"] = "CANCELLING"
-                        task["message"] = "Stopping schedule…"
+                        task["message"] = "Stopping…"
             self.save(item)
             return {"ok": True}
 
     def cancel_file(self, identifier, key):
+        if key == '_preparing' and self.launches.cancel(identifier): return {'ok': True}
         with self.lock:
             item = self.commands.get(identifier)
             task = item.get("tasks", {}).get(key) if item else None
@@ -1104,7 +1121,7 @@ class Workbench:
         if refresh:
             self.invalidate_lists()
         with self.lock:
-            commands = json.loads(json.dumps(sorted(self.commands.values(), key=lambda x: x["started"], reverse=True)[:200]))
+            commands = json.loads(json.dumps(sorted(self.commands.values(), key=lambda x: (x.get("status") in ACTIVE,x["started"]), reverse=True)[:200]))
         for command in commands:
             if command.get("server"): command["server"].pop("query", None)
         history = [dict(row) for row in self.cached_listing("history", self.history, 15)]
@@ -1145,7 +1162,7 @@ class Workbench:
                 "server_snapshots": self.server_snapshots(),
                 "server_previews": [{"id": c["id"], "status": c["status"], "name": c["name"], "started": c["started"], "library": (c["server"].get("libraries") or [""])[0], **{k:v for k,v in c["server"].items() if k in {"sample", "sample_csv", "connection", "table"}}} for c in commands if c.get("server", {}).get("level") == "preview"],
                 "parameters_settings": self.parameter_settings(),
-                "queued": queued, "bundle_settings": self.bundle_settings(), "now": time.time()}
+                "projects": self.cached_listing("projects", lambda: ui_projects.listing(self), 3), "queued": queued, "bundle_settings": self.bundle_settings(), "now": time.time()}
 
     def store_server_catalog(self, item, catalog):
         # Serialize incremental merges so concurrent sibling refreshes cannot overwrite one another.
@@ -1244,7 +1261,7 @@ class Workbench:
             files.append(dict(path=self.relative(file), name=name, size=file.stat().st_size,
                               is_log=is_log, inside_task=bool(task_id), task_id=task_id,
                               log_label=label, severity=self.logs.status(file) if file.suffix.lower()=='.log' else 'unknown',
-                              internal=file.name in {'.schedule.lock','run-display.json','_cancel.request'}))
+                              internal=file.name in {'.schedule.lock','run-display.json','_cancel.request'} or parts==('launch','request.json')))
         return files, len(candidates)>1000
 
     def command_details(self, identifier):
@@ -1265,10 +1282,15 @@ class Workbench:
         if console.is_file() and not any(f['path']==self.relative(console) for f in detail['files']):
             detail['files'].insert(0,dict(path=self.relative(console),name='Command console',is_log=True,log_label='Command console',severity='error' if command['status'] in {'FAILED','SAS_ERROR','CONNECTION_LOST'} else 'unknown'))
         detail['can_rename']=True
+        if command.get('action','').startswith('bundle-'): detail['project_id']=ui_projects.key(command.get('code_root') or str(self.root))
         if not detail.get('folder_path') and (self.storage/'artifacts'/identifier).is_dir():
             detail.update(folder_path=self.relative(self.storage/'artifacts'/identifier), export_scope='command', export_path=self.relative(self.storage/'artifacts'/identifier))
-        detail.update(command_id=command['id'], name=command['name'], status=command['status'], description='py pysas.py '+' '.join(command.get('args',[])))
+        detail.update(command_id=command['id'], command=self.inspector_command(command), name=command['name'], status=command['status'], description='py pysas.py '+' '.join(command.get('args',[])))
         return detail
+
+    @staticmethod
+    def inspector_command(command):
+        return {key: command[key] for key in ('id','action','name','status','started','finished','elapsed','elapsed_base','parts') if key in command} if command else None
 
     def details(self, relative):
         path = self.resolve(relative)
@@ -1316,7 +1338,8 @@ class Workbench:
             if path == self.run_folder(relative):
                 files.append(dict(path=self.relative(self.storage/(owner['id']+'.txt')),name='Command console',is_log=True,log_label='Command console',severity='unknown'))
         run, project = self.run_folder(relative), self.extracted_project(relative)
-        return dict(command_id=owner["id"] if owner else None, self_task=self_task, files=files,tasks=tasks,listing_limited=limited,name=name,status=status,whole_run=run==path,
+        if owner and run == path: name = read_json(path/'run-display.json',{}).get('name') or owner['name']
+        return dict(command_id=owner["id"] if owner else None, command=self.inspector_command(owner), self_task=self_task, files=files,tasks=tasks,listing_limited=limited,name=name,status=status,whole_run=run==path,
                     folder_path=self.relative(path) if run or project else '', can_rename=bool(run),
                     export_scope='project' if project else ('run' if run==path else 'task') if run else None,
                     export_path=self.relative(project or path) if project or run else '')
@@ -1417,6 +1440,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(ui_graph.load(self.server.app, value("id")) if value("id") else {"graphs": ui_graph.listing(self.server.app), "sources": ui_graph.sources(self.server.app)})
             elif url.path == "/api/task-graphs":
                 self.respond(ui_task_graph.load(self.server.app, value('id')) if value('id') else {'graphs': ui_task_graph.listing(self.server.app)})
+            elif url.path == "/api/project-details":
+                self.respond(ui_projects.detail(self.server.app, value("id"), value("version") or None))
             elif url.path == "/api/stream-job":
                 self.respond(self.server.app.stream_jobs.get(value("id")))
             elif url.path == "/api/export-status":
@@ -1549,14 +1574,18 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(self.server.app.upload(parse_qs(url.query), self.rfile, length))
                 return
             limit = 2 * 1024 * 1024 + 4096 if url.path in {"/api/graphs", "/api/graph-validate", "/api/graph-run"} else 1024 * 1024
-            if url.path.startswith('/api/stream-'): limit = 20 * 1024**2
+            if url.path.startswith('/api/stream-') or url.path == '/api/submit': limit = 20 * 1024**2
             if url.path.startswith('/api/task-graph'): limit = ui_task_graph.STORED_LIMIT
             if length < 0 or length > limit:
                 raise ValueError("Request is too large.")
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
                 raise ValueError("Expected an object.")
-            if self.path == "/api/quit":
+            if self.path == '/api/submit':
+                self.respond(self.server.app.launches.start(data))
+            elif self.path == '/api/rerun':
+                self.respond(self.server.app.launches.replay(data))
+            elif self.path == "/api/quit":
                 self.respond({"message": "Closing PySAS after active jobs finish."})
                 threading.Thread(target=self.server.request_close, daemon=True).start()
             elif self.path == "/api/graphs":
@@ -1579,6 +1608,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(ui_graph.launch(self.server.app, data))
             elif self.path == "/api/stream-file":
                 self.respond(ui_stream.describe(self.server.app, data.get("path", "")))
+            elif self.path == '/api/stream-refresh':
+                self.respond({'stream': ui_stream.refresh_document(self.server.app, data.get('stream')), 'checked_at': time.time()})
             elif self.path == "/api/stream-job":
                 self.respond(self.server.app.stream_jobs.start(data))
             elif self.path == "/api/stream-analyze":
@@ -1627,6 +1658,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(self.server.app.update_folders(data))
             elif self.path == "/api/awake":
                 self.respond(self.server.app.awake.set(data.get("enabled")))
+            elif self.path == '/api/project-name':
+                self.respond(ui_projects.rename(self.server.app, data))
+                self.server.app.invalidate_lists()
+            elif self.path == '/api/project-update':
+                self.respond(ui_projects.update(self.server.app, data.get('id')))
+            elif self.path == '/api/project-copy':
+                self.respond(ui_projects.copy_latest(self.server.app, data.get('id')))
             elif self.path == "/api/bundle-paths":
                 self.respond(self.server.app.update_bundle_paths(data))
             elif self.path == "/api/cancel-file":
@@ -1645,13 +1683,13 @@ class LocalServer(ThreadingHTTPServer):
             if getattr(self.app, "closing", False):
                 return
             self.app.closing = True
-            watchers = [key for key in self.app.processes if self.app.commands[key]["action"] == "watch"]
+            watchers = [key for key, item in self.app.commands.items() if item['action']=='watch' and (key in self.app.processes or item.get('preparing'))]
         for key in watchers:
             try:
                 self.app.stop(key)
             except (OSError, ValueError):
                 pass
-        while self.app.processes or getattr(self.app, "storage_busy", False) or self.app.metadata_jobs.working() or self.app.stream_jobs.working():
+        while self.app.processes or getattr(self.app, "storage_busy", False) or self.app.metadata_jobs.working() or self.app.stream_jobs.working() or (getattr(self.app,'launches',None) and self.app.launches.working()):
             time.sleep(.2)
         self.shutdown()
 
@@ -1666,6 +1704,7 @@ class LocalServer(ThreadingHTTPServer):
         if hasattr(self, "app"):
             self.app.awake.close()
             self.app.stream_jobs.close()
+            self.app.launches.close()
         for data_lock in getattr(self, "data_locks", []): data_lock.close()
         self.data_locks = []
         handle = getattr(self, "workspace_lock", None)

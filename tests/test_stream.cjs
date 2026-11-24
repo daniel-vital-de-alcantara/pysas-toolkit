@@ -11,7 +11,7 @@ async function settle(check=()=>true){for(let i=0;i<160;i++){await pause(5);if(c
 
 function harness(t,{automatic=true}={}){
   const dom=new JSDOM(fs.readFileSync(path.join(root,'ui/index.html'),'utf8'),{url:'http://localhost/#stream',runScripts:'outside-only'});
-  t.after(()=>dom.window.close());const w=dom.window,$=id=>w.document.getElementById(id),calls=[],uploads=[],inspected=[],sourceInfo=new Map();
+  t.after(()=>dom.window.close());const w=dom.window,$=id=>w.document.getElementById(id),calls=[],uploads=[],inspected=[],navigated=[],sourceInfo=new Map();
   const ref=(name)=>({path:'tasks/stream-sources/'+name,name,sha256:'a'.repeat(64),lines:50,sections:['Realised','Cases'],...sourceInfo.get(name)});
   const catalog={programs:[{id:'A',name:'Alpha',flow:'Setup',member:'A/code.sas'},{id:'B',name:'Beta',flow:'Extracts',member:'B/code.sas'},{id:'External',name:'External source',flow:'Extracts',member:null}],flows:[{id:'f1',name:'Setup'},{id:'f2',name:'Extracts'}],warnings:[]};
   const snapshot={token:'csrf',windows:true,openpyxl:true,files:['connection.egp'],commands:[],shared_work:{enabled:false,path:'/server/shared',libref:'VDI'}};
@@ -32,10 +32,12 @@ function harness(t,{automatic=true}={}){
       return ready({program:catalog.programs.find(p=>p.id===data.program_id),file:ref(data.program_id==='A'?'Alpha.sas':'Beta.sas')});
     }
     if(url==='/api/stream-analyze'){const sections=[...data.code.matchAll(/section_start: (.+?);/g)].map(m=>m[1]);return {lines:data.code.split('\n').length,sections,section_issues:[]};}
+    if(url==='/api/stream-refresh'){const stream=structuredClone(data.stream);stream.shared_work={...snapshot.shared_work,enabled:stream.shared_work.enabled};for(const r of stream.rows){if(r.file)r.file={...r.file,...ref(r.file.name),origin_path:r.file.origin_path};for(const p of r.programs||[])if(p.file)p.file={...p.file,...ref(p.file.name)};}return {stream,checked_at:Date.now()/1000};}
+    if(url==='/api/stream-file')return {...ref(data.path.split('/').at(-1)),origin_path:data.path};
     if(url==='/api/stream-estimate')return {seconds:60,unknown:1,basis:'Partial history'};
-    if(url==='/api/stream-run'){snapshot.commands=[{id:'stream1',action:'stream',name:data.stream.name,status:'RUNNING',tasks:{}}];return {id:'stream1'};}
+    if(url==='/api/submit'){snapshot.commands=[{id:'stream1',action:'stream',name:data.stream.name,status:'RUNNING',tasks:{}}];return {id:'stream1'};}
     return {path:'tasks/.workbench/artifacts/example'+(url.endsWith('source')?'.sas':'.json')};
-  },refresh:async()=>w.PySASStream.update(snapshot,'stream'),inspect:async id=>inspected.push(id),navigate:page=>{w.document.getElementById('page-stream').hidden=page!=='stream';w.document.getElementById('page-files').hidden=page!=='files';},badge:s=>s,timer:()=>'<span class="elapsed">00:00:01</span>',expectedText:e=>e.seconds==null?'Unknown duration':e.seconds+'s'+(e.unknown?'+':''),fileActions:({path},label)=>`<a download href="/api/download?path=${path}">Download ${label}</a><button data-copy-target='{"path":"${path}"}'>Copy file</button>`};
+  },refresh:async()=>w.PySASStream.update(snapshot,'stream'),inspect:async id=>inspected.push(id),startRun:async data=>{navigated.push('overview');return w.PySASGraphHost.request('/api/submit',data);},navigate:page=>{navigated.push(page);w.document.getElementById('page-stream').hidden=page!=='stream';w.document.getElementById('page-files').hidden=page!=='files';},badge:s=>s,timer:()=>'<span class="elapsed">00:00:01</span>',expectedText:e=>e.seconds==null?'Unknown duration':e.seconds+'s'+(e.unknown?'+':''),fileActions:({path},label)=>`<a download href="/api/download?path=${path}">Download ${label}</a><button data-copy-target='{"path":"${path}"}'>Copy file</button>`};
   w.eval(fs.readFileSync(path.join(root,'ui/stream.js'),'utf8'));w.PySASStream.update(snapshot,'stream');
   const change=(element,value)=>{if(typeof element==='string')element=$(element);element.value=value;element.dispatchEvent(new w.Event('change',{bubbles:true}));};
   const input=(element,value)=>{if(typeof element==='string')element=$(element);element.value=value;element.dispatchEvent(new w.Event('input',{bubbles:true}));};
@@ -46,7 +48,7 @@ function harness(t,{automatic=true}={}){
   const addFile=async name=>{const element=add(),id=element.dataset.streamRow;await upload(element.querySelector('[data-stream-upload]'),name);await settle(()=>rows().find(r=>r.dataset.streamRow===id)?.classList.contains('is-ready'));return rows().find(r=>r.dataset.streamRow===id);};
   const current=key=>rows().find(r=>r.dataset.streamRow===key);
   const exportDoc=async()=>{$('stream-export').click();await settle(()=>calls.some(c=>c.url==='/api/stream-export'));return calls.findLast(c=>c.url==='/api/stream-export').data.stream;};
-  return {w,$,calls,uploads,inspected,snapshot,catalog,ready,ref,rows,current,change,input,upload,start,add,addFile,exportDoc,setFailure:value=>failure=value,setRestored:value=>restored=value,setJobs:value=>jobHandler=value,setXHR:value=>xhrHandler=value,setDefer:(url,callback)=>deferred.set(url,callback),sourceInfo};
+  return {w,$,calls,uploads,inspected,navigated,snapshot,catalog,ready,ref,rows,current,change,input,upload,start,add,addFile,exportDoc,setFailure:value=>failure=value,setRestored:value=>restored=value,setJobs:value=>jobHandler=value,setXHR:value=>xhrHandler=value,setDefer:(url,callback)=>deferred.set(url,callback),sourceInfo};
 }
 
 test('pure reorder helpers keep source selections and never mutate the previous draft',()=>{
@@ -153,9 +155,44 @@ test('late background results cannot resurrect a deleted source card',async t=>{
   const checkbox=rows()[0].querySelector('[data-egp-program="A"]');checkbox.checked=true;checkbox.dispatchEvent(new w.Event('change',{bubbles:true}));await settle(()=>finish);rows()[0].querySelector('[data-stream-action="delete"]').click();finish();await pause(25);assert.equal(rows().length,0);assert.equal($('stream-ready-controls').hidden,true);
 });
 
-test('Run forwards all output options through the normal engine/inspector boundary',async t=>{
-  const {w,$,start,addFile,calls,inspected}=harness(t);await start();await addFile('extract.sas');for(const [key,checked] of [['stream-html',false],['stream-tables',true],['stream-consolidate',true]]){$(key).checked=checked;$(key).dispatchEvent(new w.Event('change'));}
-  $('stream-run').click();await settle(()=>inspected.length);const doc=calls.find(c=>c.url==='/api/stream-run').data.stream;assert.equal(doc.export_html,false);assert.equal(doc.export_tables,true);assert.equal(doc.consolidate_tables,true);assert.deepEqual(inspected,['stream1']);
+test('Run forwards output choices and navigates to Overview without opening the inspector',async t=>{
+  const {w,$,start,addFile,calls,inspected,navigated}=harness(t);await start();await addFile('extract.sas');for(const [key,checked] of [['stream-html',false],['stream-tables',true],['stream-consolidate',true]]){$(key).checked=checked;$(key).dispatchEvent(new w.Event('change'));}
+  $('stream-run').click();await settle(()=>calls.some(c=>c.url==='/api/submit'));const doc=calls.find(c=>c.url==='/api/submit').data.stream;assert.equal(doc.export_html,false);assert.equal(doc.export_tables,true);assert.equal(doc.consolidate_tables,true);assert.deepEqual(inspected,[]);assert.ok(navigated.includes('overview'));
+});
+
+test('linked SAS files refresh automatically, show last update and revalidate changed sections',async t=>{
+  const {w,$,start,addFile,rows,change,sourceInfo,snapshot,calls,exportDoc}=harness(t);await start();await addFile('extract.sas');
+  change(rows()[0].querySelector('[data-stream-field="local_path"]'),'C:/code/extract.sas');rows()[0].querySelector('[data-stream-action="link-path"]').click();
+  await settle(()=>rows()[0].textContent.includes('Linked file'));assert.match($('stream-last-update').textContent,/Last update/);
+  change(rows()[0].querySelector('[data-unit-field="mode"]'),'section');const checkbox=rows()[0].querySelector('[data-unit-section="Realised"]');checkbox.checked=true;checkbox.dispatchEvent(new w.Event('change',{bubbles:true}));
+  sourceInfo.set('extract.sas',{lines:20,sections:['Changed'],sha256:'b'.repeat(64)});w.PySASStream.update(snapshot,'stream');
+  await settle(()=>calls.some(c=>c.url==='/api/stream-refresh')&&!$('stream-last-update').textContent.includes('Checking'));
+  assert.match(rows()[0].textContent,/selected section is not available/i);assert.equal($('stream-ready-controls').hidden,true);
+  rows()[0].querySelector('[data-clear-sections]').click();const changed=rows()[0].querySelector('[data-unit-section="Changed"]');changed.checked=true;changed.dispatchEvent(new w.Event('change',{bubbles:true}));
+  const doc=await exportDoc();assert.equal(doc.rows[0].file.origin_path,'C:/code/extract.sas');assert.equal(doc.rows[0].file.sha256,'b'.repeat(64));assert.deepEqual(doc.rows[0].sections,['Changed']);
+});
+
+test('source refresh is asynchronous and cannot overwrite edits made while it is pending',async t=>{
+  const {$,start,addFile,rows,input,setDefer,exportDoc}=harness(t);await start();await addFile('extract.sas');let finish;
+  setDefer('/api/stream-refresh',data=>new Promise(resolve=>{finish=()=>{data.stream.name='Old name';resolve({stream:data.stream,checked_at:1});};}));
+  $('stream-refresh-now').click();await settle(()=>finish);assert.match($('stream-last-update').textContent,/Checking source files/);assert.equal($('stream-add').disabled,false);
+  input('stream-name','My new stream');finish();await settle(()=>!$('stream-last-update').textContent.includes('Checking'));
+  assert.equal($('stream-name').value,'My new stream');assert.equal(rows().length,1);const doc=await exportDoc();assert.equal(doc.name,'My new stream');
+});
+
+test('refresh failures stay beside Ready and retry restores controls without losing choices',async t=>{
+  const {$,start,addFile,setDefer,rows,exportDoc}=harness(t);await start();await addFile('extract.sas');
+  setDefer('/api/stream-refresh',()=>Promise.reject(Error('The linked file is unavailable.')));$('stream-refresh-now').click();
+  await settle(()=>$('stream-readiness').textContent.includes('Could not refresh sources'));assert.equal($('stream-ready-controls').hidden,true);assert.equal($('error').textContent,'');
+  $('stream-refresh-now').click();await settle(()=>$('stream-ready-controls').hidden===false);assert.equal(rows().length,1);assert.equal((await exportDoc()).rows[0].file.name,'extract.sas');
+});
+
+test('unchanged background refresh keeps generated artifacts despite server property order',async t=>{
+  const {$,start,addFile,calls,setDefer,ref}=harness(t);await start();await addFile('extract.sas');$('stream-source').click();await settle(()=>$('stream-artifacts').querySelector('a'));
+  const markup=$('stream-artifacts').innerHTML;
+  setDefer('/api/stream-refresh',data=>{const stream=Object.fromEntries(Object.entries(data.stream).reverse());stream.rows=stream.rows.map(r=>Object.fromEntries(Object.entries({...r,file:{...ref(r.file.name),...r.file}}).reverse()));return {stream,checked_at:Date.now()/1000};});
+  $('stream-refresh-now').click();await settle(()=>calls.some(c=>c.url==='/api/stream-refresh')&&!$('stream-last-update').textContent.includes('Checking'));
+  assert.equal($('stream-artifacts').innerHTML,markup);assert.equal($('stream-ready-controls').hidden,false);
 });
 
 test('template restoration preserves inline, section choices, nested programs and blank range bound',async t=>{

@@ -66,6 +66,19 @@ class StreamPolishTests(unittest.TestCase):
             programs.append(dict(id='program_'+identifier,program_id=identifier,name=source['program']['name'],flow=source['program']['flow'],file=source['file'],mode='whole'))
         return dict(id='project',source_kind='egp',project=project,programs=programs)
 
+    def test_refresh_reads_repeated_paths_once_and_extracts_egp_programs_only_after_project_changes(self):
+        document={**self.document,'rows':[self.file_card('first'),self.file_card('second'),self.egp_card()]}
+        with patch.object(stream,'describe',wraps=stream.describe) as describe,patch.object(egp_extract,'read_program',wraps=egp_extract.read_program) as extract:
+            refreshed=stream.refresh_document(self.app,document)
+            self.assertEqual(sum(Path(c.args[1])==self.source for c in describe.call_args_list),1);extract.assert_not_called()
+        with zipfile.ZipFile(self.project) as archive:members={name:archive.read(name) for name in archive.namelist()}
+        members['A/code.sas']=b'%let prefix=2;'
+        with zipfile.ZipFile(self.project,'w') as archive:
+            for name,raw in members.items():archive.writestr(name,raw)
+        with patch.object(egp_extract,'read_program',wraps=egp_extract.read_program) as extract:changed=stream.refresh_document(self.app,refreshed);self.assertEqual(extract.call_count,2)
+        program=changed['rows'][2]['programs'][0];self.assertEqual(stream.read_asset(self.app,program['file'],'.sas'),b'%let prefix=2;')
+        self.assertEqual([p['program_id'] for p in changed['rows'][2]['programs']],['A','B'])
+
     def test_multi_section_selection_only_includes_chosen_parts_in_order(self):
         doc={**self.document,'rows':[self.file_card(mode='section',sections=['Two','One'])]}
         result=stream.compose(self.app,doc)
