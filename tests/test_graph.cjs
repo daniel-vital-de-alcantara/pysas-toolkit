@@ -38,14 +38,18 @@ function harness(t,{automatic=true}={}){
   const host={request:async(url,data)=>{requests.push({url,data:data?clone(data):null});if(deferred.has(url)){const fn=deferred.get(url);deferred.delete(url);return fn(data);}if(failure)throw Error(failure);
       if(url==='/api/task-graphs')return data?{graph:data.graph,revision:'rev'+requests.length,path:'settings/graphs/'+data.graph.id+'.json'}:{graphs:[]};
       if(url.startsWith('/api/task-graphs?id='))return {graph:clone(imported),revision:'saved-rev'};
+      if(url==='/api/stream-file')return {...ref(data.path.split('/').at(-1)),...(data.name?{name:data.name}:{}),origin_path:data.path};
+      if(url==='/api/task-graph-refresh')return {graph:data.graph};
+      if(url==='/api/submit')return {id:'graph-run-1'};
+      if(url==='/api/stop')return {ok:true};
       if(url==='/api/task-graph-export')return {path:'tasks/.workbench/artifacts/plan.graph.json'};
       if(url==='/api/task-graph-check')return {nodes:data.graph.nodes.length,setup:data.graph.setup.length,edges:data.graph.edges.length};
       if(url==='/api/stream-job'){const custom=jobs?.(data);if(custom)return custom;if(data.kind==='connection')return ready({egp:automatic||data.path?ref(data.path?.split('/').at(-1)||'connection.egp'):null,catalog});if(data.kind==='project')return ready({project:data.project,catalog});return ready({file:ref(data.program_id+'.sas'),program:catalog.programs.find(p=>p.id===data.program_id)});}
       if(url==='/api/stream-analyze')return {lines:data.code.split('\n').length,has_code:!!data.code.trim(),sections:[...data.code.matchAll(/section_start: (.+?);/g)].map(match=>match[1]),section_issues:[]};
       throw Error('Unexpected endpoint: '+url);
-    },fileActions:({path},label)=>`<a download href="/api/download?path=${path}">Download ${label}</a><button data-copy-target='{"path":"${path}"}'>Copy file</button>`,navigate:page=>{w.document.body.classList.toggle('graph-page',page==='graph');},badge:()=>'',timer:()=>'',refresh:async()=>{},expectedText:()=>''};
+    },startRun:async(data,options)=>{requests.push({url:'/api/submit',data:clone(data),options});host.navigate('overview');return {id:'graph-run-1'};},inspect:async id=>requests.push({url:'/inspect',id}),fileActions:({path},label)=>`<a download href="/api/download?path=${path}">Download ${label}</a><button data-copy-target='{"path":"${path}"}'>Copy file</button>`,navigate:page=>{w.document.body.classList.toggle('graph-page',page==='graph');$('page-overview').hidden=page!=='overview';$('page-graph').hidden=page!=='graph';},badge:()=>'',timer:()=>'',refresh:async()=>{},expectedText:()=>''};
   w.PySASGraphHost=host;
-  for(const filename of ['stream.js','source-cards.js','graph.js'])w.eval(fs.readFileSync(path.join(root,'ui',filename),'utf8'));
+  for(const filename of ['stream.js','source-cards.js','graph-layout.js','graph.js'])w.eval(fs.readFileSync(path.join(root,'ui',filename),'utf8'));
   $('page-overview').hidden=true;$('page-graph').hidden=false;w.document.body.classList.add('graph-page');w.PySASGraph.update(snapshot,'graph');
   $('graph-canvas').getBoundingClientRect=()=>({left:0,top:0,width:1100,height:800});$('graph-canvas').setPointerCapture=()=>{};$('graph-canvas').releasePointerCapture=()=>{};
   const input=(element,value)=>{if(typeof element==='string')element=$(element);element.value=value;element.dispatchEvent(new w.Event('input',{bubbles:true}));};
@@ -61,8 +65,8 @@ function harness(t,{automatic=true}={}){
   return {w,$,snapshot,ref,catalog,ready,requests,uploads,start,add,inline,save,rows,nodes,input,change,upload,key,pointer,sourceInfo,setImported:value=>imported=value,setJobs:value=>jobs=value,setXHR:value=>xhrHandler=value,setFailure:value=>failure=value,setDefer:(url,fn)=>deferred.set(url,fn)};
 }
 
-test('canvas starts as an editor, creates a task and keeps all run actions absent',async t=>{
-  const {$,requests,start,add,rows,nodes}=harness(t);await start();assert.equal($('graph-empty').hidden,false);assert.equal($('graph-run'),null);add('Extract cases');assert.equal(nodes().length,1);assert.equal(rows().length,1);assert.equal($('graph-drawer').hidden,false);assert.equal($('graph-task-context').textContent.includes('one task'),true);assert.equal(requests.some(r=>r.url.includes('-run')),false);assert.ok(nodes()[0].querySelector('[data-port="out"]'));assert.equal($('graph-empty').hidden,true);
+test('canvas preserves editing on non-Windows and never starts a run automatically',async t=>{
+  const {$,requests,start,add,rows,nodes}=harness(t);await start();assert.equal($('graph-empty').hidden,false);assert.equal($('graph-run').disabled,true);add('Extract cases');assert.equal(nodes().length,1);assert.equal(rows().length,1);assert.equal($('graph-drawer').hidden,false);assert.equal($('graph-task-context').textContent.includes('one task'),true);assert.equal(requests.some(r=>r.url.includes('-run')),false);assert.ok(nodes()[0].querySelector('[data-port="out"]'));assert.equal($('graph-empty').hidden,true);
 });
 test('task definitions mix inline code, files and selected sections and survive save',async t=>{
   const {w,$,start,add,inline,rows,upload,change,save}=harness(t);await start();add('Cases');await inline('%let ids=12,24;');$('graph-task-sources').querySelector('.source-add').click();await upload(rows()[1].querySelector('[data-source-file]'),'extract.sas');await settle(()=>!$('graph-save').disabled);change(rows()[1].querySelector('[data-unit-field="mode"]'),'section');
@@ -120,4 +124,73 @@ test('late portable export cannot attach an old plan to a new graph',async t=>{
 });
 test('untrusted names are escaped and polling never takes the inline editor focus',async t=>{
   const {w,$,start,add,inline,nodes,rows,input,snapshot}=harness(t);await start();add('<img src=x onerror=alert(1)>');await inline();assert.equal(nodes()[0].querySelector('img'),null);assert.match(nodes()[0].textContent,/<img/);const editor=rows()[0].querySelector('textarea');editor.focus();editor.setSelectionRange(3,5);w.PySASGraph.update(snapshot,'graph');assert.equal(w.document.activeElement,editor);assert.equal(editor.selectionStart,3);input(editor,'%let ids=13;');await settle(()=>!$('graph-save').disabled);assert.equal(w.document.activeElement.tagName,'TEXTAREA');assert.equal(w.document.activeElement.value,'%let ids=13;');
+});
+
+test('Arrange reserves a lane for A→C around B, and routing avoids manually aligned cards',()=>{
+  const triangle=graph(['A','B','C'].map(key=>node(key)),[{from:'A',to:'C'},{from:'A',to:'B'},{from:'B',to:'C'}]);
+  const arranged=h.arrange(triangle),byId=Object.fromEntries(arranged.nodes.map(n=>[n.id,n])),geometry=require('../ui/graph-layout.js');
+  assert.ok(byId.A.x<byId.B.x&&byId.B.x<byId.C.x);const link=geometry.route(byId.A,byId.C,arranged.nodes);
+  const b={left:byId.B.x-12,right:byId.B.x+h.WIDTH+12,top:byId.B.y-12,bottom:byId.B.y+h.HEIGHT+12};
+  assert.ok(link.points.slice(1).every((p,i)=>!geometry.intersects(link.points[i],p,b)));
+  const straight=[node('A',0,0),node('B',374,0),node('C',748,0)],routed=geometry.route(straight[0],straight[2],straight);
+  assert.equal(routed.routed,true);assert.match(routed.path,/Q/);const obstacle={left:362,right:650,top:-12,bottom:170};assert.ok(routed.points.slice(1).every((p,i)=>!geometry.intersects(routed.points[i],p,obstacle)));
+  const large=h.arrange(graph(Array.from({length:200},(_,i)=>node('N'+i)),Array.from({length:199},(_,i)=>({from:'N'+i,to:'N'+(i+1)}))));assert.equal(h.validate(large).nodes.length,200);
+});
+
+test('alignment and distribution change selected positions without touching sources or edges',()=>{
+  const g=graph([node('A',20,90),node('B',170,30),node('C',500,200),node('D',900,500)],[{from:'A',to:'C'}]);
+  const left=h.align(g,['A','B','C'],'left');assert.deepEqual(left.nodes.slice(0,3).map(n=>n.x),[20,20,20]);assert.equal(left.nodes[3].x,900);assert.deepEqual(left.edges,g.edges);
+  assert.equal(h.align(g,['A','B'],'right').nodes[0].x,170);assert.equal(h.align(g,['A','B'],'center').nodes[0].x,95);assert.equal(h.align(g,['A','B'],'top').nodes[0].y,30);assert.equal(h.align(g,['A','B'],'bottom').nodes[1].y,90);assert.equal(h.align(g,['A','B'],'middle').nodes[0].y,60);
+  assert.deepEqual(h.align(g,['A','B','C'],'horizontal').nodes.slice(0,3).map(n=>n.x),[20,260,500]);assert.deepEqual(h.align(g,['A','B','C'],'vertical').nodes.slice(0,3).map(n=>n.y),[115,30,200]);assert.equal(g.nodes[1].x,170);
+});
+
+test('Shift selection supports repeated alignment, group dragging and one-step undo',async t=>{
+  const {w,$,start,add,nodes,save,pointer}=harness(t);await start();add('A');add('B');add('C');$('graph-close-drawer').click();$('graph-arrange').click();
+  nodes()[0].querySelector('[data-graph-focus]').click();nodes()[1].querySelector('[data-graph-focus]').dispatchEvent(new w.MouseEvent('click',{bubbles:true,shiftKey:true}));
+  assert.equal($('graph-nodes').querySelectorAll('.selected').length,2);assert.match($('graph-selection-count').textContent,/2 selected/);
+  $('graph-align-menu').querySelector('[data-graph-align="left"]').click();assert.equal($('graph-nodes').querySelectorAll('.selected').length,2);
+  let before=await save();assert.equal(before.nodes[0].x,before.nodes[1].x);assert.equal($('graph-align-menu').querySelector('[data-graph-align="horizontal"]').disabled,true);
+  pointer('pointerdown',nodes()[0].querySelector('[data-graph-focus]'),100,100);pointer('pointermove',$('graph-canvas'),150,130);pointer('pointerup',$('graph-canvas'),150,130);$('graph-canvas').dispatchEvent(new w.MouseEvent('click',{bubbles:true}));
+  let moved=await save();for(let i=0;i<2;i++){assert.equal(moved.nodes[i].x,Math.round(before.nodes[i].x+50/before.viewport.zoom));assert.equal(moved.nodes[i].y,Math.round(before.nodes[i].y+30/before.viewport.zoom));}assert.equal(moved.nodes[2].y,before.nodes[2].y);
+  $('graph-undo').click();assert.deepEqual((await save()).nodes.map(n=>[n.x,n.y]),before.nodes.map(n=>[n.x,n.y]));
+});
+
+test('full graph run opens Overview with the graph definition and no inspector',async t=>{
+  const {w,$,snapshot,start,add,inline,requests}=harness(t);await start();add('A');await inline();$('graph-close-drawer').click();snapshot.windows=true;w.PySASGraph.update(snapshot,'graph');assert.equal($('graph-run').disabled,false);assert.equal($('graph-run').hidden,false);
+  $('graph-run').click();await settle(()=>requests.some(r=>r.url==='/api/submit'));const submitted=requests.find(r=>r.url==='/api/submit').data;assert.equal(submitted.action,'task-graph');assert.equal(submitted.graph.nodes.length,1);assert.equal(submitted.task_id,undefined);assert.equal($('page-overview').hidden,false);assert.equal(requests.some(r=>r.url==='/inspect'),false);
+});
+
+test('manual task can run while another card is incomplete, but full graph remains blocked',async t=>{
+  const {w,$,snapshot,start,add,inline,nodes,requests}=harness(t);await start();const a=add('A');await inline();add('Incomplete B');nodes()[0].querySelector('[data-edit-task]').click();snapshot.windows=true;w.PySASGraph.update(snapshot,'graph');
+  assert.equal($('graph-run').disabled,true);assert.equal($('graph-run-task').disabled,false);assert.match($('graph-run-task').parentElement.textContent,/Prerequisites are not submitted/);
+  $('graph-run-task').click();await settle(()=>requests.some(r=>r.url==='/api/submit'));assert.equal(requests.find(r=>r.url==='/api/submit').data.task_id,a);
+});
+
+test('running node badges, global stop and latest inspector use the actual graph command',async t=>{
+  const {w,$,snapshot,start,add,inline,save,nodes,requests}=harness(t);await start();const a=add('A');await inline();const model=await save();snapshot.windows=true;snapshot.commands=[{id:'running',action:'task-graph',graph_id:model.id,name:model.name,status:'RUNNING',started:1,tasks:{[a]:{key:a,name:'A',status:'RUNNING',started:1}}}];w.PySASGraph.update(snapshot,'graph');
+  assert.equal($('graph-run').disabled,true);assert.equal($('graph-stop').hidden,false);assert.equal(nodes()[0].classList.contains('task-running'),true);$('graph-stop').click();await settle(()=>requests.some(r=>r.url==='/api/stop'));assert.equal(requests.find(r=>r.url==='/api/stop').data.id,'running');$('graph-inspect-run').click();assert.equal(requests.find(r=>r.url==='/inspect').id,'running');
+});
+
+test('restored file references without section metadata are scanned before they become ready',async t=>{
+  const {$,start,upload,setImported,ref,rows,change,sourceInfo}=harness(t);await start();const g=graph([node('A')]);g.egp=ref('connection.egp');g.nodes[0].rows[0].file={path:'tasks/stream-sources/restored.sas',name:'restored.sas',sha256:'a'.repeat(64)};sourceInfo.set('restored.sas',{sections:['New section'],lines:4});setImported(g);
+  await upload($('graph-import'),'graph.json');await settle(()=>$('graph-nodes').children.length===1);$('graph-nodes').querySelector('[data-edit-task]').click();await settle(()=>rows()[0].querySelector('.source-status').textContent.includes('Defined'));change(rows()[0].querySelector('[data-unit-field="mode"]'),'section');assert.ok(rows()[0].querySelector('[data-unit-section="New section"]'));assert.match(rows()[0].textContent,/Refresh source/);
+});
+
+test('file refresh revalidates selected sections and a late result cannot replace a newer upload',async t=>{
+  const {$,start,add,upload,rows,change,sourceInfo,setDefer,ref,save}=harness(t);await start();add();await upload(rows()[0].querySelector('[data-source-file]'),'old.sas');await settle(()=>!$('graph-save').disabled);change(rows()[0].querySelector('[data-unit-field="mode"]'),'section');
+  sourceInfo.set('old.sas',{sections:['Latest'],sha256:'b'.repeat(64)});rows()[0].querySelector('[data-source-action="refresh-source"]').click();await settle(()=>rows()[0].querySelector('[data-unit-section="Latest"]'));
+  let finish;setDefer('/api/stream-file',()=>new Promise(resolve=>{finish=()=>resolve(ref('old.sas'));}));rows()[0].querySelector('[data-source-action="refresh-source"]').click();await settle(()=>finish);await upload(rows()[0].querySelector('[data-source-file]'),'new.sas');finish();await settle(()=>!$('graph-save').disabled);
+  assert.equal((await save()).nodes[0].rows[0].file.name,'new.sas');assert.equal(rows()[0].querySelector('[data-unit-section="Latest"]'),null);
+});
+
+test('inline sections are detected after starting with an empty editor and use checked source order',async t=>{
+  const {w,$,start,add,inline,rows,change,save}=harness(t);await start();add();await inline('* (please do not delete) section_start: First;\n%let ids=1;\n* (please do not delete) section_end: First;\n* (please do not delete) section_start: Second;\n%put &ids.;\n* (please do not delete) section_end: Second;');
+  change(rows()[0].querySelector('[data-unit-field="mode"]'),'section');for(const name of ['Second','First']){const box=rows()[0].querySelector(`[data-unit-section="${name}"]`);assert.ok(box);box.checked=true;box.dispatchEvent(new w.Event('change',{bubbles:true}));}
+  assert.deepEqual((await save()).nodes[0].rows[0].sections,['First','Second']);
+});
+
+test('restored EGP program sections are selectable without a source_kind field on the program',async t=>{
+  const {w,$,start,upload,setImported,ref,rows,change,save}=harness(t);await start();const g=graph([node('A')]);g.egp=ref('connection.egp');g.nodes[0].rows=[{...h.source(),id:'project',source_kind:'egp',project:ref('connection.egp'),programs:[{id:'program',program_id:'A',name:'Libraries',flow:'Setup',file:ref('embedded.sas'),mode:'whole',row_start:null,row_end:null,sections:[]}]}];setImported(g);
+  await upload($('graph-import'),'graph.json');await settle(()=>$('graph-nodes').children.length===1);$('graph-nodes').querySelector('[data-edit-task]').click();await settle(()=>!$('graph-save').disabled);
+  const program=rows()[0].querySelector('[data-source-unit="program"]');change(program.querySelector('[data-unit-field="mode"]'),'section');const box=rows()[0].querySelector('[data-source-unit="program"] [data-unit-section="Extract"]');assert.ok(box);box.checked=true;box.dispatchEvent(new w.Event('change',{bubbles:true}));assert.deepEqual((await save()).nodes[0].rows[0].programs[0].sections,['Extract']);
 });

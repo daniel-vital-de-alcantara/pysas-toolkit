@@ -1,6 +1,6 @@
 # Run stream
 
-Run stream combines an ordered list of SAS source selections into **one program**, then submits that program once through the independent `engine.py`. The existing Run, watcher, Excel scheduler and Graph continue using their existing execution path.
+Run stream combines an ordered list of SAS source selections into **one program**, then submits that program once through the independent `engine.py`. Graph tasks use the same preparation and independent engine as Run stream. The existing Run, watcher and Excel scheduler retain their established execution path.
 
 ## Build a stream
 

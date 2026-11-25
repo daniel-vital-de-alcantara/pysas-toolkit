@@ -1,4 +1,4 @@
-"""Editable stream-task graphs. This module never submits or schedules SAS."""
+"""Stream-task graph definitions, portable import and frozen run preparation."""
 from __future__ import annotations
 
 import hashlib
@@ -8,12 +8,16 @@ import math
 from pathlib import Path
 import re
 import uuid
+from datetime import datetime
+import shutil
+import time
 
 import egp_extract
 import ui_graph
 import ui_stream
 
 FORMAT = 'pysas-task-graph-1'
+AUTHORING_FORMAT = 'pysas-task-graph-authoring-1'
 STORED_LIMIT = 20 * 1024**2
 
 
@@ -32,8 +36,7 @@ def number(value, low, high):
 def validate(value):
     if not isinstance(value, dict) or value.get('format') != FORMAT:
         raise ValueError('Choose a PySAS task graph JSON.')
-    # The future execution unit is a Run stream document, rather than a legacy
-    # scheduler row. Use the same source/selection schema without running it.
+    # Each task uses the same source/selection schema as Run stream.
     defaults = ui_stream.validate(dict(value, format=ui_stream.FORMAT, rows=[]))
     workers = value.get('workers', 10)
     if type(workers) is not int or not 1 <= workers <= 32: raise ValueError('Choose 1 to 32 parallel tasks.')
@@ -67,7 +70,7 @@ def validate(value):
                     if unit['id'] in source_ids: raise ValueError('Source card and program IDs must be unique across the graph.')
                     source_ids.add(unit['id'])
             result[key].append(dict(id=key_id, name=stream['name'], rows=stream['rows'],
-                x=number(node.get('x', 0), -20000, 20000), y=number(node.get('y', 0), -20000, 20000),
+                x=number(node.get('x', 0), -100000, 100000), y=number(node.get('y', 0), -100000, 100000),
                 export_html=stream['export_html'], export_tables=stream['export_tables'], consolidate_tables=stream['consolidate_tables']))
     if total_rows > 1000 or total_inline > ui_stream.SOURCE_LIMIT: raise ValueError('A graph supports 1,000 source programs and 16 MB of inline code in total.')
     edges = value.get('edges', [])
@@ -200,6 +203,7 @@ def import_document(app, raw):
     if len(raw) > ui_stream.JSON_LIMIT: raise ValueError('Graph JSON exceeds 128 MB.')
     value = json.loads(raw.decode('utf-8-sig'))
     if not isinstance(value, dict): raise ValueError('Choose a PySAS graph JSON.')
+    if value.get('format') == AUTHORING_FORMAT: return authoring(app, value)
     if value.get('format') == 'pysas-graph-1': return migrate(app, value)
     graph = validate(value); graph['id'] = uuid.uuid4().hex
     if 'assets' in value:
@@ -207,3 +211,97 @@ def import_document(app, raw):
         graph['egp'] = restored['egp']; rows = iter(restored['rows'])
         for node in graph['setup'] + graph['nodes']: node['rows'] = [next(rows) for _ in node['rows']]
     return hydrate(app, graph)
+
+
+def refresh(app, value, *, execution=False):
+    graph = validate(value)
+    document=json.loads(json.dumps(stream_document(graph)))
+    # Inactive card drafts travel in templates, but cannot block or change the
+    # source actually submitted. EGP selections are rebound to the selected project.
+    for row in document['rows']:
+        if row['source_kind']=='file':row.update(code='',project=None,programs=[])
+        elif row['source_kind']=='inline':row.update(file=None,project=None,programs=[])
+        else:
+            row.update(file=None,code='')
+            for program in row['programs']:program['file']=None
+    updated = ui_stream.refresh_document(app, document)
+    graph['egp'], graph['shared_work'] = updated['egp'], updated['shared_work']
+    for original,fresh in zip(all_rows(graph),updated['rows']):
+        if execution:original.update(fresh)
+        elif original['source_kind']=='file':original['file']=fresh['file']
+        elif original['source_kind']=='inline':original['analysis']=fresh['analysis']
+        else:original.update(project=fresh['project'],programs=fresh['programs'])
+    return graph
+
+
+def task_document(graph, node):
+    """Shared setup is source, never a separately scheduled task."""
+    return dict(format=ui_stream.FORMAT, name=node['name'], egp=graph['egp'], connection_mode=graph['connection_mode'],
+                server_program=graph['server_program'], shared_work=graph['shared_work'],
+                rows=[row for setup in graph['setup'] for row in setup['rows']] + node['rows'],
+                **{key: node[key] for key in ('export_html','export_tables','consolidate_tables')})
+
+
+def execution_document(app, value, task_id=None):
+    graph = validate(value)
+    if not graph['nodes']: raise ValueError('Add at least one task to run.')
+    if task_id is not None:
+        node = next((n for n in graph['nodes'] if n['id']==task_id), None)
+        if not node: raise ValueError('Choose a task card to run. Shared setup is prepended to tasks.')
+        graph['nodes'], graph['edges'] = [node], []
+        graph['name'] = (graph['name']+' · '+node['name'])[:120]
+    return refresh(app, graph,execution=True)
+
+
+def prepare(app, value, task_id=None, cancelled=lambda:False, progress=lambda text:None, *, started=None, prepared_graph=None):
+    started=time.time() if started is None else started
+    if cancelled():raise InterruptedError('Cancelled before submission.')
+    graph=validate(prepared_graph) if prepared_graph is not None else execution_document(app,value,task_id)
+    if not graph['egp']: raise ValueError('Choose a connection EGP in Graph settings before running.')
+    raw_assets=ui_stream.assets(app,stream_document(graph))
+    timing_cache=dict(records=ui_stream.stream_history(app),samples=app.timing_samples())
+    folder = app.tasks/'schedules'/(datetime.now().strftime('%Y%m%d_%H%M%S')+'__graph_'+uuid.uuid4().hex[:8])
+    folder.mkdir(parents=True)
+    try:
+        manifest = dict(name=graph['name'], graph_id=graph['id'], started=started, workers=graph['workers'], mode='task' if task_id else 'graph', tasks=[])
+        for index, node in enumerate(graph['nodes'],1):
+            if cancelled(): raise InterruptedError('Cancelled before submission.')
+            if not node['rows']: raise ValueError(node['name']+': add at least one source card.')
+            if any(not setup['rows'] for setup in graph['setup']): raise ValueError('Complete every shared setup card before running.')
+            progress(f'Preparing task {index}/{len(graph["nodes"])} · {node["name"]}')
+            target, _, forecast = ui_stream.prepare(app, task_document(graph,node), destination=folder/'tasks'/('task_'+node['id']),timing_cache=timing_cache,raw_assets=raw_assets)
+            manifest['tasks'].append(dict(task_id=node['id'], program=node['name'], depends_on=[e['from'] for e in graph['edges'] if e['to']==node['id']],
+                path=target.relative_to(folder).as_posix(), estimate=forecast, stream_task=True,
+                setup=[dict(program=n['name']) for n in graph['setup']]))
+        portable=json.dumps(ui_stream.portable(graph,raw_assets),ensure_ascii=False,indent=2)
+        if len(portable.encode('utf-8'))>ui_stream.JSON_LIMIT:raise ValueError('Portable graph JSON exceeds 128 MB.')
+        (folder/'task-graph.json').write_text(portable,encoding='utf-8')
+        (folder/'task-graph-plan.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
+        return folder, graph, manifest
+    except BaseException:
+        shutil.rmtree(folder);raise
+
+
+def authoring(app, value):
+    """Bind AI/human-authored paths without weakening portable checksum validation."""
+    graph = json.loads(json.dumps(value));graph['format']=FORMAT;graph['id']=uuid.uuid4().hex
+    def bind(value,suffix):
+        if not value:return None
+        path=value if isinstance(value,str) else value.get('path') if isinstance(value,dict) else None
+        if not isinstance(path,str):raise ValueError('Use a local '+suffix+' path.')
+        ref=ui_stream.describe(app,path)
+        if not ref['name'].lower().endswith(suffix):raise ValueError('Choose a '+suffix+' file.')
+        return ref
+    graph['egp']=bind(graph.get('egp'),'.egp')
+    for kind in ('setup','nodes'):
+        if not isinstance(graph.get(kind,[]),list):raise ValueError('Use a list of '+kind+' cards.')
+        for index,node in enumerate(graph.get(kind,[])):
+            if not isinstance(node,dict):raise ValueError('Invalid task card.')
+            node.setdefault('x',(index%4)*374);node.setdefault('y',(index//4)*223)
+            for row in node.get('rows',[]):
+                if not isinstance(row,dict):raise ValueError('Invalid source card.')
+                row.setdefault('id','s_'+uuid.uuid4().hex);row.setdefault('source_kind','file');row.setdefault('programs',[])
+                if row.get('file'):row['file']=bind(row['file'],'.sas')
+                if row.get('project'):row['project']=bind(row['project'],'.egp')
+                if row['source_kind']=='egp':raise ValueError('Authoring JSON supports file and inline sources. Select embedded EGP programs in the editor, then export a portable template.')
+    return hydrate(app,validate(graph))

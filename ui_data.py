@@ -275,7 +275,9 @@ def restore_backup(app, stream, length):
                 if relative.startswith(old_root+'/'):relative=relative[len(old_root)+1:]
                 spec=(unpacked/relative).resolve()
                 if not spec.is_relative_to(unpacked.resolve()) or not spec.is_file() or spec.stat().st_size>20*1024**2:raise ValueError('Backup launch configuration is missing or invalid.')
-                spec.write_text(json.dumps(remap(json.loads(spec.read_text(encoding='utf-8'))),ensure_ascii=False),encoding='utf-8')
+                request=remap(json.loads(spec.read_text(encoding='utf-8')))
+                if request.get('action')=='task-graph' and request.get('graph',{}).get('id') in graph_ids:request['graph']['id']=graph_ids[request['graph']['id']]
+                spec.write_text(json.dumps(request,ensure_ascii=False),encoding='utf-8')
             old_id = original['id']
             item['id'] = ids[old_id]
             if item.get('graph_id') in graph_ids:item['graph_id']=graph_ids[item['graph_id']]
@@ -372,7 +374,7 @@ def duration_history(root, commands, bases=None, resolve=None):
             samples[identity] = {'key': key, 'seconds': seconds, 'time': stamp}
         except (ValueError, TypeError): pass
     for command in commands:
-        if command.get('action') == 'stream': continue  # A stream total is not a timing for any one row.
+        if command.get('action') in {'stream','task-graph'}: continue  # Combined submissions are not single-row timings.
         for task in command.get('tasks', {}).values():
             if task.get('path'):
                 add(task, portable(str(resolve(task['path']) if resolve else (root/portable(task['path'])).resolve())), command.get('started', 0))
@@ -380,7 +382,7 @@ def duration_history(root, commands, bases=None, resolve=None):
         if not base.exists(): continue
         for folder in base.iterdir():
             if not folder.is_dir() or folder.is_symlink(): continue
-            if (folder / 'stream-plan.json').is_file(): continue
+            if (folder / 'stream-plan.json').is_file() or (folder/'task-graph-plan.json').is_file(): continue
             if resolve and resolve(str(folder)) != folder.resolve(): continue
             try:
                 stamp = folder.stat().st_mtime
@@ -477,9 +479,9 @@ def remaining_work(commands, queued, samples, now):
     forecasts = []
     for command in commands:
         if command.get('status') not in {'RUNNING', 'STOPPING'}: continue
-        if command.get('action') not in {'run', 'watch', 'schedule', 'continue', 'server-refresh', 'stream'}: continue
+        if command.get('action') not in {'run', 'watch', 'schedule', 'continue', 'server-refresh', 'stream','task-graph'}: continue
         args = command.get('args', [])
-        workers = int(args[args.index('--workers')+1]) if '--workers' in args else 1
+        workers = int(args[args.index('--workers')+1]) if '--workers' in args else command.get('workers',1)
         tasks = [dict(t) for t in command.get('tasks', {}).values()]
         if command.get('action') == 'watch' and command['status'] == 'RUNNING':
             current = {t.get('name') for t in tasks if t.get('status') in {'RUNNING', 'CANCELLING'}}
@@ -494,8 +496,9 @@ def remaining_work(commands, queued, samples, now):
                 ends.add(key); continue
             if status not in {'RUNNING', 'CANCELLING', 'PENDING'}: continue
             if command['status'] == 'STOPPING' and status == 'PENDING': continue
-            stream_estimate = task.get('estimate', {}) if command.get('action') == 'stream' else {}
-            seconds = stream_estimate.get('seconds') if command.get('action') == 'stream' else 0 if task.get('skip') else estimate_task(task, samples)['seconds']
+            combined = command.get('action') == 'stream' or task.get('stream_task')
+            stream_estimate = task.get('estimate', {}) if combined else {}
+            seconds = stream_estimate.get('seconds') if combined else 0 if task.get('skip') else estimate_task(task, samples)['seconds']
             running = status in {'RUNNING', 'CANCELLING'}
             if seconds is not None and running:
                 seconds -= max(0, now - (task.get('started') or now))

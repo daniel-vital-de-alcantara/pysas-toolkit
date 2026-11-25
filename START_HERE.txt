@@ -1,4 +1,4 @@
-PySAS Workbench 0.4.0-preview.38
+PySAS Workbench 0.4.0-preview.39
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
@@ -117,7 +117,8 @@ History lists up to 500 run folders and 200 commands. Run inspectors list up
 to 1,000 files. Very large workspaces may take longer to refresh.
 
 Run executes Excel dependency schedules; legacy graph JSON still runs through
-the CLI. The new Graph canvas designs task plans for later engine integration.
+the CLI. The Graph canvas runs task dependencies through the Run stream engine, or runs
+one selected task manually with shared setup.
 There is no calendar-based scheduler. Stop file ends its
 owned local automation process; Stop schedule/graph prevents further launches
 and stops that schedule's active local automation processes.
@@ -399,3 +400,22 @@ New in preview.38
 - Overview history groups exact same visible names. Select a dated version
   in Inspect; every active file still appears separately in Running now.
 - Folder names and saved launch settings travel with saved-data backups.
+
+New in preview.39
+- Graph keeps its canvas design and now runs full dependencies through engine.py.
+  Each task submits its combined source once, after all prerequisites succeed.
+- Shared setup is prepended to each task; default parallelism is 10. Failed or
+  cancelled prerequisites block descendants; independent branches can finish.
+- Run this task only is also available in the task drawer. It includes shared
+  setup but does not run prerequisites. Close the drawer to use Run graph.
+- Overview shows preparation immediately. Inspect graph/task logs, source,
+  outputs and elapsed time; stop a file or the entire graph. Run again is fresh;
+  graph continuation is not included in this version.
+- Arrange reserves space for spanning dependency links; links avoid task cards.
+- Shift/Ctrl click selects multiple tasks. Align offers left/right/top/bottom,
+  horizontal/vertical centers and even distribution. Ctrl+A selects all tasks.
+- Source cards detect/reload sections using the Run stream parser. Refresh a
+  source or use File > Refresh sources; link local paths to follow file edits.
+- Graph > File or Settings > Defaults downloads the Graph JSON manual for AI.
+  Authoring JSON accepts local paths without hashes; portable JSON still embeds
+  original files. See docs/graph-json-manual.md and docs/graph-runner.md.

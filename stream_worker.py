@@ -13,19 +13,22 @@ from xml.etree import ElementTree as ET
 from engine import run_sas
 from ui_stream import combine_tables
 
+_events_lock = threading.Lock()
 
 def emit(event, **values):
     data = dict(event=event, time=time.time(), **values)
     path = os.environ.get("PYSAS_UI_EVENTS")
     if path:
-        with open(path, "a", encoding="utf-8") as output:
-            output.write(json.dumps(data, ensure_ascii=False) + "\n")
+        with _events_lock:
+            with open(path, "a", encoding="utf-8") as output:
+                output.write(json.dumps(data, ensure_ascii=False) + "\n")
     else:
         print(json.dumps(data, ensure_ascii=False), flush=True)
 
 
-def execute(folder, runner=run_sas):
+def execute(folder, runner=run_sas, *, event_sink=None, control_file=None):
     folder = Path(folder).resolve()
+    send = event_sink or emit
     plan = json.loads((folder / "stream-plan.json").read_text(encoding="utf-8"))
     document = plan["document"]
     started = time.time()
@@ -49,12 +52,12 @@ def execute(folder, runner=run_sas):
         return elapsed
 
     status = "RUNNING"; save_status()
-    emit("start", key="stream", name=document["name"], kind="stream", path=str(folder), estimate=plan["estimate"])
+    send("start", key="stream", name=document["name"], kind="stream", path=str(folder), estimate=plan["estimate"])
     finished = threading.Event()
 
     def stages():
         last = ""
-        control = os.environ.get("PYSAS_UI_CONTROL_FILE")
+        control = control_file or os.environ.get("PYSAS_UI_CONTROL_FILE")
         while not finished.wait(.2):
             try:
                 if control and Path(control).is_file(): cancel.touch(exist_ok=True)
@@ -62,12 +65,12 @@ def execute(folder, runner=run_sas):
                 if phase and phase != last:
                     last = phase
                     print("Enterprise Guide · " + phase, flush=True)
-                    emit("progress", key="stream", phase=phase, progress="Enterprise Guide · " + phase)
+                    send("progress", key="stream", phase=phase, progress="Enterprise Guide · " + phase)
             except (OSError, ET.ParseError): pass
 
     thread = threading.Thread(target=stages, daemon=True); thread.start()
     try:
-        control = os.environ.get("PYSAS_UI_CONTROL_FILE")
+        control = control_file or os.environ.get("PYSAS_UI_CONTROL_FILE")
         if cancel.is_file() or (control and Path(control).is_file()):
             status = "CANCELLED"; errors.append("Cancelled before SAS started.")
         else:
@@ -78,7 +81,7 @@ def execute(folder, runner=run_sas):
             with run_log.open("a", encoding="utf-8") as output:
                 output.write(result.log)
             if document["export_tables"] and document["consolidate_tables"] and result.table_files and status != "CANCELLED":
-                emit("progress", key="stream", phase="combining tables", progress="Combining exported tables into tables.xlsx")
+                send("progress", key="stream", phase="combining tables", progress="Combining exported tables into tables.xlsx")
                 try:
                     mapping = combine_tables(result.table_files, folder / "tables.xlsx")
                     (folder / "tables-index.json").write_text(json.dumps(mapping, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -100,8 +103,8 @@ def execute(folder, runner=run_sas):
                   combined_tables="tables.xlsx" if (folder / "tables.xlsx").is_file() else None)
     (folder / "stream-result.json").write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
     message = "; ".join(errors) or "Complete. Inspect the source, SAS log and outputs."
-    emit("finish", key="stream", name=document["name"], path=str(folder), status=status, elapsed=elapsed, message=message)
-    emit("stream-result", path=str(folder), status=status, elapsed=elapsed, message=message)
+    send("finish", key="stream", name=document["name"], path=str(folder), status=status, elapsed=elapsed, message=message)
+    send("stream-result", path=str(folder), status=status, elapsed=elapsed, message=message)
     return 0 if status == "SUCCESS" else 130 if status == "CANCELLED" else 1
 
 

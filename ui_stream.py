@@ -226,13 +226,15 @@ def read_asset(app, ref, suffix):
 
 
 def assets(app, document):
-    result, sas_size = {}, 0
+    result, sas_size, total = {}, 0, 0
     for ref, suffix in asset_refs(document):
         if ref["sha256"] in result: continue
-        raw = read_asset(app, ref, suffix); result[ref["sha256"]] = raw
+        raw = read_asset(app, ref, suffix)
         if suffix == ".sas": sas_size += len(raw)
-    if sas_size > SOURCE_LIMIT: raise ValueError("The stream's distinct SAS files exceed 16 MB in total.")
-    if sum(map(len, result.values())) > 80 * 1024**2: raise ValueError("Stream assets exceed 80 MB in total.")
+        total += len(raw)
+        if sas_size > SOURCE_LIMIT: raise ValueError("The stream's distinct SAS files exceed 16 MB in total.")
+        if total > 80 * 1024**2: raise ValueError("Stream assets exceed 80 MB in total.")
+        result[ref['sha256']] = raw
     return result
 
 
@@ -260,11 +262,11 @@ def source_units(document, raw_assets):
             yield index, row, row["file"]["name"], _decode(raw_assets[row["file"]["sha256"]]), "file"
 
 
-def compose(app, value, *, require_egp=False):
+def compose(app, value, *, require_egp=False, raw_assets=None):
     document = validate(value)
     if require_egp and not document["egp"]: raise ValueError("Choose the connection EGP first.")
     if not document["rows"]: raise ValueError("Add at least one source card.")
-    raw_assets = assets(app, document)
+    raw_assets = assets(app, document) if raw_assets is None else {ref['sha256']:raw_assets[ref['sha256']] for ref,_ in asset_refs(document)}
     chunks, selections, compiled_size, part_hashes = [], [], 0, []
     shared = shared_work_source(document["shared_work"])
     if shared: chunks.append(shared)
@@ -370,24 +372,31 @@ def import_document(app, raw):
     return document
 
 
-def estimate(app, value, plan=None):
-    plan = plan or compose(app, value)
-    matches = []
+def stream_history(app):
+    records=[]
     for parent, _ in app.run_bases():
         if not parent.is_dir(): continue
         for folder in parent.iterdir():
-            record = folder / "stream-result.json"
-            if folder.is_symlink() or not record.is_file(): continue
-            try:
-                data = json.loads(record.read_text(encoding="utf-8"))
-                seconds = data.get("elapsed_seconds")
-                if data.get("status") == "SUCCESS" and data.get("fingerprint") == plan["fingerprint"] and type(seconds) in (int, float) and math.isfinite(seconds) and seconds > 0:
-                    matches.append((record.stat().st_mtime, seconds))
-            except (OSError, ValueError): continue
+            if folder.is_symlink():continue
+            candidates=[folder]
+            if (folder/'task-graph-plan.json').is_file():candidates=list((folder/'tasks').iterdir()) if (folder/'tasks').is_dir() else []
+            for candidate in candidates:
+                record=candidate/'stream-result.json'
+                if candidate.is_symlink() or not record.is_file():continue
+                try:
+                    data=json.loads(record.read_text(encoding='utf-8'));seconds=data.get('elapsed_seconds')
+                    if data.get('status')=='SUCCESS' and type(seconds) in (int,float) and math.isfinite(seconds) and seconds>0:records.append((data.get('fingerprint'),record.stat().st_mtime,seconds))
+                except (OSError,ValueError):continue
+    return records
+
+
+def estimate(app, value, plan=None, *, records=None, samples=None):
+    plan = plan or compose(app, value)
+    matches=[(stamp,seconds) for fingerprint,stamp,seconds in (stream_history(app) if records is None else records) if fingerprint==plan['fingerprint']]
     if matches:
         values = [seconds for _, seconds in sorted(matches, reverse=True)[:10]]
         return dict(seconds=statistics.median(values), samples=len(values), unknown=0, basis="Same selected code, order, EGP and output options; recent successful streams.")
-    samples = app.timing_samples()
+    if samples is None:samples = app.timing_samples()
     rows = [estimate_task(s, samples) for s in plan["selections"]]
     known = [row["seconds"] for row in rows if row["seconds"] is not None]
     unknown = len(rows) - len(known)
@@ -395,13 +404,13 @@ def estimate(app, value, plan=None):
                 basis="Sum of comparable program/section/line timings from previous runs. A + is a partial estimate; a single SAS session and data changes can affect duration.")
 
 
-def prepare(app, value):
-    plan = compose(app, value, require_egp=True)
+def prepare(app, value, *, destination=None, timing_cache=None, raw_assets=None):
+    plan = compose(app, value, require_egp=True,raw_assets=raw_assets)
     if plan["document"]["export_tables"] and plan["document"]["consolidate_tables"]:
         import importlib.util
         if importlib.util.find_spec("openpyxl") is None: raise ValueError("Install openpyxl to combine tables into one workbook.")
-    forecast = estimate(app, value, plan)
-    folder = app.tasks / "files" / (datetime.now().strftime("%Y%m%d_%H%M%S") + "__stream_" + uuid.uuid4().hex[:8])
+    forecast = estimate(app, value, plan, **(timing_cache or {}))
+    folder = Path(destination) if destination is not None else app.tasks / "files" / (datetime.now().strftime("%Y%m%d_%H%M%S") + "__stream_" + uuid.uuid4().hex[:8])
     folder.mkdir(parents=True)
     try:
         (folder / "source.sas").write_text(plan["source"], encoding="utf-8", newline="")

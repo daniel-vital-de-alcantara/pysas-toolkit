@@ -40,7 +40,7 @@ import ui_storage
 import windows_clipboard
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.38"
+VERSION = "0.4.0-preview.39"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 TEXT_SUFFIXES = {".sas", ".log", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".xml"}
@@ -468,6 +468,7 @@ class Workbench:
             path = self.input_path(value)
             if not path.exists():
                 raise ValueError("The selected path no longer exists.")
+            if action=="continue" and (path/"task-graph-plan.json").is_file():raise ValueError("This is a graph run. Use Run again or Run this task only; Excel schedule continuation is separate.")
             args.append(str(path))
         if action in {"egp-inspect", "egp-extract"} and data.get("project"):
             args.append(str(self.input_path(data["project"])))
@@ -507,8 +508,31 @@ class Workbench:
             args.append("--recursive")
         return action, args
 
-    def launch(self, data, *, stream_prepared=None, reserved_id=None):
+    def launch(self, data, *, stream_prepared=None, graph_prepared=None, reserved_id=None):
         data = dict(data)
+        if data.get('action')=='task-graph' and graph_prepared is None:
+            if not reserved_id:return self.launches.start(data)
+            if os.name!='nt':raise ValueError('SAS execution requires Windows with Enterprise Guide.')
+            if self.launches.cancelled(reserved_id):raise InterruptedError('Cancelled before submission.')
+            # EGP program extraction owns its short upload reservation. Do not
+            # hold that non-reentrant lock while calling the source refresher.
+            graph_inputs=ui_task_graph.execution_document(self,data.get('graph'),data.get('task_id'))
+            with self.upload_lock:
+                with self.lock:
+                    if self.storage_busy:raise ValueError('Wait for the saved-data operation to finish.')
+                    if getattr(self,'closing',False) and not reserved_id:raise ValueError('PySAS is closing.')
+                    self.uploading=True
+                    graph_started=self.commands.get(reserved_id,{}).get('started',time.time())
+                prepared=None
+                try:
+                    prepared=ui_task_graph.prepare(self,data.get('graph'),data.get('task_id'),
+                        cancelled=(lambda:self.launches.cancelled(reserved_id)) if reserved_id else lambda:False,
+                        progress=(lambda text:self.launches.progress(reserved_id,text)) if reserved_id else lambda text:None,started=graph_started,prepared_graph=graph_inputs)
+                    return self.launch(data,graph_prepared=prepared,reserved_id=reserved_id)
+                except BaseException:
+                    if prepared and not any(c.get('path')==self.relative(prepared[0]) for c in self.commands.values()):shutil.rmtree(prepared[0])
+                    raise
+                finally:self.uploading=False
         if data.get("action") == "stream" and stream_prepared is None:
             if os.name != "nt": raise ValueError("SAS execution requires Windows with Enterprise Guide.")
             # Snapshot/estimate outside the status lock, even on slow input/data disks.
@@ -546,9 +570,10 @@ class Workbench:
             if level == "preview":
                 data["_query"] = ui_explore.request(catalog, libraries[0], data["table"], data.get("limit", 100), data.get("filters"), data.get("join", "AND"))
         stream = data.get("action") == "stream"
-        if stream:
+        task_graph = data.get('action')=='task-graph'
+        if stream or task_graph:
             if os.name != "nt": raise ValueError("SAS execution requires Windows with Enterprise Guide.")
-            action, args = "stream", []
+            action, args = data['action'], []
         else:
             action, args = self.arguments(data)
         script = self.script
@@ -565,6 +590,7 @@ class Workbench:
                 raise ValueError("The watcher is already running in this workbench.")
             if data.get("graph_id") and any(c["id"] != reserved_id and c.get("graph_id") == data["graph_id"] and c["status"] in ACTIVE for c in self.commands.values()):
                 raise ValueError("This graph is already running. Stop it or wait for it to finish.")
+            if task_graph and any(c['id']!=reserved_id and c.get('action')=='task-graph' and c.get('graph_id')==graph_prepared[1]['id'] and c.get('status') in ACTIVE and (not data.get('task_id') or not c.get('graph_task_id') or c['graph_task_id']==data['task_id']) for c in self.commands.values()):raise ValueError('This graph or task is already running.')
             if action.startswith('bundle-'):
                 bundle_root = str(self.code_root(data.get('code_root')))
                 if any(c['id'] != reserved_id and c.get('action','').startswith('bundle-') and c.get('status') in ACTIVE and os.path.normcase(c.get('code_root') or str(self.root)) == os.path.normcase(bundle_root) for c in self.commands.values()):
@@ -574,6 +600,9 @@ class Workbench:
                 stream_folder, stream_document, stream_estimate = stream_prepared
                 display_name = stream_document["name"]
                 args = [str(stream_folder)]
+            if task_graph:
+                graph_folder,graph_document,graph_manifest=graph_prepared
+                display_name=self.display_name(data.get('display_name','')) or graph_document['name'];args=[str(graph_folder)]
             if reserved_id and self.launches.cancelled(reserved_id): raise InterruptedError('Cancelled before submission.')
             identifier = reserved_id or uuid.uuid4().hex
             reserved = self.commands.get(identifier, {})
@@ -585,7 +614,9 @@ class Workbench:
             if reserved:
                 item.update(started=reserved['started'], launch_request=reserved.get('launch_request'), preparing=False)
             item["graph_id"] = data.get("graph_id")
+            if task_graph:item.update(graph_id=graph_document['id'],graph_task_id=data.get('task_id'),workers=graph_manifest['workers'])
             item["default_name"] = item["name"]
+            if task_graph:item['default_name']=graph_document['name']
             item["display_name"] = display_name
             if display_name: item["name"] = display_name
             if stream:
@@ -593,6 +624,10 @@ class Workbench:
                             run_log=self.relative(stream_folder / "run.log"))
                 item["tasks"]["stream"] = dict(key="stream", name=display_name, kind="stream", status="RUNNING",
                     path=item["path"], started=item["started"], estimate=stream_estimate, can_cancel_file=True)
+            if task_graph:
+                item.update(path=self.relative(graph_folder),run_log=self.relative(graph_folder/'run.log'))
+                for task in graph_manifest['tasks']:
+                    item['tasks'][task['task_id']]=dict(task,key=task['task_id'],name=task['program'],kind='task',status='PENDING',started=None,elapsed=0,path=self.relative(graph_folder/task['path']),can_cancel_file=True)
             if action == "continue":
                 previous = self.input_path(data["run_dir"])
                 item["resume_path"] = self.relative(previous)
@@ -696,7 +731,7 @@ class Workbench:
             env.pop("PYSAS_UI_LEGACY_ROOT", None)
             # Neither normal output nor events depend on the HTTP/history reader.
             with (self.storage / (identifier + ".txt")).open("ab", buffering=0) as output:
-                command = [python, "-u", str(APP_DIR / "stream_worker.py"), *args] if stream else [python, "-u", str(APP_DIR / "ui_worker.py"), str(script), *args]
+                command = [python, "-u", str(APP_DIR / ('graph_worker.py' if task_graph else 'stream_worker.py')), *args] if stream or task_graph else [python, "-u", str(APP_DIR / "ui_worker.py"), str(script), *args]
                 try:
                     process = subprocess.Popen(command,
                                                cwd=self.root, stdin=None, stdout=output,
@@ -733,6 +768,9 @@ class Workbench:
         elif kind == "stream-result":
             item.update(path=self.relative(event["path"]), stream_status=event["status"], message=event["message"], elapsed=event["elapsed"])
             item["run_log"] = self.relative(Path(event["path"]) / "run.log")
+        elif kind=='graph-result':
+            item.update(path=self.relative(event['path']),graph_status=event['status'],message=event['message'],elapsed=event['elapsed'])
+            item['run_log']=self.relative(Path(event['path'])/'run.log')
         elif kind == "bundle-result":
             item["bundle_result"] = event["result"]
         elif kind == "schedule-state":
@@ -904,6 +942,15 @@ class Workbench:
                 except OSError as exc:
                     item["message"] += " Could not save failure log: " + str(exc)
                 item["tasks"]["stream"].update(status="FAILED", elapsed=item["elapsed"], message=item["message"])
+            if item['action']=='task-graph':
+                item['status']=item.get('graph_status','FAILED')
+                if not item.get('graph_status'):
+                    item['message']='Graph worker ended without a final result. Inspect Command console.'
+                    try:
+                        folder=self.resolve(item['path'])
+                        (folder/'status.txt').write_text(f'source={item["name"]}\nstatus=FAILED\nelapsed_seconds={item["elapsed"]}\n',encoding='utf-8')
+                        with (folder/'run.log').open('a',encoding='utf-8') as log:log.write('\nERROR: '+item['message']+'\n')
+                    except OSError as exc:item['message']+=' Could not save failure log: '+str(exc)
             if item["status"] == "STOPPED" and item["action"] in {"schedule", "continue"}:
                 item["message"] = "Schedule stopped. No further tasks will launch."
             for task in item["tasks"].values():
@@ -925,14 +972,14 @@ class Workbench:
         with self.lock:
             item = self.commands.get(identifier)
             process = self.processes.get(identifier)
-            if not item or not process or item["action"] not in {"watch", "schedule", "continue", "run", "stream"} or item["status"] not in ACTIVE:
+            if not item or not process or item["action"] not in {"watch", "schedule", "continue", "run", "stream", "task-graph"} or item["status"] not in ACTIVE:
                 raise ValueError("Choose an active run, watcher or schedule to stop.")
             if item["status"] == "STOPPING":
                 return {"ok": True}
             Path(item["control_file"]).write_text("stop", encoding="utf-8")
             item["status"] = "STOPPING"
-            if item["action"] in {"schedule", "continue"}:
-                item["message"] = "Stopping this schedule: no new tasks; cancelling its active files…"
+            if item["action"] in {"schedule", "continue", "task-graph"}:
+                item["message"] = "Stopping this "+('graph' if item['action']=='task-graph' else 'schedule')+": no new tasks; cancelling its active files…"
             elif item["action"] in {"run", "stream"}:
                 item["message"] = "Stopping this run…"
             if item["action"] != "watch":
@@ -1014,7 +1061,7 @@ class Workbench:
 
     def save_run_name(self, item):
         if not item.get("display_name"): return
-        paths = [item.get("path")] if item["action"] in {"schedule", "continue", "stream"} else [t.get("path") for t in item.get("tasks", {}).values()] if item["action"] == "run" else []
+        paths = [item.get("path")] if item["action"] in {"schedule", "continue", "stream", "task-graph"} else [t.get("path") for t in item.get("tasks", {}).values()] if item["action"] == "run" else []
         for value in paths:
             folder = self.run_folder(value)
             if folder and folder.is_dir():
@@ -1096,6 +1143,7 @@ class Workbench:
                 if self.relative(path).replace("\\", "/") in self.legacy_moves: continue
                 row = {"path": self.relative(path), "name": path.name, "kind": kind,
                        "status": "UNKNOWN", "elapsed": None, "started": path.stat().st_mtime}
+                if (path/'task-graph-plan.json').is_file():row['kind']='graph'
                 status = path / "status.txt"
                 if status.is_file():
                     values = dict(line.split("=", 1) for line in read_text(status).splitlines() if "=" in line)
@@ -1139,7 +1187,7 @@ class Workbench:
         for command in commands:
             for task in command.get("tasks", {}).values():
                 if task.get("status") in {"RUNNING", "CANCELLING", "PENDING"}:
-                    if task.get("kind") != "stream":
+                    if task.get("kind") != "stream" and not task.get('stream_task'):
                         task["estimate"] = {"seconds": 0, "samples": 0} if task.get("skip") or task.get("status") in {"SKIPPED_SUCCESS", "SKIPPED_PREVIOUS"} else estimate_task(task, samples)
             if command.get("status") in ACTIVE and command.get("action") in {"schedule", "continue"} and command.get("tasks"):
                 args = command.get("args", [])
@@ -1285,7 +1333,7 @@ class Workbench:
         if command.get('action','').startswith('bundle-'): detail['project_id']=ui_projects.key(command.get('code_root') or str(self.root))
         if not detail.get('folder_path') and (self.storage/'artifacts'/identifier).is_dir():
             detail.update(folder_path=self.relative(self.storage/'artifacts'/identifier), export_scope='command', export_path=self.relative(self.storage/'artifacts'/identifier))
-        detail.update(command_id=command['id'], command=self.inspector_command(command), name=command['name'], status=command['status'], description='py pysas.py '+' '.join(command.get('args',[])))
+        detail.update(command_id=command['id'], command=self.inspector_command(command), name=command['name'], status=command['status'], description=('Graph run · '+str(command.get('workers',10))+' parallel tasks') if command['action']=='task-graph' else 'py pysas.py '+' '.join(command.get('args',[])))
         return detail
 
     @staticmethod
@@ -1300,7 +1348,7 @@ class Workbench:
         from pysas import safe_name
         for task in tasks:
             # Derive task folders from this schedule, including restored/moved runs.
-            candidate = path/'tasks'/safe_name(task['task_id'])
+            candidate = path/'tasks'/(('task_'+task['task_id']) if (path/'task-graph-plan.json').is_file() else safe_name(task['task_id']))
             if candidate.is_dir(): task['path'] = self.relative(candidate)
             try:
                 task['elapsed'] = float(task['elapsed']) if task.get('elapsed') else sum(float(task.get(k) or 0)*factor for k,factor in (('duration_hours',3600),('duration_minutes',60),('duration_seconds',1))) if 'duration_hours' in task else None
@@ -1438,6 +1486,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(self.server.app.migration or {"status":"IDLE"})
             elif url.path == "/api/graphs":
                 self.respond(ui_graph.load(self.server.app, value("id")) if value("id") else {"graphs": ui_graph.listing(self.server.app), "sources": ui_graph.sources(self.server.app)})
+            elif url.path == "/api/task-graph-manual":
+                manual=APP_DIR/"docs"/"graph-json-manual.md"
+                self.send_response(200);self.send_header("Content-Type","text/markdown; charset=utf-8");self.send_header("Content-Disposition","attachment; filename=PySAS-Graph-JSON-Manual.md");self.send_header("Content-Length",str(manual.stat().st_size));self.end_headers();self.wfile.write(manual.read_bytes())
             elif url.path == "/api/task-graphs":
                 self.respond(ui_task_graph.load(self.server.app, value('id')) if value('id') else {'graphs': ui_task_graph.listing(self.server.app)})
             elif url.path == "/api/project-details":
@@ -1520,7 +1571,7 @@ class Handler(BaseHTTPRequestHandler):
                     while chunk := f.read(256 * 1024):
                         self.wfile.write(chunk)
             else:
-                name = {"/": "index.html", "/app.js": "app.js", "/keyboard.js": "keyboard.js", "/graph.js": "graph.js", "/stream.js": "stream.js", "/source-cards.js": "source-cards.js", "/graph.css": "graph.css", "/style.css": "style.css", "/icon.svg": "icon.svg"}.get(url.path)
+                name = {"/": "index.html", "/app.js": "app.js", "/keyboard.js": "keyboard.js", "/graph.js": "graph.js", "/graph-layout.js":"graph-layout.js", "/stream.js": "stream.js", "/source-cards.js": "source-cards.js", "/graph.css": "graph.css", "/style.css": "style.css", "/icon.svg": "icon.svg"}.get(url.path)
                 if not name:
                     self.respond({"error": "Not found."}, 404)
                     return
@@ -1592,6 +1643,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(ui_graph.save(self.server.app, data))
             elif self.path == '/api/task-graphs':
                 self.respond(ui_task_graph.save(self.server.app, data))
+            elif self.path == '/api/task-graph-refresh':
+                self.respond({"graph":ui_task_graph.refresh(self.server.app,data.get("graph"))})
             elif self.path == '/api/task-graph-export':
                 self.respond(ui_task_graph.export(self.server.app, data.get('graph')))
             elif self.path == '/api/task-graph-check':
@@ -1607,7 +1660,7 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == "/api/graph-run":
                 self.respond(ui_graph.launch(self.server.app, data))
             elif self.path == "/api/stream-file":
-                self.respond(ui_stream.describe(self.server.app, data.get("path", "")))
+                self.respond(ui_stream.describe(self.server.app, data.get("path", ""), ui_stream.label(data.get("name", ""), limit=200) or None))
             elif self.path == '/api/stream-refresh':
                 self.respond({'stream': ui_stream.refresh_document(self.server.app, data.get('stream')), 'checked_at': time.time()})
             elif self.path == "/api/stream-job":

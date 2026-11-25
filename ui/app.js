@@ -57,7 +57,7 @@ function taskRecords(history,commands){
   const rows=new Map(history.map(h=>[key(h.path),{...h,search:h.path}])),seen=new Set();
   for(const c of commands){
     const path=c.path||((c.action==="run")?Object.values(c.tasks||{}).find(t=>t.path)?.path:null);
-    const merge=path&&["run","schedule","continue","stream"].includes(c.action);
+    const merge=path&&["run","schedule","continue","stream","task-graph"].includes(c.action);
     if(merge&&seen.has(key(path)))continue;
     if(merge)seen.add(key(path));
     const existing=merge?rows.get(key(path)):null;
@@ -68,11 +68,11 @@ function taskRecords(history,commands){
   return Array.from(rows.values()).sort((a,b)=>(b.updated||b.started)-(a.updated||a.started));
 }
 function groupedTasks(records){const groups=new Map();for(const record of records){const key=record.code_root&&record.action?.startsWith('bundle-')?'project:'+record.code_root:'name:'+record.name;const group=groups.get(key);if(!group)groups.set(key,{...record,versions:[record]});else{group.versions.push(record);if(active(record)&&!active(group)){const versions=group.versions;Object.assign(group,record,{versions});}}}return [...groups.values()].sort((a,b)=>(b.updated||b.started)-(a.updated||a.started));}
-function tasksTable(records){return records.length?keyList(table(["Task","Status","Last activity","Elapsed",""],records.map(h=>`<tr data-key-row><td>${esc(h.name)}<small>${esc(h.kind||"File")}${h.versions?.length>1?` · ${h.versions.length} versions`:""}</small>${h.message?`<small>${esc(h.message)}</small>`:""}</td><td>${badge(h.status)}</td><td>${date(h.updated||h.started)}</td><td>${timer(h)}</td><td><button class="subtle" ${h.client_only?"disabled":h.path?`data-path="${esc(h.path)}"`:`data-command="${esc(h.command_id)}"`}>Inspect →</button>${h.command_id?scheduleStopControl(h):""}</td></tr>`)),"Tasks","T"):empty("No tasks yet","Programs, schedules and project commands will appear here.");}
+function tasksTable(records){return records.length?keyList(table(["Task","Status","Last activity","Elapsed",""],records.map(h=>`<tr data-key-row><td>${esc(h.name)}<small>${esc(h.kind==="task-graph"?"Graph":h.kind||"File")}${h.versions?.length>1?` · ${h.versions.length} versions`:""}</small>${h.message?`<small>${esc(h.message)}</small>`:""}</td><td>${badge(h.status)}</td><td>${date(h.updated||h.started)}</td><td>${timer(h)}</td><td><button class="subtle" ${h.client_only?"disabled":h.path?`data-path="${esc(h.path)}"`:`data-command="${esc(h.command_id)}"`}>Inspect →</button>${h.command_id?scheduleStopControl(h):""}</td></tr>`)),"Tasks","T"):empty("No tasks yet","Programs, schedules and project commands will appear here.");}
 function scheduleStopControl(command) {
-  if(!command || !["schedule","continue"].includes(command.action) || !active(command))return "";
-  const stopping=command.status==="STOPPING";
-  return `<button class="subtle" data-stop-schedule="${esc(command.id)}" ${stopping?"disabled":""} title="Stop this entire schedule and its active files">${stopping?"Stopping schedule…":"Stop schedule"}</button>`;
+  if(!command || !["schedule","continue","task-graph"].includes(command.action) || !active(command))return "";
+  const stopping=command.status==="STOPPING",label=command.action==="task-graph"?"graph":"schedule";
+  return `<button class="subtle" data-stop-schedule="${esc(command.id)}" ${stopping?"disabled":""} title="Stop this entire ${label} and its active files">${stopping?"Stopping "+label+"…":"Stop "+label}</button>`;
 }
 function fileActions(target, label="file") {
   const query=Object.entries(target).map(([key,value])=>`${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join("&");
@@ -221,7 +221,7 @@ async function applyInspector(detail,updating){
   const command=state.commands.find(c=>c.id===detail.command_id)||detail.command,task=detail.self_task;
   $("inspector-result").innerHTML=badge(detail.status||"UNKNOWN")+((task||command)?timer(task||command):"");
   let executionControls=task&&active(task)&&task.can_cancel_file!==false&&command?`<button class="secondary" data-cancel-command="${esc(command.id)}" data-cancel-key="${esc(task.key)}">Stop file</button>`:scheduleStopControl(command)||(command?.action==="watch"&&active(command)?`<button class="secondary" data-watcher-stop ${command.status==="STOPPING"?"disabled":""}>Stop after current files</button>`:"");
-  if(command&&!active(command)&&['run','stream','schedule','continue'].includes(command.action)&&(detail.whole_run||(!detail.self_task&&selectedCommand)))executionControls+='<button class="secondary" data-keytip="R" data-run-again>Run again</button>';
+  if(command&&!active(command)&&['run','stream','schedule','continue','task-graph'].includes(command.action)&&(detail.whole_run||(!detail.self_task&&selectedCommand)))executionControls+='<button class="secondary" data-keytip="R" data-run-again>Run again</button>';
   if(command&&!active(command)&&['schedule','continue'].includes(command.action)&&!['SUCCESS','UNKNOWN'].includes(command.status)&&detail.whole_run)executionControls+='<button class="secondary" data-keytip="C" data-continue-schedule>Continue schedule</button>';
   putMarkup("inspector-execution-controls",executionControls);
   $("rename-run").querySelectorAll("button,input").forEach(b=>b.disabled=!(detail.can_rename||detail.whole_run));

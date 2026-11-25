@@ -373,6 +373,22 @@ class HttpTests(unittest.TestCase):
             while self.server.app.launches.working() and time.monotonic()<deadline: time.sleep(.01)
         self.assertEqual(self.server.app.commands[result['id']]['status'], 'CANCELLED')
 
+    def test_graph_manual_authoring_import_and_refresh_sections_do_not_execute(self):
+        import ui_task_graph
+        headers={'X-PySAS-Token':self.server.token}
+        status,raw,response_headers=self.request('GET','/api/task-graph-manual')
+        self.assertEqual(status,200,raw);self.assertIn('attachment',response_headers['Content-Disposition']);self.assertIn(b'pysas-task-graph-authoring-1',raw)
+        source=self.root/'source.sas';source.write_text('* (please do not delete) section_start: First;\n%put first;\n* (please do not delete) section_end: First;')
+        value=dict(format=ui_task_graph.AUTHORING_FORMAT,name='AI',setup=[],nodes=[dict(id='A',name='A',rows=[dict(file=str(source),mode='section',sections=['First'])])],edges=[])
+        with patch.object(self.server.app,'launch',side_effect=AssertionError('Import/refresh cannot execute')):
+            status,raw,_=self.request('POST','/api/task-graph-import',json.dumps(value),headers);self.assertEqual(status,200,raw);document=json.loads(raw)['graph']
+            self.assertEqual(document['nodes'][0]['rows'][0]['file']['sections'],['First'])
+            source.write_text('* (please do not delete) section_start: Second;\n%put second;\n* (please do not delete) section_end: Second;')
+            status,raw,_=self.request('POST','/api/task-graph-refresh',json.dumps({'graph':document}),headers);self.assertEqual(status,200,raw)
+            updated=json.loads(raw)['graph'];self.assertEqual(updated['nodes'][0]['rows'][0]['file']['sections'],['Second']);self.assertEqual(updated['nodes'][0]['rows'][0]['sections'],['First'])
+        self.assertEqual(self.request('GET','/graph-layout.js')[0],200)
+        self.assertEqual(self.request('POST','/api/task-graph-refresh','{}')[0],403)
+
     def test_project_and_refresh_http_routes_keep_folder_versions_and_refresh_known_sources(self):
         import ui_stream
         headers = {'X-PySAS-Token': self.server.token}
