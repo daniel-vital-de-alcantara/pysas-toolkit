@@ -286,3 +286,66 @@ test('Alt H G A opens Align, A arranges, and View owns zoom; Escape walks back t
   click('B');$('graph-home-menu').querySelector('summary').click();key($('graph-home-menu').querySelector('summary'),'ArrowDown');assert.equal(w.document.activeElement,$('graph-undo'));key(w.document.activeElement,'End');assert.equal(w.document.activeElement,$('graph-arrange-menu').querySelector('summary'));key(w.document.activeElement,'ArrowRight');assert.equal(w.document.activeElement,$('graph-align-menu').querySelector('summary'));
   $('graph-canvas').click();assert.deepEqual(selected(),[]);assert.equal($('graph-home-menu').open,false);
 });
+
+test('graph cards contain independent canvases with breadcrumbs, viewport state and whole-document undo',async t=>{
+  const {w,$,start,add,inline,nodes,input,save,key,pointer}=harness(t);await start();add('Outer source');await inline();$('graph-close-drawer').click();
+  $('graph-add-graph').click();input('graph-task-name','Extract workflow');const parent=nodes().at(-1).dataset.graphNode;assert.equal($('graph-group-panel').hidden,false);assert.equal($('graph-task-sources').hidden,true);
+  $('graph-enter-group').click();assert.equal(nodes().length,0);assert.equal($('graph-breadcrumbs').hidden,false);assert.match($('graph-level-path').textContent,/Extract workflow/);
+  add('Inner source');await inline('%put inner;');$('graph-close-drawer').click();pointer('pointerdown',$('graph-canvas'),700,500);pointer('pointermove',$('graph-canvas'),730,540);pointer('pointerup',$('graph-canvas'),730,540);$('graph-canvas').click();
+  const inner=(await save()).nodes.find(n=>n.id===parent).graph;assert.equal(inner.nodes.length,1);const viewport=inner.viewport;
+  $('graph-add-graph').click();input('graph-task-name','Inner graph');$('graph-enter-group').click();add('Deep source');await inline('%put deep;');$('graph-close-drawer').click();
+  assert.match($('graph-level-path').textContent,/Extract workflow.*Inner graph/);key($('graph-canvas'),'ArrowLeft',{altKey:true});assert.equal(nodes().length,2);assert.equal($('graph-title').textContent,'Extract workflow');
+  $('graph-level-path').querySelector('[data-graph-level="0"]').click();assert.equal(nodes().length,2);assert.equal($('graph-breadcrumbs').hidden,true);
+  nodes()[1].querySelector('[data-graph-focus]').dispatchEvent(new w.MouseEvent('dblclick',{bubbles:true}));assert.equal($('graph-title').textContent,'Extract workflow');assert.deepEqual((await save()).nodes[1].graph.viewport,viewport);
+  $('graph-undo').click();assert.equal($('graph-title').textContent,'Extract workflow');const restored=await save();assert.equal(restored.nodes[0].name,'Outer source');assert.equal(restored.nodes[1].graph.nodes[1].graph.nodes[0].rows[0].code,'');
+  $('graph-redo').click();assert.equal((await save()).nodes[1].graph.nodes[1].graph.nodes[0].rows[0].code,'%put deep;');
+});
+
+test('nested graph copies preserve local IDs and links but isolate edits and clean every source level',()=>{
+  const group=h.graphCard('Reusable'),a=node('A'),b=node('B');group.graph.nodes=[a,b];group.graph.edges=[{from:'A',to:'B'}];a.rows[0].source_kind='inline';a.rows[0].code='%put original;';a.rows[0].analysis={has_code:true,lines:1};
+  const original=graph([group,node('A')]),copy=h.duplicate(original,group.id);h.validate(copy);assert.notEqual(copy.nodes[2].id,group.id);assert.notEqual(copy.nodes[2].graph.id,group.graph.id);assert.deepEqual(copy.nodes[2].graph.edges,group.graph.edges);
+  copy.nodes[2].graph.nodes[0].rows[0].code='%put copy;';assert.equal(copy.nodes[0].graph.nodes[0].rows[0].code,'%put original;');assert.equal(h.clean(copy).nodes[0].graph.nodes[0].rows[0].analysis,undefined);
+  assert.equal(h.effectiveAt({...original,egp:{name:'parent.egp'}},[group.id]).egp.name,'parent.egp');group.graph.inherit_connection=false;group.graph.egp={name:'inner.egp'};assert.equal(h.effectiveAt(original,[group.id]).egp.name,'inner.egp');
+});
+
+async function nestedFixture(t){
+  const f=harness(t);await f.start();const left=h.graphCard('Left'),right=h.graphCard('Right');left.id='Left';right.id='Right';
+  for(const group of [left,right]){const n=node('A');Object.assign(n.rows[0],{id:'same_source',source_kind:'inline',code:'%put '+group.name+';',analysis:{has_code:true,lines:1,sections:[]}});group.graph.nodes=[n];}
+  const value=graph([left,right]);value.egp=f.ref('connection.egp');f.setImported(value);await f.upload(f.$('graph-import'),'nested.graph.json');f.snapshot.windows=true;f.w.PySASGraph.update(f.snapshot,'graph');return f;
+}
+
+test('source editors with repeated local IDs stay isolated across navigation and late background analysis',async t=>{
+  const {w,$,nodes,rows,input,save,setDefer}=await nestedFixture(t);nodes()[0].querySelector('[data-open-graph]').click();nodes()[0].querySelector('[data-edit-task]').click();
+  let finish,entered=false;setDefer('/api/stream-analyze',data=>{entered=true;return new Promise(resolve=>finish=()=>resolve({has_code:true,lines:1,sections:[],section_issues:[]}));});
+  input(rows()[0].querySelector('textarea'),'%put changed_left;');await settle(()=>entered);$('graph-parent').click();nodes()[1].querySelector('[data-open-graph]').click();nodes()[0].querySelector('[data-edit-task]').click();assert.equal(rows()[0].querySelector('textarea').value,'%put Right;');
+  finish();await settle(()=>!$('graph-save').disabled);assert.equal(rows()[0].querySelector('textarea').value,'%put Right;');const saved=await save();assert.equal(saved.nodes[0].graph.nodes[0].rows[0].code,'%put changed_left;');assert.equal(saved.nodes[1].graph.nodes[0].rows[0].code,'%put Right;');
+});
+
+test('running an inner graph sends its root document and graph path; ancestor scopes block overlaps',async t=>{
+  const {w,$,nodes,requests,snapshot}=await nestedFixture(t);nodes()[0].querySelector('[data-open-graph]').click();assert.equal($('graph-run').disabled,false);
+  snapshot.commands=[{id:'running',action:'task-graph',graph_id:'example',graph_task_ids:['Right'],status:'RUNNING',started:1,tasks:{}}];w.PySASGraph.update(snapshot,'graph');assert.equal($('graph-run').disabled,false);
+  snapshot.commands[0].graph_task_ids=['Left'];w.PySASGraph.update(snapshot,'graph');assert.equal($('graph-run').disabled,true);
+  snapshot.commands=[];w.PySASGraph.update(snapshot,'graph');$('graph-run').click();await settle(()=>requests.some(r=>r.url==='/api/submit'));const sent=requests.find(r=>r.url==='/api/submit').data;assert.deepEqual(sent.graph_path,['Left']);assert.equal(sent.graph.nodes.length,2);assert.equal(sent.graph.id,'example');assert.equal(sent.task_ids,undefined);
+});
+
+test('graph card reuse loads an independent saved copy, and nested runs show their qualified state',async t=>{
+  const {w,$,nodes,requests,setImported,save,snapshot}=await nestedFixture(t);nodes()[0].querySelector('[data-edit-task]').click();
+  const replacement=graph([node('Replacement')]);replacement.nodes[0].rows=[];setImported(replacement);$('graph-child-saved').innerHTML='<option value="library">Library workflow</option>';$('graph-child-saved').value='library';$('graph-child-load').click();await settle(()=>requests.some(r=>r.url==='/api/task-graphs?id=library')&&!$('graph-save').disabled);
+  let saved=await save();assert.equal(saved.nodes[0].name,'Left');assert.equal(saved.nodes[0].graph.nodes[0].id,'Replacement');assert.equal(saved.nodes[1].graph.nodes[0].id,'A');assert.notEqual(saved.nodes[0].graph.id,replacement.id);
+  $('graph-undo').click();saved=await save();assert.equal(saved.nodes[0].graph.nodes[0].id,'A');
+  nodes()[0].querySelector('[data-open-graph]').click();snapshot.commands=[{id:'root-run',action:'task-graph',graph_id:'example',status:'RUNNING',started:1,tasks:{hashed:{key:'hashed',node_path:['Left','A'],kind:'task',status:'RUNNING',started:1}}}];w.PySASGraph.update(snapshot,'graph');assert.ok(nodes()[0].classList.contains('task-running'));
+  $('graph-parent').click();snapshot.commands[0].tasks.Left={key:'Left',node_path:['Left'],kind:'graph',status:'RUNNING',started:1};w.PySASGraph.update(snapshot,'graph');assert.ok(nodes()[0].classList.contains('task-running'));assert.equal(nodes()[1].classList.contains('task-running'),false);
+});
+
+test('saving an inner level as a library graph keeps the parent identity and inherited connection',async t=>{
+  const {$,nodes,requests,save}=await nestedFixture(t);nodes()[0].querySelector('[data-open-graph]').click();$('graph-save-level').click();await settle(()=>requests.some(r=>r.url==='/api/task-graphs'&&r.data)&&!$('graph-save-level').disabled);
+  const copy=requests.find(r=>r.url==='/api/task-graphs'&&r.data).data.graph;assert.equal(copy.name,'Left');assert.equal(copy.egp.name,'connection.egp');assert.notEqual(copy.id,'example');assert.equal(copy.inherit_connection,undefined);
+  assert.equal((await save()).id,'example');assert.equal($('graph-title').textContent,'Left');assert.equal($('graph-save').textContent,'Save full graph');
+});
+
+test('a graph copy completing after entering its canvas rebinds editing to the copied graph',async t=>{
+  const {$,nodes,add,inline,setDefer,save}=await nestedFixture(t);nodes()[0].querySelector('[data-edit-task]').click();$('graph-child-saved').innerHTML='<option value="library">Library</option>';$('graph-child-saved').value='library';
+  let finish,entered=false;setDefer('/api/task-graphs?id=library',()=>{entered=true;return new Promise(resolve=>finish=resolve);});$('graph-child-load').click();await settle(()=>entered);$('graph-enter-group').click();assert.equal(nodes()[0].dataset.graphNode,'A');
+  const replacement=graph([node('Replacement')]);finish({graph:replacement});await settle(()=>!$('graph-save').disabled&&nodes()[0]?.dataset.graphNode==='Replacement');assert.equal($('graph-title').textContent,'Left');
+  add('After copy');await inline('%put attached_to_copy;');const saved=await save();assert.equal(saved.nodes[0].graph.nodes.length,2);assert.equal(saved.nodes[0].graph.nodes[1].rows[0].code,'%put attached_to_copy;');assert.equal(saved.nodes[1].graph.nodes[0].id,'A');
+});

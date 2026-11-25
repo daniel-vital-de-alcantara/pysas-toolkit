@@ -29,12 +29,13 @@ class Launches:
         if action=='task-graph':
             import ui_task_graph
             scope=ui_task_graph.selection_ids(request.get('task_id'),request.get('task_ids'))
-            if scope is not None and set(scope)-{n.get('id') for n in request['graph'].get('nodes',[])}:raise ValueError('Choose task cards to run.')
-            name=request.get('display_name') or ui_task_graph.run_name(request['graph'],request.get('task_id'),request.get('task_ids'))
+            graph_path=ui_task_graph.path_ids(request.get('graph_path'));level=ui_task_graph.graph_at(request['graph'],graph_path)
+            if scope is not None and set(scope)-{n.get('id') for n in level.get('nodes',[])}:raise ValueError('Choose task cards to run.')
+            name=request.get('display_name') or ui_task_graph.run_name(request['graph'],request.get('task_id'),request.get('task_ids'),graph_path=graph_path)
         key=uuid.uuid4().hex;started=time.time()
         item=dict(id=key,action=action,name=str(name),default_name=str(name),display_name=request.get('display_name',''),status='RUNNING',preparing=True,phase='Preparing run',started=started,finished=None,args=[],tasks={},message='Preparing run…',can_cancel_file=True)
         if action.startswith('bundle-'): item['code_root']=str(Path(request.get('code_root') or self.app.root).expanduser().resolve())
-        if action=='task-graph':item.update(graph_id=request['graph'].get('id'),graph_task_id=request.get('task_id'),graph_task_ids=scope)
+        if action=='task-graph':item.update(graph_id=request['graph'].get('id'),graph_task_id=request.get('task_id'),graph_task_ids=scope,graph_run_path=graph_path)
         item['tasks']['_preparing']=dict(key='_preparing',name=item['name'],kind='preparation',status='RUNNING',started=started,message='Preparing run…',can_cancel_file=False)
         with self.app.lock:
             if getattr(self.app,'closing',False):raise ValueError('PySAS is closing.')
@@ -42,7 +43,7 @@ class Launches:
             if len(self.pending)>=32:raise ValueError('Many runs are preparing. Wait for one to finish.')
             if action.startswith('bundle-') and any(c.get('action','').startswith('bundle-') and c.get('status') in {'RUNNING','STOPPING'} and os.path.normcase(c.get('code_root') or str(self.app.root))==os.path.normcase(item['code_root']) for c in self.app.commands.values()):raise ValueError('This folder already has an active bundle operation.')
             if action=='watch' and any(c.get('action')=='watch' and c.get('status') in {'RUNNING','STOPPING'} for c in self.app.commands.values()):raise ValueError('The watcher is already running.')
-            if action=='task-graph' and ui_task_graph.conflicts(self.app.commands.values(),item['graph_id'],scope):raise ValueError('This graph or one of the selected tasks is already running. Stop it or wait for it to finish.')
+            if action=='task-graph' and ui_task_graph.conflicts(self.app.commands.values(),item['graph_id'],scope,graph_path=graph_path):raise ValueError('This graph or one of the selected tasks is already running. Stop it or wait for it to finish.')
             if action=='continue':
                 import ui_storage
                 previous=self.app.run_folder(request.get('run_dir'))
@@ -123,7 +124,7 @@ class Launches:
             if item.get('display_name'):
                 request['display_name']=item['display_name']
                 if request['action']=='stream':request['stream']['name']=item['display_name']
-                if request['action']=='task-graph' and request.get('task_id') is None and request.get('task_ids') is None:request['graph']['name']=item['display_name']
+                if request['action']=='task-graph' and request.get('task_id') is None and request.get('task_ids') is None and not request.get('graph_path'):request['graph']['name']=item['display_name']
             return self.start(request)
         folder=app.run_folder(path or (item or {}).get('path'))
         if folder and (folder/'stream-plan.json').is_file():

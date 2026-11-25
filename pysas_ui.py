@@ -40,7 +40,7 @@ import ui_storage
 import windows_clipboard
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.41"
+VERSION = "0.4.0-preview.42"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 TEXT_SUFFIXES = {".sas", ".log", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".xml"}
@@ -516,7 +516,7 @@ class Workbench:
             if self.launches.cancelled(reserved_id):raise InterruptedError('Cancelled before submission.')
             # EGP program extraction owns its short upload reservation. Do not
             # hold that non-reentrant lock while calling the source refresher.
-            graph_inputs=ui_task_graph.execution_document(self,data.get('graph'),data.get('task_id'),task_ids=data.get('task_ids'))
+            graph_inputs=ui_task_graph.execution_document(self,data.get('graph'),data.get('task_id'),task_ids=data.get('task_ids'),graph_path=data.get('graph_path'))
             with self.upload_lock:
                 with self.lock:
                     if self.storage_busy:raise ValueError('Wait for the saved-data operation to finish.')
@@ -525,7 +525,7 @@ class Workbench:
                     graph_started=self.commands.get(reserved_id,{}).get('started',time.time())
                 prepared=None
                 try:
-                    prepared=ui_task_graph.prepare(self,data.get('graph'),data.get('task_id'),task_ids=data.get('task_ids'),
+                    prepared=ui_task_graph.prepare(self,data.get('graph'),data.get('task_id'),task_ids=data.get('task_ids'),graph_path=data.get('graph_path'),
                         cancelled=(lambda:self.launches.cancelled(reserved_id)) if reserved_id else lambda:False,
                         progress=(lambda text:self.launches.progress(reserved_id,text)) if reserved_id else lambda text:None,started=graph_started,prepared_graph=graph_inputs)
                     return self.launch(data,graph_prepared=prepared,reserved_id=reserved_id)
@@ -590,7 +590,7 @@ class Workbench:
                 raise ValueError("The watcher is already running in this workbench.")
             if data.get("graph_id") and any(c["id"] != reserved_id and c.get("graph_id") == data["graph_id"] and c["status"] in ACTIVE for c in self.commands.values()):
                 raise ValueError("This graph is already running. Stop it or wait for it to finish.")
-            if task_graph and ui_task_graph.conflicts(self.commands.values(),graph_prepared[1]['id'],ui_task_graph.selection_ids(data.get('task_id'),data.get('task_ids')),reserved_id):raise ValueError('This graph or one of the selected tasks is already running.')
+            if task_graph and ui_task_graph.conflicts(self.commands.values(),graph_prepared[1]['id'],ui_task_graph.selection_ids(data.get('task_id'),data.get('task_ids')),reserved_id,graph_path=data.get('graph_path')):raise ValueError('This graph or one of the selected tasks is already running.')
             if action.startswith('bundle-'):
                 bundle_root = str(self.code_root(data.get('code_root')))
                 if any(c['id'] != reserved_id and c.get('action','').startswith('bundle-') and c.get('status') in ACTIVE and os.path.normcase(c.get('code_root') or str(self.root)) == os.path.normcase(bundle_root) for c in self.commands.values()):
@@ -614,7 +614,7 @@ class Workbench:
             if reserved:
                 item.update(started=reserved['started'], launch_request=reserved.get('launch_request'), preparing=False)
             item["graph_id"] = data.get("graph_id")
-            if task_graph:item.update(graph_id=graph_document['id'],graph_task_id=data.get('task_id'),graph_task_ids=ui_task_graph.selection_ids(data.get('task_id'),data.get('task_ids')),workers=graph_manifest['workers'])
+            if task_graph:item.update(graph_id=graph_document['id'],graph_task_id=data.get('task_id'),graph_task_ids=ui_task_graph.selection_ids(data.get('task_id'),data.get('task_ids')),graph_run_path=ui_task_graph.path_ids(data.get('graph_path')),workers=graph_manifest['workers'])
             item["default_name"] = item["name"]
             if task_graph:item['default_name']=graph_document['name']
             item["display_name"] = display_name
@@ -627,7 +627,7 @@ class Workbench:
             if task_graph:
                 item.update(path=self.relative(graph_folder),run_log=self.relative(graph_folder/'run.log'))
                 for task in graph_manifest['tasks']:
-                    item['tasks'][task['task_id']]=dict(task,key=task['task_id'],name=task['program'],kind='task',status='PENDING',started=None,elapsed=0,path=self.relative(graph_folder/task['path']),can_cancel_file=True)
+                    item['tasks'][task['task_id']]={**task,'key':task['task_id'],'name':task['program'],'kind':task.get('kind','task'),'status':'PENDING','started':None,'elapsed':0,'path':self.relative(graph_folder/task['path']),'can_cancel_file':True}
             if action == "continue":
                 previous = self.input_path(data["run_dir"])
                 item["resume_path"] = self.relative(previous)
@@ -1006,7 +1006,7 @@ class Workbench:
                 raise ValueError("The run folder is not available yet.")
             (run_dir / "_cancel.request").write_text("Requested by user", encoding="utf-8")
             task["status"] = "CANCELLING"
-            task["message"] = "Stopping this file's automation process…"
+            task["message"] = "Stopping this nested graph and its active tasks…" if task.get('kind')=='graph' else "Stopping this file's automation process…"
             self.save(item)
             return {"ok": True}
 
@@ -1187,7 +1187,7 @@ class Workbench:
         for command in commands:
             for task in command.get("tasks", {}).values():
                 if task.get("status") in {"RUNNING", "CANCELLING", "PENDING"}:
-                    if task.get("kind") != "stream" and not task.get('stream_task'):
+                    if task.get("kind") not in {"stream","graph"} and not task.get('stream_task'):
                         task["estimate"] = {"seconds": 0, "samples": 0} if task.get("skip") or task.get("status") in {"SKIPPED_SUCCESS", "SKIPPED_PREVIOUS"} else estimate_task(task, samples)
             if command.get("status") in ACTIVE and command.get("action") in {"schedule", "continue"} and command.get("tasks"):
                 args = command.get("args", [])
@@ -1294,17 +1294,18 @@ class Workbench:
         task_folders = {}
         for task in tasks:
             if task.get('path'):
-                try: task_folders[self.resolve(task['path'])] = str(task.get('task_id') or task.get('key'))
+                try: task_folders[self.resolve(task['path'])] = (str(task.get('task_id') or task.get('key')),task.get('task_label'))
                 except ValueError: pass
+        task_folders = dict(sorted(task_folders.items(),key=lambda item:len(item[0].parts),reverse=True))
         from ui_data import safe_files
         candidates = sorted(safe_files(path), key=lambda file: (file.relative_to(path).parts[0] == 'attempts', str(file)))
         for file in candidates[:1000]:
             name = str(file.relative_to(path))
             parts = file.relative_to(path).parts
-            task_id = next((identifier for folder,identifier in task_folders.items() if file.is_relative_to(folder)), None)
+            task_id,task_label = next((identifier for folder,identifier in task_folders.items() if file.is_relative_to(folder)), (None,None))
             if not task_id and 'tasks' in parts[:-2]: task_id = parts[parts.index('tasks')+1]
             is_log = file.suffix.lower() == '.log' or file.name == 'console.txt'
-            label = ((task_id or context_id)+' · ' if task_id or context_id else '')+file.name
+            label = ((task_label or task_id or context_id)+' · ' if task_id or context_id else '')+file.name
             if 'attempts' in parts: label += ' · earlier attempt'
             files.append(dict(path=self.relative(file), name=name, size=file.stat().st_size,
                               is_log=is_log, inside_task=bool(task_id), task_id=task_id,
@@ -1345,13 +1346,20 @@ class Workbench:
         if not path.is_dir() or not relative: raise ValueError("Choose a run folder.")
         summary = path/'run_summary.csv'
         tasks = list(csv.DictReader(io.StringIO(read_text(summary)))) if summary.is_file() else []
+        graph_plan=read_json(path/'task-graph-plan.json',{})
+        graph_definitions={t['task_id']:t for t in graph_plan.get('tasks',[]) if isinstance(t,dict) and t.get('task_id')}
+        if graph_definitions and not tasks:
+            tasks=[dict(t,status='PENDING',elapsed=None) for t in graph_definitions.values() if t.get('parent_id')==graph_plan.get('root_parent')]
         from pysas import safe_name
         for task in tasks:
             # Derive task folders from this schedule, including restored/moved runs.
-            candidate = path/'tasks'/(('task_'+task['task_id']) if (path/'task-graph-plan.json').is_file() else safe_name(task['task_id']))
+            definition=graph_definitions.get(task['task_id'],{})
+            candidate = path/definition['path'] if definition.get('path') else path/'tasks'/safe_name(task['task_id'])
+            if definition:task.update({key:definition[key] for key in ('kind','parent_id','node_path','label_path','depends_on') if key in definition})
+            if not candidate.resolve().is_relative_to(path):raise ValueError('Task folder is outside this graph run.')
             if candidate.is_dir(): task['path'] = self.relative(candidate)
             try:
-                task['elapsed'] = float(task['elapsed']) if task.get('elapsed') else sum(float(task.get(k) or 0)*factor for k,factor in (('duration_hours',3600),('duration_minutes',60),('duration_seconds',1))) if 'duration_hours' in task else None
+                task['elapsed'] = float(task['elapsed']) if task.get('elapsed') is not None and task.get('elapsed')!='' else sum(float(task.get(k) or 0)*factor for k,factor in (('duration_hours',3600),('duration_minutes',60),('duration_seconds',1))) if 'duration_hours' in task else None
             except (ValueError, TypeError): task['elapsed'] = None
             task['key'] = task['task_id']; task['name'] = task.get('program', task['task_id'])
         status, name = 'UNKNOWN', read_json(path/'run-display.json',{}).get('name','') or path.name
@@ -1378,8 +1386,18 @@ class Workbench:
                     break
                 if matched:
                     owner = command; self_task = dict(matched); status = matched['status']; name = read_json(path/'run-display.json',{}).get('name') or matched.get('display_name') or matched.get('name') or name
+                    for task in tasks:
+                        saved=command.get('tasks',{}).get(task['task_id'],{})
+                        task.update({field:saved[field] for field in ('status','elapsed','started','path','depends_on') if field in saved})
+                        task['command_id']=command['id'];task['key']=task['task_id'];task['name']=task.get('program',task['task_id'])
                     break
-        files, limited = self.describe_files(path, tasks, str(self_task.get("key")) if self_task else None)
+        file_tasks=tasks
+        if graph_definitions:
+            file_tasks=[]
+            for definition in graph_definitions.values():
+                candidate=(path/definition['path']).resolve()
+                if candidate.is_relative_to(path):file_tasks.append(dict(definition,path=self.relative(candidate),task_label=' / '.join(definition.get('label_path',[])) or definition['program']))
+        files, limited = self.describe_files(path, file_tasks, str(self_task.get("key")) if self_task else None)
         if (path / 'stream-plan.json').is_file(): files = ui_stream.inspector_files(files)
         if owner and (self.storage/(owner['id']+'.txt')).is_file():
             # The global command console belongs to its top-level task, not each child.
@@ -1649,7 +1667,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(ui_task_graph.export(self.server.app, data.get('graph')))
             elif self.path == '/api/task-graph-check':
                 graph = ui_task_graph.validate(data.get('graph'))
-                self.respond({'nodes': len(graph['nodes']), 'setup': len(graph['setup']), 'edges': len(graph['edges'])})
+                levels=list(ui_task_graph.levels(graph))
+                self.respond({'nodes':sum(len(level['nodes']) for _,level in levels),'setup':sum(len(level['setup']) for _,level in levels),'edges':sum(len(level['edges']) for _,level in levels),'graphs':len(levels)})
             elif self.path == "/api/graph-source":
                 self.respond(ui_graph.link_file(self.server.app, data))
             elif self.path == "/api/graph-egp":

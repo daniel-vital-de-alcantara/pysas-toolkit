@@ -486,6 +486,9 @@ class HttpTests(unittest.TestCase):
             status,body,_=self.request('POST','/api/task-graphs',payload,headers);self.assertEqual(status,200,body)
             status,body,_=self.request('GET','/api/task-graphs?id=task_plan');self.assertEqual(status,200,body);self.assertEqual(json.loads(body)['graph']['viewport'],value['viewport'])
             status,body,_=self.request('POST','/api/task-graph-check',payload,headers);self.assertEqual(status,200,body);self.assertEqual(json.loads(body)['edges'],1)
+            nested=dict(value,id='nested_check',nodes=[dict(id='Group',name='Inner graph',kind='graph',graph=value)],edges=[])
+            status,body,_=self.request('POST','/api/task-graph-check',json.dumps({'graph':nested}),headers);self.assertEqual(status,200,body)
+            self.assertEqual(json.loads(body),dict(nodes=3,setup=0,edges=1,graphs=2))
             status,body,_=self.request('POST','/api/task-graph-export',payload,headers);self.assertEqual(status,200,body)
             path=json.loads(body)['path'];status,raw,_=self.request('GET','/api/download?path='+path);self.assertEqual(status,200)
             status,body,_=self.request('POST','/api/task-graph-import',raw,headers);self.assertEqual(status,200,body);restored=json.loads(body)['graph']

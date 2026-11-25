@@ -39,7 +39,9 @@ is required. Inaccessible members remain listed with unknown metadata; readable 
 with warnings and incomplete storage totals. Saved snapshots remain available offline and travel with saved-data
 backups; missing metadata is shown as unknown.
 
-The released command-line toolkit is version 0.3.18; the released UI preview is 0.4.0-preview.41.
+The released command-line toolkit is version 0.3.18; the released UI preview is 0.4.0-preview.42.
+
+Preview.42 adds **graphs inside graph cards**. Open a card into its own canvas, navigate with Back/breadcrumbs, copy saved graphs into a larger orchestration, or save an inner level for reuse. Each graph waits for its prerequisites and releases dependents only after its inner work succeeds. Nested tasks inherit connection/setup choices and share the outer parallel limit. Inspectors, consolidated logs, partial runs and portable JSON follow the hierarchy. See the [graph guide](docs/graph-runner.md).
 
 Preview.41 adds right-click graph selection and partial runs, including immediate prerequisites, all upstream dependencies and downstream dependents. Home → Arrange → Align contains Auto and alignment tools, with Fit under Arrange; View contains zoom. Alt H, G, A opens Align. Auto moves cards away from spanning links while keeping the original curves; manual placement leaves those curves alone. Clicking empty canvas clears the selection and closes menus. See the [graph guide](docs/graph-runner.md).
 

@@ -84,3 +84,24 @@ body.graph-page main>#notice{top:auto;bottom:78px;right:auto;max-width:min(480px
 .taskgraph-context-note.is-error{color:#ad4d39}
 .taskgraph-bottom{justify-content:flex-end}
 @media(max-width:1200px){.taskgraph-topbar{flex-wrap:wrap}.taskgraph-project{max-width:460px}.taskgraph-actions button{min-height:32px}.taskgraph-actions{padding:4px}}
+
+/* Graph cards retain the same ports and footprint as source tasks. */
+.taskgraph-location{min-width:300px;max-width:460px;pointer-events:auto}
+.taskgraph-location>.taskgraph-project{width:100%;max-width:none}
+.taskgraph-breadcrumbs{display:flex;align-items:center;gap:7px;margin-top:8px;max-width:100%;padding:4px 6px;border:1px solid #cbdde9;border-radius:7px;background:#fff;box-shadow:0 4px 12px #254f680a}
+.taskgraph-breadcrumbs>button{font-size:10px;white-space:nowrap;padding:5px 8px;border:0;background:#eaf3fa;color:#426d88;border-radius:4px}
+#graph-level-path{display:flex;align-items:center;gap:5px;min-width:0;overflow:auto;white-space:nowrap;font-size:10px;color:#7e98a9;padding:2px}
+#graph-level-path>button{min-width:0;max-width:135px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;border:0;background:transparent;color:#42799b;padding:4px;font-size:10px}
+#graph-level-path>[aria-current]{max-width:150px;overflow:hidden;text-overflow:ellipsis;color:#2c566e}
+.taskgraph-group{border-color:#7daac9;background:#f9fcff;box-shadow:0 4px 14px #20557518}
+.taskgraph-group .taskgraph-node-main>small{color:#377aa7}
+.taskgraph-group .taskgraph-node-footer{background:#edf5fb;border-top-color:#d1e3f0}
+.taskgraph-node-footer>div{display:flex;gap:10px;align-items:center}
+.taskgraph-group-panel{padding:13px;border:1px solid #c9deed;border-radius:7px;background:#f1f7fc;margin:12px 0 18px}
+.taskgraph-group-panel>button{width:100%;font-size:12px;min-height:36px}
+.taskgraph-group-panel>small{display:block;font-size:10px;color:#7690a3;line-height:1.5;margin-top:10px}
+.taskgraph-group-panel .source-project-buttons{flex-wrap:wrap}
+.taskgraph-inherited-setup{font-size:10px;line-height:1.5;color:#5a809b;margin:2px 0 8px;max-width:100%}
+.taskgraph-setup-strip.is-empty:has(.taskgraph-inherited-setup:not([hidden])){flex-wrap:wrap;gap:7px 18px}
+.taskgraph-setup-strip.is-empty .taskgraph-inherited-setup{flex-basis:100%;order:3;margin:0}
+@media(max-width:800px){.taskgraph-location{width:100%;max-width:none;min-width:0}}

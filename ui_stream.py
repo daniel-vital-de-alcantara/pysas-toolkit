@@ -225,9 +225,9 @@ def read_asset(app, ref, suffix):
     return raw
 
 
-def assets(app, document):
+def assets(app, document, *, refs=None):
     result, sas_size, total = {}, 0, 0
-    for ref, suffix in asset_refs(document):
+    for ref, suffix in (asset_refs(document) if refs is None else refs):
         if ref["sha256"] in result: continue
         raw = read_asset(app, ref, suffix)
         if suffix == ".sas": sas_size += len(raw)
@@ -324,10 +324,18 @@ def import_document(app, raw):
     if len(raw) > JSON_LIMIT: raise ValueError("Run stream JSON exceeds 128 MB.")
     value = json.loads(raw.decode("utf-8-sig"))
     document = validate(value)
-    encoded = value.get("assets")
+    import_assets(app, asset_refs(document), value.get('assets'))
+    for row in document["rows"]:
+        if row["source_kind"] == "inline": row["analysis"] = scan_source(row["code"])
+    return document
+
+
+def import_assets(app, refs, encoded):
+    """Validate the whole asset set before writing; also used by nested graphs."""
+    refs = list(refs)
     if not isinstance(encoded, dict): raise ValueError("Portable stream JSON is missing its embedded files.")
     decoded, total_sas, total_assets = {}, 0, 0
-    for ref, suffix in asset_refs(document):
+    for ref, suffix in refs:
         if ref is None or ref["sha256"] in decoded: continue
         content = encoded.get(ref["sha256"])
         if not isinstance(content, str): raise ValueError(ref["name"] + ": embedded file is missing.")
@@ -352,7 +360,7 @@ def import_document(app, raw):
             for digest, (payload, suffix) in decoded.items():
                 path = folder / (uuid.uuid4().hex + suffix); path.write_bytes(payload); written.append(path)
                 paths[digest] = app.relative(path)
-            for ref, suffix in asset_refs(document):
+            for ref, suffix in refs:
                 if ref:
                     ref["path"] = paths[ref["sha256"]]
                     # Portable templates keep their embedded copies when the
@@ -367,9 +375,6 @@ def import_document(app, raw):
             for path in written: path.unlink(missing_ok=True)
             raise
         finally: app.uploading = False
-    for row in document["rows"]:
-        if row["source_kind"] == "inline": row["analysis"] = scan_source(row["code"])
-    return document
 
 
 def stream_history(app):
@@ -379,7 +384,16 @@ def stream_history(app):
         for folder in parent.iterdir():
             if folder.is_symlink():continue
             candidates=[folder]
-            if (folder/'task-graph-plan.json').is_file():candidates=list((folder/'tasks').iterdir()) if (folder/'tasks').is_dir() else []
+            if (folder/'task-graph-plan.json').is_file():
+                try:
+                    manifest=folder/'task-graph-plan.json'
+                    if manifest.stat().st_size>20*1024**2:continue
+                    plan=json.loads(manifest.read_text(encoding='utf-8'));candidates=[]
+                    for task in plan['tasks']:
+                        if task.get('kind')=='graph':continue
+                        candidate=(folder/task['path']).resolve()
+                        if candidate.is_relative_to(folder.resolve()):candidates.append(candidate)
+                except (OSError,ValueError,KeyError,TypeError):continue
             for candidate in candidates:
                 record=candidate/'stream-result.json'
                 if candidate.is_symlink() or not record.is_file():continue

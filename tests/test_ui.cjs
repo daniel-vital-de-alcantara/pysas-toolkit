@@ -434,3 +434,9 @@ test('single-file plan displays ordered full paths, editor parameters and overri
   assert.ok(markup.indexOf('init.sas')<markup.indexOf('_cases.sas'));assert.ok(markup.indexOf('_cases.sas')<markup.indexOf('&lt;extract&gt;'));
   assert.match(h.commandCards([{id:'single',name:'Extract',tasks:{},run_log:'tasks/files/single/run.log',status:'SUCCESS'}]),/Download full run log/);
 });
+
+test('nested graph rows identify their scope and stop the graph while leaf rows stop only the file',()=>{
+  const html=h.taskTable([{key:'G',name:'Workflow',kind:'graph',status:'RUNNING',started:1,path:'tasks/run/G',can_cancel_file:true},{key:'nested_A',name:'Extract',label_path:['Workflow','<Extract>'],kind:'task',status:'RUNNING',started:1,path:'tasks/run/G/A',can_cancel_file:true}],'command');
+  assert.match(html,/Nested graph · waits for all inner tasks/);assert.match(html,/Workflow \/ &lt;Extract&gt;/);assert.doesNotMatch(html,/<Extract>/);
+  assert.match(html,/data-cancel-key="G">Stop graph/);assert.match(html,/data-cancel-key="nested_A">Stop file/);
+});

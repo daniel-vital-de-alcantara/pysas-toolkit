@@ -16,9 +16,13 @@ import egp_extract
 import ui_graph
 import ui_stream
 
-FORMAT = 'pysas-task-graph-1'
-AUTHORING_FORMAT = 'pysas-task-graph-authoring-1'
+FORMAT = 'pysas-task-graph-2'
+AUTHORING_FORMAT = 'pysas-task-graph-authoring-2'
+FORMATS = {FORMAT, 'pysas-task-graph-1'}
+AUTHORING_FORMATS = {AUTHORING_FORMAT, 'pysas-task-graph-authoring-1'}
 STORED_LIMIT = 20 * 1024**2
+MAX_DEPTH = 8
+MAX_CARDS = 1000
 
 
 def identifier(value):
@@ -33,8 +37,10 @@ def number(value, low, high):
     return value
 
 
-def validate(value):
-    if not isinstance(value, dict) or value.get('format') != FORMAT:
+def validate(value, *, _depth=0, _budget=None):
+    if _depth > MAX_DEPTH: raise ValueError('Graphs can be nested up to 8 levels deep.')
+    if _budget is None: _budget = dict(cards=0, rows=0, inline=0, edges=0)
+    if not isinstance(value, dict) or value.get('format') not in FORMATS:
         raise ValueError('Choose a PySAS task graph JSON.')
     # Each task uses the same source/selection schema as Run stream.
     defaults = ui_stream.validate(dict(value, format=ui_stream.FORMAT, rows=[]))
@@ -47,6 +53,11 @@ def validate(value):
                   shared_work=defaults['shared_work'], viewport=dict(x=number(view.get('x', 50), -100000, 100000),
                   y=number(view.get('y', 210), -100000, 100000), zoom=number(view.get('zoom', 1), .25, 2)),
                   setup=[], nodes=[], edges=[])
+    for key in ('inherit_connection', 'inherit_shared_work'):
+        if key in value or _depth:
+            setting = value.get(key, True)
+            if type(setting) is not bool: raise ValueError(key + ' must be a checkbox value.')
+            result[key] = setting
     ids, source_ids, total_rows, total_inline = set(), set(), 0, 0
     for key, limit in (('setup', 100), ('nodes', 200)):
         items = value.get(key, [])
@@ -56,6 +67,18 @@ def validate(value):
             key_id = identifier(node.get('id'))
             if key_id.casefold() in ids: raise ValueError('Task IDs must be unique across tasks and shared setup.')
             ids.add(key_id.casefold())
+            _budget['cards'] += 1
+            if _budget['cards'] > MAX_CARDS: raise ValueError('Use at most 1,000 cards across the graph and all nested graphs.')
+            kind = node.get('kind', 'task')
+            if kind not in {'task', 'graph'}: raise ValueError('Choose a task card or a graph card.')
+            if kind == 'graph':
+                if key == 'setup': raise ValueError('Shared setup must contain source cards, not graphs.')
+                if node.get('rows'): raise ValueError('Graph cards contain a graph, not source rows.')
+                child = validate(node.get('graph'), _depth=_depth+1, _budget=_budget)
+                result[key].append(dict(id=key_id, name=ui_stream.label(node.get('name', ''), 'Untitled graph'), kind='graph', rows=[],
+                    x=number(node.get('x', 0), -100000, 100000), y=number(node.get('y', 0), -100000, 100000), graph=child))
+                continue
+            if node.get('graph') is not None: raise ValueError('Use a graph card to contain a nested graph.')
             stream = ui_stream.validate(dict(node, format=ui_stream.FORMAT, egp=None, shared_work={}))
             for row in stream['rows']:
                 original = next(r for r in node['rows'] if r['id'] == row['id'])
@@ -73,6 +96,9 @@ def validate(value):
                 x=number(node.get('x', 0), -100000, 100000), y=number(node.get('y', 0), -100000, 100000),
                 export_html=stream['export_html'], export_tables=stream['export_tables'], consolidate_tables=stream['consolidate_tables']))
     if total_rows > 1000 or total_inline > ui_stream.SOURCE_LIMIT: raise ValueError('A graph supports 1,000 source programs and 16 MB of inline code in total.')
+    _budget['rows'] += total_rows; _budget['inline'] += total_inline
+    if _budget['rows'] > 1000 or _budget['inline'] > ui_stream.SOURCE_LIMIT:
+        raise ValueError('Nested graphs together support 1,000 source programs and 16 MB of inline code in total.')
     edges = value.get('edges', [])
     if not isinstance(edges, list) or len(edges) > 2000: raise ValueError('Use at most 2,000 dependencies.')
     tasks, pairs = {n['id'] for n in result['nodes']}, set()
@@ -82,6 +108,8 @@ def validate(value):
         pair = (edge['from'], edge['to'])
         if pair in pairs: raise ValueError('This dependency already exists.')
         pairs.add(pair); result['edges'].append(dict(zip(('from', 'to'), pair)))
+    _budget['edges'] += len(edges)
+    if _budget['edges'] > 5000: raise ValueError('Use at most 5,000 dependencies across all graph levels.')
     remaining = set(tasks)
     while remaining:
         ready = {task for task in remaining if not any(e['to'] == task and e['from'] in remaining for e in result['edges'])}
@@ -90,16 +118,34 @@ def validate(value):
     return result
 
 
-def all_rows(graph):
+def local_rows(graph):
     return [row for node in graph['setup'] + graph['nodes'] for row in node['rows']]
 
 
+def levels(graph, path=()):
+    yield path, graph
+    for node in graph['nodes']:
+        if node.get('kind') == 'graph': yield from levels(node['graph'], (*path, node['id']))
+
+
+def all_rows(graph):
+    return [row for _, level in levels(graph) for row in local_rows(level)]
+
+
 def stream_document(graph):
-    return dict(graph, format=ui_stream.FORMAT, rows=all_rows(graph))
+    return dict(graph, format=ui_stream.FORMAT, rows=local_rows(graph))
+
+
+def asset_refs(graph):
+    for _, level in levels(graph): yield from ui_stream.asset_refs(stream_document(level))
+
+
+def assets(app, graph):
+    return ui_stream.assets(app, stream_document(graph), refs=asset_refs(graph))
 
 
 def hydrate(app, graph):
-    for ref, suffix in ui_stream.asset_refs(stream_document(graph)):
+    for ref, suffix in asset_refs(graph):
         try:
             raw = ui_stream.read_asset(app, ref, suffix)
             if suffix == '.sas': ref.update(ui_stream.scan_source(ui_stream._decode(raw)))
@@ -110,7 +156,7 @@ def hydrate(app, graph):
 
 
 def validate_saved(value):
-    if isinstance(value, dict) and value.get('format') == FORMAT: return validate(value)
+    if isinstance(value, dict) and value.get('format') in FORMATS: return validate(value)
     from pysas import validate_graph
     return validate_graph(value)
 
@@ -185,7 +231,7 @@ def save(app, data):
 
 def export(app, value):
     graph = validate(value)
-    raw = json.dumps(ui_stream.portable(graph, ui_stream.assets(app, stream_document(graph))), ensure_ascii=False, indent=2).encode('utf-8')
+    raw = json.dumps(ui_stream.portable(graph, assets(app, graph)), ensure_ascii=False, indent=2).encode('utf-8')
     if len(raw) > ui_stream.JSON_LIMIT: raise ValueError('Portable graph JSON exceeds 128 MB.')
     with app.upload_lock:
         with app.lock:
@@ -203,34 +249,41 @@ def import_document(app, raw):
     if len(raw) > ui_stream.JSON_LIMIT: raise ValueError('Graph JSON exceeds 128 MB.')
     value = json.loads(raw.decode('utf-8-sig'))
     if not isinstance(value, dict): raise ValueError('Choose a PySAS graph JSON.')
-    if value.get('format') == AUTHORING_FORMAT: return authoring(app, value)
+    if value.get('format') in AUTHORING_FORMATS: return authoring(app, value)
     if value.get('format') == 'pysas-graph-1': return migrate(app, value)
     graph = validate(value); graph['id'] = uuid.uuid4().hex
-    if 'assets' in value:
-        restored = ui_stream.import_document(app, json.dumps(dict(stream_document(graph), assets=value['assets']), ensure_ascii=False).encode('utf-8'))
-        graph['egp'] = restored['egp']; rows = iter(restored['rows'])
-        for node in graph['setup'] + graph['nodes']: node['rows'] = [next(rows) for _ in node['rows']]
+    if 'assets' in value: ui_stream.import_assets(app, asset_refs(graph), value['assets'])
     return hydrate(app, graph)
 
 
 def refresh(app, value, *, execution=False):
     graph = validate(value)
-    document=json.loads(json.dumps(stream_document(graph)))
-    # Inactive card drafts travel in templates, but cannot block or change the
-    # source actually submitted. EGP selections are rebound to the selected project.
-    for row in document['rows']:
-        if row['source_kind']=='file':row.update(code='',project=None,programs=[])
-        elif row['source_kind']=='inline':row.update(file=None,project=None,programs=[])
-        else:
-            row.update(file=None,code='')
-            for program in row['programs']:program['file']=None
-    updated = ui_stream.refresh_document(app, document)
-    graph['egp'], graph['shared_work'] = updated['egp'], updated['shared_work']
-    for original,fresh in zip(all_rows(graph),updated['rows']):
-        if execution:original.update(fresh)
-        elif original['source_kind']=='file':original['file']=fresh['file']
-        elif original['source_kind']=='inline':original['analysis']=fresh['analysis']
-        else:original.update(project=fresh['project'],programs=fresh['programs'])
+    used_connections=set()
+    def connections(level,path=(),owner=()):
+        if not path or not level.get('inherit_connection',True):owner=path
+        if any(n.get('kind')!='graph' for n in level['nodes']):used_connections.add(owner)
+        for node in level['nodes']:
+            if node.get('kind')=='graph':connections(node['graph'],(*path,node['id']),owner)
+    if execution:connections(graph)
+    for path, level in levels(graph):
+        document = json.loads(json.dumps(stream_document(level)))
+        inherited = bool(path and level.get('inherit_connection', True)) or (execution and path not in used_connections)
+        if inherited: document['egp'] = None
+        # Inactive drafts are preserved in templates, but never submitted.
+        for row in document['rows']:
+            if row['source_kind']=='file':row.update(code='',project=None,programs=[])
+            elif row['source_kind']=='inline':row.update(file=None,project=None,programs=[])
+            else:
+                row.update(file=None,code='')
+                for program in row['programs']:program['file']=None
+        updated = ui_stream.refresh_document(app, document)
+        if not inherited or execution: level['egp'] = updated['egp']
+        level['shared_work'] = updated['shared_work']
+        for original,fresh in zip(local_rows(level),updated['rows']):
+            if execution:original.update(fresh)
+            elif original['source_kind']=='file':original['file']=fresh['file']
+            elif original['source_kind']=='inline':original['analysis']=fresh['analysis']
+            else:original.update(project=fresh['project'],programs=fresh['programs'])
     return graph
 
 
@@ -254,68 +307,157 @@ def selection_ids(task_id=None, task_ids=None):
     return ids
 
 
+def path_ids(value=None):
+    if value is None: return []
+    if not isinstance(value, list) or len(value) > MAX_DEPTH: raise ValueError('Choose a valid graph level.')
+    return [identifier(key) for key in value]
+
+
+def graph_at(value, path):
+    current = value
+    for key in path_ids(path):
+        node = next((n for n in current.get('nodes', []) if isinstance(n, dict) and n.get('id') == key), None)
+        if not node or node.get('kind') != 'graph' or not isinstance(node.get('graph'), dict):
+            raise ValueError('The selected nested graph no longer exists.')
+        current = node['graph']
+    return current
+
+
 def record_scope(record):
     """Read old single-task history and current selected-task records."""
     return record.get('graph_task_ids') or ([record['graph_task_id']] if record.get('graph_task_id') else None)
 
 
-def conflicts(commands, graph_id, ids, exclude=None):
-    return any(c.get('id') != exclude and c.get('action') == 'task-graph' and c.get('graph_id') == graph_id
-               and c.get('status') in {'RUNNING', 'STOPPING'}
-               and (ids is None or record_scope(c) is None or set(ids).intersection(record_scope(c))) for c in commands)
+def conflicts(commands, graph_id, ids, exclude=None, *, graph_path=None):
+    path = tuple(path_ids(graph_path))
+    scopes = [path] if ids is None else [(*path, key) for key in ids]
+    for c in commands:
+        if c.get('id') == exclude or c.get('action') != 'task-graph' or c.get('graph_id') != graph_id or c.get('status') not in {'RUNNING','STOPPING'}: continue
+        other_path = tuple(c.get('graph_run_path') or [])
+        other_ids = record_scope(c)
+        others = [other_path] if other_ids is None else [(*other_path,key) for key in other_ids]
+        if any(a[:len(b)] == b or b[:len(a)] == a for a in scopes for b in others): return True
+    return False
 
 
-def run_name(value, task_id=None, task_ids=None):
-    name = value.get('name') or 'Graph'
+def run_name(value, task_id=None, task_ids=None, *, graph_path=None):
+    name = value.get('name') or 'Graph'; current = value
+    for key in path_ids(graph_path):
+        node = next((n for n in current.get('nodes',[]) if n.get('id') == key), None)
+        if not node or node.get('kind') != 'graph': raise ValueError('The selected nested graph no longer exists.')
+        name += ' / ' + node['name']; current = node['graph']
     ids = selection_ids(task_id, task_ids)
     if task_id is not None:
-        node = next((n for n in value.get('nodes', []) if n.get('id') == task_id), {})
+        node = next((n for n in current.get('nodes', []) if n.get('id') == task_id), {})
         name += ' · ' + node.get('name', task_id)
     elif ids is not None: name += f' · {len(ids)} selected task' + ('s' if len(ids) != 1 else '')
     return name[:120]
 
 
-def execution_document(app, value, task_id=None, *, task_ids=None):
-    graph = validate(value)
-    if not graph['nodes']: raise ValueError('Add at least one task to run.')
+def scope_omissions(value, ids, graph_path):
+    current = value; prefix = []; result = []
+    def add(level, selected):
+        for edge in level['edges']:
+            if edge['to'] in selected and edge['from'] not in selected:
+                result.append({key:'/'.join([*prefix,edge[key]]) for key in ('from','to')})
+    for key in graph_path:
+        add(current,[key]);current = graph_at(current,[key]);prefix.append(key)
+    if ids is not None: add(current,ids)
+    return result
+
+
+def execution_document(app, value, task_id=None, *, task_ids=None, graph_path=None):
+    graph = validate(value); path = path_ids(graph_path); current = graph
+    name = run_name(graph,task_id,task_ids,graph_path=path)
+    for key in path:
+        child = graph_at(current,[key]);node = next(n for n in current['nodes'] if n['id']==key)
+        current['nodes'],current['edges'] = [node],[]; current = child
+    if not current['nodes']: raise ValueError('Add at least one task to run.')
     ids = selection_ids(task_id, task_ids)
     if ids is not None:
-        if set(ids) - {n['id'] for n in graph['nodes']}:
-            raise ValueError('Choose task cards to run. Shared setup is prepended to tasks.')
-        graph['name'] = run_name(graph, task_id, task_ids)
-        graph['nodes'] = [n for n in graph['nodes'] if n['id'] in ids]
-        graph['edges'] = [e for e in graph['edges'] if e['from'] in ids and e['to'] in ids]
+        if set(ids) - {n['id'] for n in current['nodes']}: raise ValueError('Choose task cards to run. Shared setup is prepended to tasks.')
+        current['nodes'] = [n for n in current['nodes'] if n['id'] in ids]
+        current['edges'] = [e for e in current['edges'] if e['from'] in ids and e['to'] in ids]
+    graph['name'] = name
     return refresh(app, graph,execution=True)
 
 
-def prepare(app, value, task_id=None, cancelled=lambda:False, progress=lambda text:None, *, task_ids=None, started=None, prepared_graph=None):
-    started=time.time() if started is None else started
+def effective(level, parent=None):
+    result = dict(level)
+    if parent:
+        if level.get('inherit_connection', True):
+            for key in ('egp','connection_mode','server_program'): result[key] = parent[key]
+        if level.get('inherit_shared_work', True): result['shared_work'] = parent['shared_work']
+    return result
+
+
+def nested_task_document(level, node, path, setup):
+    if not path: return task_document(level,node)
+    rows = []
+    for namespace,card in [*setup,(path,node)]:
+        for original in card['rows']:
+            row = json.loads(json.dumps(original))
+            for unit in [row,*row['programs']]:
+                unit['id'] = 's_' + hashlib.sha256(('/'.join([*namespace,card['id'],unit['id']])).encode()).hexdigest()[:48]
+            rows.append(row)
+    return dict(task_document(dict(level,setup=[]),node),rows=rows)
+
+
+def prepare(app, value, task_id=None, cancelled=lambda:False, progress=lambda text:None, *, task_ids=None, graph_path=None, started=None, prepared_graph=None):
+    started=time.time() if started is None else started;path=path_ids(graph_path);ids=selection_ids(task_id,task_ids)
     if cancelled():raise InterruptedError('Cancelled before submission.')
-    ids=selection_ids(task_id,task_ids)
-    graph=validate(prepared_graph) if prepared_graph is not None else execution_document(app,value,task_id,task_ids=task_ids)
-    if ids is not None and set(ids)!={n['id'] for n in graph['nodes']}:raise ValueError('Prepared tasks do not match the selected tasks.')
-    if not graph['egp']: raise ValueError('Choose a connection EGP in Graph settings before running.')
-    raw_assets=ui_stream.assets(app,stream_document(graph))
+    graph=validate(prepared_graph) if prepared_graph is not None else execution_document(app,value,task_id,task_ids=task_ids,graph_path=path)
+    if ids is not None and set(ids)!={n['id'] for n in graph_at(graph,path)['nodes']}:raise ValueError('Prepared tasks do not match the selected tasks.')
+    raw_assets=assets(app,graph)
     timing_cache=dict(records=ui_stream.stream_history(app),samples=app.timing_samples())
-    folder = app.tasks/'schedules'/(datetime.now().strftime('%Y%m%d_%H%M%S')+'__graph_'+uuid.uuid4().hex[:8])
-    folder.mkdir(parents=True)
+    folder = app.tasks/'schedules'/(datetime.now().strftime('%Y%m%d_%H%M%S')+'__graph_'+uuid.uuid4().hex[:8]);folder.mkdir(parents=True)
     try:
-        manifest = dict(name=graph['name'], graph_id=graph['id'], started=started, workers=graph['workers'], mode='task' if task_id is not None else 'selection' if ids is not None else 'graph',
-                        selected_task_ids=ids, external_prerequisites=[dict(e) for e in value.get('edges',[]) if ids is not None and e['to'] in ids and e['from'] not in ids], tasks=[])
-        for index, node in enumerate(graph['nodes'],1):
-            if cancelled(): raise InterruptedError('Cancelled before submission.')
-            if not node['rows']: raise ValueError(node['name']+': add at least one source card.')
-            if any(not setup['rows'] for setup in graph['setup']): raise ValueError('Complete every shared setup card before running.')
-            progress(f'Preparing task {index}/{len(graph["nodes"])} · {node["name"]}')
-            target, _, forecast = ui_stream.prepare(app, task_document(graph,node), destination=folder/'tasks'/('task_'+node['id']),timing_cache=timing_cache,raw_assets=raw_assets)
-            manifest['tasks'].append(dict(task_id=node['id'], program=node['name'], depends_on=[e['from'] for e in graph['edges'] if e['to']==node['id']],
-                path=target.relative_to(folder).as_posix(), estimate=forecast, stream_task=True,
-                setup=[dict(program=n['name']) for n in graph['setup']]))
+        manifest=dict(name=graph['name'],graph_id=graph['id'],started=started,workers=graph['workers'],mode='task' if task_id is not None else 'selection' if ids is not None else 'subgraph' if path else 'graph',
+                      graph_path=path,selected_task_ids=ids,external_prerequisites=scope_omissions(validate(value),ids,path),tasks=[])
+        root_ids={n['id'] for n in graph['nodes']};keys={};groups=[];count=0
+        total=sum(n.get('kind')!='graph' for _,g in levels(graph) for n in g['nodes'])
+        def key_for(node_path):
+            if len(node_path)==1:return node_path[0]
+            salt='';key='g_'+hashlib.sha256(('/'.join(node_path)+salt).encode()).hexdigest()[:48]
+            while key in root_ids:salt+='!';key='g_'+hashlib.sha256(('/'.join(node_path)+salt).encode()).hexdigest()[:48]
+            return key
+        for prefix,level in levels(graph):
+            for node in level['nodes']:keys[(*prefix,node['id'])]=key_for((*prefix,node['id']))
+        def build(level,prefix=(),labels=(),parent=None,destination=folder,parent_context=None,inherited=()):
+            nonlocal count
+            context=effective(level,parent_context);setup=[*inherited,*[(prefix,n) for n in level['setup']]]
+            if not level['nodes']:raise ValueError(' / '.join(labels or (level['name'],))+': add at least one task to the graph.')
+            if any(not card['rows'] for _,card in setup):raise ValueError('Complete every shared setup card before running.')
+            for index,node in enumerate(level['nodes'],1):
+                if cancelled():raise InterruptedError('Cancelled before submission.')
+                node_path=(*prefix,node['id']);key=keys[node_path];group=node.get('kind')=='graph'
+                # Keep deep Windows EG paths short. Runtime IDs remain based on
+                # logical node paths; the frozen plan maps them to these folders.
+                component=f'node_{index:03d}' if prefix else f'graph_{index:03d}' if group and len(node['id'])>16 else 'task_'+node['id']
+                target=(destination if prefix else destination/'tasks')/component
+                definition=dict(task_id=key,program=node['name'],depends_on=[keys[(*prefix,e['from'])] for e in level['edges'] if e['to']==node['id']],path=target.relative_to(folder).as_posix(),
+                    kind='graph' if group else 'task',parent_id=parent,node_path=list(node_path),label_path=[*labels,node['name']],stream_task=not group,setup=[dict(program=n['name']) for _,n in setup])
+                manifest['tasks'].append(definition)
+                if group:
+                    target.mkdir(parents=True);definition.update(workers=node['graph']['workers'],estimate=None)
+                    groups.append((definition,node['graph'],target));build(node['graph'],node_path,(*labels,node['name']),key,target,context,setup)
+                else:
+                    if not context['egp']:raise ValueError(' / '.join([*labels,node['name']])+': choose a connection EGP in Graph settings before running.')
+                    if not node['rows']:raise ValueError(node['name']+': add at least one source card.')
+                    count+=1;progress(f'Preparing task {count}/{total} · '+ ' / '.join([*labels,node['name']]))
+                    _,_,forecast=ui_stream.prepare(app,nested_task_document(context,node,prefix,setup),destination=target,timing_cache=timing_cache,raw_assets=raw_assets)
+                    definition['estimate']=forecast
+        build(graph)
         portable=json.dumps(ui_stream.portable(graph,raw_assets),ensure_ascii=False,indent=2)
         if len(portable.encode('utf-8'))>ui_stream.JSON_LIMIT:raise ValueError('Portable graph JSON exceeds 128 MB.')
         (folder/'task-graph.json').write_text(portable,encoding='utf-8')
         (folder/'task-graph-plan.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
-        return folder, graph, manifest
+        for definition,child,target in groups:
+            descendants=[dict(t,path=(folder/t['path']).relative_to(target).as_posix()) for t in manifest['tasks'] if t['node_path'][:len(definition['node_path'])]==definition['node_path'] and t['task_id']!=definition['task_id']]
+            local=dict(name=definition['program'],graph_id=child['id'],workers=child['workers'],root_parent=definition['task_id'],tasks=descendants,mode='graph',started=None)
+            (target/'task-graph-plan.json').write_text(json.dumps(local,ensure_ascii=False,indent=2),encoding='utf-8')
+            (target/'graph-definition.json').write_text(json.dumps(child,ensure_ascii=False,indent=2),encoding='utf-8')
+        return folder,graph,manifest
     except BaseException:
         shutil.rmtree(folder);raise
 
@@ -330,16 +472,22 @@ def authoring(app, value):
         ref=ui_stream.describe(app,path)
         if not ref['name'].lower().endswith(suffix):raise ValueError('Choose a '+suffix+' file.')
         return ref
-    graph['egp']=bind(graph.get('egp'),'.egp')
-    for kind in ('setup','nodes'):
-        if not isinstance(graph.get(kind,[]),list):raise ValueError('Use a list of '+kind+' cards.')
-        for index,node in enumerate(graph.get(kind,[])):
-            if not isinstance(node,dict):raise ValueError('Invalid task card.')
-            node.setdefault('x',(index%4)*374);node.setdefault('y',(index//4)*223)
-            for row in node.get('rows',[]):
-                if not isinstance(row,dict):raise ValueError('Invalid source card.')
-                row.setdefault('id','s_'+uuid.uuid4().hex);row.setdefault('source_kind','file');row.setdefault('programs',[])
-                if row.get('file'):row['file']=bind(row['file'],'.sas')
-                if row.get('project'):row['project']=bind(row['project'],'.egp')
-                if row['source_kind']=='egp':raise ValueError('Authoring JSON supports file and inline sources. Select embedded EGP programs in the editor, then export a portable template.')
+    def visit(level,depth=0):
+        if not isinstance(level,dict) or depth>MAX_DEPTH:raise ValueError('Graphs can be nested up to 8 levels deep.')
+        level['format']=FORMAT;level['id']=uuid.uuid4().hex;level['egp']=bind(level.get('egp'),'.egp')
+        for kind in ('setup','nodes'):
+            if not isinstance(level.get(kind,[]),list):raise ValueError('Use a list of '+kind+' cards.')
+            for index,node in enumerate(level.get(kind,[])):
+                if not isinstance(node,dict):raise ValueError('Invalid task card.')
+                node.setdefault('x',(index%4)*374);node.setdefault('y',(index//4)*223)
+                if node.get('kind')=='graph':
+                    if kind=='setup':raise ValueError('Shared setup cannot contain graph cards.')
+                    visit(node.get('graph'),depth+1);continue
+                for row in node.get('rows',[]):
+                    if not isinstance(row,dict):raise ValueError('Invalid source card.')
+                    row.setdefault('id','s_'+uuid.uuid4().hex);row.setdefault('source_kind','file');row.setdefault('programs',[])
+                    if row.get('file'):row['file']=bind(row['file'],'.sas')
+                    if row.get('project'):row['project']=bind(row['project'],'.egp')
+                    if row['source_kind']=='egp':raise ValueError('Authoring JSON supports file and inline sources. Select embedded EGP programs in the editor, then export a portable template.')
+    visit(graph)
     return hydrate(app,validate(graph))

@@ -474,12 +474,67 @@ def estimate_schedule(tasks, workers, samples):
             'unknown': unknown, 'tasks': tasks, 'workers': workers}
 
 
+def remaining_graph(command, now):
+    """Forecast nested gates without spending SAS worker slots on containers."""
+    items={str(t.get('key') or t.get('task_id') or i):dict(t) for i,t in enumerate(command.get('tasks',{}).values())}
+    groups={k:t for k,t in items.items() if t.get('kind')=='graph'}
+    states={k:t.get('status','PENDING') for k,t in items.items()};children={k:[n for n,t in items.items() if t.get('parent_id')==k] for k in [None,*groups]}
+    ancestors={};known=unknown=0;heap=[];elapsed=0;workers=max(1,min(32,int(command.get('workers',10))))
+    cancelled={k for k in groups if states[k]=='CANCELLING'}
+    for key,task in items.items():
+        chain=[];parent=task.get('parent_id')
+        while parent is not None:
+            if parent in chain or parent not in groups:return dict(seconds=0,known=0,unknown=1)
+            chain.append(parent);parent=groups[parent].get('parent_id')
+        ancestors[key]=chain
+    def terminal(key):return states[key] not in {'PENDING','RUNNING','CANCELLING'}
+    def duration(key,running=False):
+        nonlocal known,unknown
+        estimate=items[key].get('estimate') or {};seconds=estimate.get('seconds')
+        if seconds is not None and running:
+            seconds-=max(0,now-(items[key].get('started') or now))
+            if seconds<=0:seconds=None
+        if seconds is None:unknown+=1;return 0
+        known+=1;unknown+=estimate.get('unknown',0);return max(0,seconds)
+    for key in items:
+        if key not in groups and states[key] in {'RUNNING','CANCELLING'}:heapq.heappush(heap,(duration(key,True),key))
+    for _ in range(3*len(items)+1):
+        changed=False
+        for key in reversed(list(groups)):
+            if states[key] in {'RUNNING','CANCELLING'} and all(terminal(child) for child in children[key]):
+                states[key]='SUCCESS' if all(states[c]=='SUCCESS' for c in children[key]) else 'FAILED';changed=True
+        used={g:sum(g in ancestors[k] for _,k in heap) for g in groups}
+        for key,task in items.items():
+            if states[key]!='PENDING':continue
+            if command['status']=='STOPPING' or key in cancelled or any(a in cancelled for a in ancestors[key]):states[key]='CANCELLED';changed=True;continue
+            parent=task.get('parent_id')
+            if parent is not None and states[parent] not in {'RUNNING','CANCELLING'}:
+                if terminal(parent):states[key]='BLOCKED_DEPENDENCY';changed=True
+                continue
+            deps=task.get('depends_on',[])
+            if any(d not in states or states[d] not in {'PENDING','RUNNING','CANCELLING','SUCCESS'} for d in deps):states[key]='BLOCKED_DEPENDENCY';changed=True;continue
+            if not all(states[d]=='SUCCESS' for d in deps):continue
+            if key in groups:states[key]='RUNNING';changed=True
+            elif len(heap)<workers and all(used[a]<groups[a].get('workers',10) for a in ancestors[key]):
+                states[key]='RUNNING';heapq.heappush(heap,(elapsed+duration(key),key));changed=True
+                for a in ancestors[key]:used[a]+=1
+        if heap:
+            elapsed,key=heapq.heappop(heap);states[key]='SUCCESS'
+            while heap and heap[0][0]==elapsed:_,key=heapq.heappop(heap);states[key]='SUCCESS'
+        elif not changed:
+            if any(not terminal(k) for k in items):unknown+=max(1,sum(not terminal(k) for k in items if k not in groups))
+            break
+    return dict(seconds=elapsed,known=known,unknown=unknown)
+
+
 def remaining_work(commands, queued, samples, now):
     """Forecast current workloads, with running tasks occupying their worker slots."""
     forecasts = []
     for command in commands:
         if command.get('status') not in {'RUNNING', 'STOPPING'}: continue
         if command.get('action') not in {'run', 'watch', 'schedule', 'continue', 'server-refresh', 'stream','task-graph'}: continue
+        if any(t.get('kind')=='graph' for t in command.get('tasks',{}).values()):
+            forecasts.append(remaining_graph(command,now));continue
         args = command.get('args', [])
         workers = int(args[args.index('--workers')+1]) if '--workers' in args else command.get('workers',1)
         tasks = [dict(t) for t in command.get('tasks', {}).values()]

@@ -1,6 +1,6 @@
 # Task graph · canvas and execution
 
-The Graph tab keeps its canvas design. In **0.4.0-preview.41**, tasks can run as a whole graph, individually, or as a selected branch through the same independent `engine.py` used by Run stream. Shared setup is prepended before each task. Selection menus, Home/View controls and card placement are refined in this preview.
+The Graph tab keeps its canvas design. **0.4.0-preview.42** adds graph cards: a node can contain another complete graph, with its own layout, dependencies, setup and task definitions. Whole, selected and inner-graph runs use the independent `engine.py` through Run stream source tasks.
 
 ## Canvas and task cards
 
@@ -13,6 +13,22 @@ Open **Graph** (Alt, G). The canvas fills the window beside the left navigation.
 - Use **＋ Shared setup** for special cards in the strip above the task area. Their sources are prepended before **every task**, in strip order, inside that task's submission. They are definitions, not independent jobs, and never have dependency arrows. Drag them to reorder or use Move earlier/later in their drawer. The strip can collapse when you need more room.
 
 Within a task or shared setup card, **Add file or code** stays below the last source. Use source grips or up/down buttons to order files; selected EGP program subrows have their own ordering controls. External EGP code is identified without fetching its original path; browse that SAS file instead. Existing source encodings are preserved in the snapshots and JSON. **Refresh source / sections** rereads a file and revalidates scopes with the Run stream scanner. Restored references without metadata are read before becoming Defined. **File → Refresh sources** updates all active sources. Uploaded files are copies; a linked local path follows edits on the next refresh/run. Inactive card drafts remain available in templates but cannot block execution of the active source type.
+
+## Graphs inside graph cards
+
+Choose **＋ Graph**, give the card a name, then **Open inner graph**. Double-click a graph card or select it and press Enter to open it directly. The inner canvas has the same task, graph, setup, link, alignment and menu controls. **Back**, **Alt + Left**, or the breadcrumb buttons return to a parent level. Each level keeps its own card positions and viewport. Undo/Redo covers the whole document, including edits made inside nested graphs.
+
+A graph card's Edit drawer can **Use saved copy** or **Restore JSON** to copy an existing graph into that card. These are independent copies: editing one does not change another saved graph or another card. Replacing contents can be undone. While inside a graph, File → **Save this level as new graph** creates a reusable library copy with its effective connection and its own setup. Ancestor setup remains part of the parent orchestration. Normal **Save full graph** and **Export JSON** include the entire outer graph and all its nested graphs.
+
+An arrow **A → Graph card → Z** means: A must succeed, then the inner graph may start, and Z waits until **every inner card succeeds**. Inner failures/cancellations block their dependents, fail the containing graph and block its outer dependents; independent branches may finish. Graph cards orchestrate tasks and do not submit their own SAS source or hold a SAS worker slot.
+
+- Inner Graph settings default to **Use parent connection** and **Use parent shared WORK**. Uncheck either to use that level's own connection or WORK checkbox choice. Shared WORK paths/librefs still refresh from current app settings when a run starts.
+- Ancestor shared setup always runs first, from outermost to innermost, followed by this level's setup and the leaf task's source. Setup is source prepended to each submission, never a separate scheduled job.
+- All inner SAS submissions in one launch share the outer maximum parallel runs (default 10). Each inner graph can impose a lower limit for its subtree. A waiting container does not consume a SAS session or multiply worker pools.
+- **Run graph** inside an inner canvas runs that level with ancestor setup/settings. **Run selected** at any level runs the selected cards, including each selected graph's contents. Prerequisites outside that explicit scope are omitted and listed in the parent log. Scope conflict checks include ancestors: a full outer run blocks a simultaneous inner run, while disjoint scopes remain allowed.
+- Each graph has an inspector listing its immediate children. Open those child inspectors to continue down the hierarchy. Source tasks keep their own logs/results; graph folders consolidate descendant logs once, retaining elapsed time and status. Finished inner logs are available while other outer branches are still running. **Stop graph** on a running graph card stops that subtree; outer Stop stops the whole launch.
+
+Use nesting up to 8 levels deep, with 1,000 total cards and 1,000 source programs across the document. IDs are unique within a graph level; copied graphs may reuse local IDs. Runtime identities and folders distinguish those paths.
 
 ## Dependencies
 
@@ -57,7 +73,7 @@ In a task's drawer, **Run this task only** still submits that task with setup an
 
 Each task has a separate SAS session. Arrows order execution; they do not transfer WORK tables or macro variables automatically. Use shared WORK or permanent libraries for tables, and shared setup for macros needed by every task. Rows within one task share one submission/session.
 
-The parent folder is `Tasks/schedules/<timestamp>__graph_<id>/`, with a frozen graph template/plan, `run_summary.csv`, `status.txt`, `graph-result.json` and consolidated `run.log`. Each task folder under `tasks/task_<ID>/` contains its normal Run stream source, original inputs, portable stream template, logs, results and timing metadata. Overview/Inspect, actual-file Copy, downloads and ZIP work for the graph and individual task folders. Successful task timings inform later matching stream/task estimates.
+The parent folder is `Tasks/schedules/<timestamp>__graph_<id>/`, with a frozen graph template/plan, `run_summary.csv`, `status.txt`, `graph-result.json` and consolidated `run.log`. Root cards use `tasks/task_<ID>/`; nested folders use short stable names beneath their containing graph. Each source task folder contains its normal Run stream source, original inputs, portable stream template, logs, results and timing metadata. Overview/Inspect, actual-file Copy, downloads and ZIP work for the graph and individual task folders. Successful task timings inform later matching stream/task estimates.
 
 **Run again** starts a new graph from saved choices and fresh linked sources. This version does not resume graph attempts; Excel/legacy schedule continuation stays separate. The existing single-file CLI, Run, watcher and Excel scheduler retain their workflow. Do not pass the new task-plan format to `pysas.py graph run`.
 
@@ -73,13 +89,13 @@ Open **File** beside the graph name:
 - **Export JSON** prepares a portable `.graph.json` with the graph name, task/setup definitions, ordered sources, connections, dependencies, positions, viewport/zoom and output options. SAS/EGP files are embedded once by checksum, including extracted program bytes. The result offers Download and Windows actual-file Copy.
 - **Restore JSON** validates before replacing the draft and gives the imported plan a new ID. If you make edits while a restore is loading, **Use imported graph** lets you apply it explicitly. Export results prepared from an older draft are not advertised as the current plan.
 
-**JSON guide for AI** downloads the complete [authoring manual](graph-json-manual.md), also linked in Settings → Defaults. An AI can generate `pysas-task-graph-authoring-1` with local file paths or inline code, without inventing SHA-256/base64 data. Restore JSON binds those paths and scans sections locally; import never starts SAS. Current saved/portable plans use `pysas-task-graph-1`. Earlier `pysas-graph-1` files can be opened/imported as new task-plan drafts; original saved graph files are preserved. Available sources are mapped to new cards. Missing/unavailable sources retain their previous paths and ask you to browse them again. Review the converted definitions: legacy scheduler skip/error policies are not controls of the new task runner.
+**JSON guide for AI** downloads the complete [authoring manual](graph-json-manual.md), also linked in Settings → Defaults. An AI can generate `pysas-task-graph-authoring-2` with local file paths or inline code, without inventing SHA-256/base64 data. Restore JSON binds those paths and scans sections locally; import never starts SAS. Current saved/portable plans use `pysas-task-graph-2`. Flat task-graph/editor and authoring version 1 files are still accepted and upgraded when saved. Version 2 prevents older previews from dropping nested definitions. Back up before moving between app versions. Earlier `pysas-graph-1` files can be opened/imported as new task-plan drafts; original saved graph files are preserved. Available sources are mapped to new cards. Missing/unavailable sources retain their previous paths and ask you to browse them again. Review the converted definitions: legacy scheduler skip/error policies are not controls of the new task runner.
 
 JSON may contain private SAS source and EGP connection information, just like the input files. Exporting source snapshots makes the graph portable; it does not include external SAS server datasets or a running shared-WORK session.
 
 Full saved-data backups include task plans and uploaded source snapshots. Configs-only includes definitions and inline code; uploaded SAS/EGP assets require the full backup or portable graph JSON. Restoring colliding graph IDs/source filenames preserves both and remaps their paths. Existing Tasks and Settings folders remain configurable across installations.
 
-Limits: 200 task nodes, 100 shared setup cards, 2,000 dependency links and 1,000 source programs in total. Inline editors accept 1 MB each/16 MB total; distinct SAS assets up to 16 MB, each EGP up to 64 MB, combined assets up to 80 MB. Saved definitions are limited to 20 MB; portable JSON to 128 MB.
+Limits per level: 200 task/graph nodes, 100 setup cards and 2,000 links. Across all levels: 1,000 cards, 5,000 links, 1,000 source programs and nesting up to 8 levels deep. Inline editors accept 1 MB each/16 MB total; distinct SAS assets up to 16 MB, each EGP up to 64 MB, combined assets up to 80 MB. Saved definitions are limited to 20 MB; portable JSON to 128 MB.
 
 ## Legacy CLI graphs
 
