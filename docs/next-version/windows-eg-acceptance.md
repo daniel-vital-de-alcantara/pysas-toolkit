@@ -68,7 +68,7 @@ Status: target-environment checks pending. The user authorized publishing testin
 - Inspect a failed schedule: Continue must use its existing folder, workers and pause-adjusted elapsed time; Run again must create a fresh schedule. Test a completed stream and an older saved run. Full backup restore in a different workspace must preserve replay configuration and project names.
 - Give two completed runs the same exact name. Overview history should group them, while simultaneous active runs remain separate in Running now. Choose an older inspector version, poll/complete another run and switch versions rapidly; selection must stay correct.
 
-## Connected task graph acceptance (preview.39)
+## Connected task graph acceptance (preview.40)
 
 - Compare one graph task against the same Run stream: identical ordered setup, source selections, EGP/server, shared WORK, returned logs, HTML/tables and elapsed time. Test a manual task with prerequisites omitted; the UI/log must identify that mode.
 - Build A→B→C plus A→C, then Arrange and move B manually. The A→C link must stay visible around B. Check branches/joins, multiple spanning links, 100%/150%/200% scaling and narrow windows. Shift/Ctrl-select tasks, align every direction, distribute, drag/move the group and undo once.

@@ -39,7 +39,7 @@ class TaskGraphExecutionTests(unittest.TestCase):
         self.app.launches.close();self.app.stream_jobs.close();deadline=time.monotonic()+5
         while self.app.processes and time.monotonic()<deadline:time.sleep(.01)
         self.temp.cleanup()
-    def result(self,folder):return json.loads((folder/'graph-result.json').read_text())
+    def result(self,folder):return json.loads((folder/'graph-result.json').read_text(encoding='utf-8'))
     def output(self,destination,status='SUCCESS',message=''):
         destination.mkdir(parents=True,exist_ok=True);log='NOTE: '+destination.parent.name+'\n'+message
         (destination/'sas.log').write_text(log)
@@ -53,7 +53,7 @@ class TaskGraphExecutionTests(unittest.TestCase):
     def test_parallel_dependencies_shared_setup_and_consolidated_log(self):
         folder,_,_=graph.prepare(self.app,self.value);active=set();completed=set();lock=threading.Lock();barrier=threading.Barrier(2);maximum=[0];codes={}
         def runner(project,source,destination,**options):
-            key=source.parent.name.removeprefix('task_');code=source.read_text();codes[key]=code
+            key=source.parent.name.removeprefix('task_');code=source.read_text(encoding='utf-8');codes[key]=code
             self.assertLess(code.index('%let lib_token'),code.index('%let case_ids'));self.assertLess(code.index('%let case_ids'),code.index('%put task_'))
             with lock:
                 if key=='C':self.assertTrue({'A','B'}<=completed)
@@ -66,8 +66,8 @@ class TaskGraphExecutionTests(unittest.TestCase):
         rc,events=self.run_graph(folder,runner);self.assertEqual(rc,0);self.assertEqual(maximum[0],2);self.assertEqual(set(codes),set('ABCD'))
         self.assertEqual(self.result(folder)['status'],'SUCCESS');self.assertEqual(len([e for e in events if e['event']=='start']),4)
         self.assertEqual(len([e for e in events if e['event']=='finish']),4);self.assertTrue(all(e['key']!='Setup' for e in events if e['event']=='start'))
-        text=(folder/'run.log').read_text();self.assertIn('A · A · SUCCESS',text);self.assertIn('NOTE: task_D',text)
-        rows=list(csv.DictReader(io.StringIO((folder/'run_summary.csv').read_text())));self.assertEqual(len(rows),4)
+        text=(folder/'run.log').read_text(encoding='utf-8');self.assertIn('A · A · SUCCESS',text);self.assertIn('NOTE: task_D',text)
+        rows=list(csv.DictReader(io.StringIO((folder/'run_summary.csv').read_text(encoding='utf-8'))));self.assertEqual(len(rows),4)
         detail=self.app.details(self.app.relative(folder));self.assertEqual(len(detail['tasks']),4);self.assertTrue(all(self.app.resolve(t['path']).is_dir() for t in detail['tasks']))
         self.assertEqual(self.app.history()[0]['kind'],'graph')
 
@@ -94,8 +94,8 @@ class TaskGraphExecutionTests(unittest.TestCase):
         folder,document,manifest=graph.prepare(self.app,value,'C');source.write_text('%put edited;')
         self.assertEqual([t['task_id'] for t in manifest['tasks']],['C']);self.assertEqual(manifest['tasks'][0]['depends_on'],[]);self.assertEqual(document['edges'],[])
         codes=[]
-        def runner(project,source,destination,**options):codes.append(source.read_text());return self.output(destination)
-        rc,_=self.run_graph(folder,runner);self.assertEqual(rc,0);self.assertEqual(len(codes),1);self.assertIn('%let case_ids=12;',codes[0]);self.assertIn('%put frozen;',codes[0]);self.assertNotIn('%put edited;',codes[0]);self.assertIn('Manual task run',(folder/'run.log').read_text())
+        def runner(project,source,destination,**options):codes.append(source.read_text(encoding='utf-8'));return self.output(destination)
+        rc,_=self.run_graph(folder,runner);self.assertEqual(rc,0);self.assertEqual(len(codes),1);self.assertIn('%let case_ids=12;',codes[0]);self.assertIn('%put frozen;',codes[0]);self.assertNotIn('%put edited;',codes[0]);self.assertIn('Manual task run',(folder/'run.log').read_text(encoding='utf-8'))
 
     def test_preparation_validates_every_task_and_cleans_partial_output_without_engine(self):
         value=copy.deepcopy(self.value);value['nodes'][-1]['rows']=[];before=set((self.app.tasks/'schedules').iterdir())
@@ -110,7 +110,7 @@ class TaskGraphExecutionTests(unittest.TestCase):
         authored=dict(format=graph.AUTHORING_FORMAT,name='AI plan',egp=str(self.project),setup=[],nodes=[dict(id='Extract',name='Extract',rows=[dict(file=str(source),mode='section',sections=['Réalisé'])])],edges=[])
         result=graph.import_document(self.app,json.dumps(authored).encode());self.assertEqual(result['format'],graph.FORMAT);ref=result['nodes'][0]['rows'][0]['file']
         self.assertEqual(ref['sections'],ui_stream.describe(self.app,source)['sections']);self.assertEqual(len(ref['sha256']),64);self.assertEqual(ref['origin_path'],str(source))
-        folder,_,_=graph.prepare(self.app,result);self.assertIn('%put preço;',(folder/'tasks/task_Extract/source.sas').read_text());self.assertNotIn('section_start:',(folder/'tasks/task_Extract/source.sas').read_text())
+        folder,_,_=graph.prepare(self.app,result);self.assertIn('%put preço;',(folder/'tasks/task_Extract/source.sas').read_text(encoding='utf-8'));self.assertNotIn('section_start:',(folder/'tasks/task_Extract/source.sas').read_text(encoding='utf-8'))
 
     def test_graph_task_successful_timings_are_reused_as_stream_estimates(self):
         folder,document,_=graph.prepare(self.app,self.value)
@@ -120,7 +120,7 @@ class TaskGraphExecutionTests(unittest.TestCase):
     def test_run_uses_current_shared_work_and_linked_file_but_each_snapshot_stays_frozen(self):
         ui.atomic_json(self.app.config('shared-work.json'),dict(enabled=True,path='/current/work',libref='VDI'));value=copy.deepcopy(self.value);value['shared_work']=dict(enabled=True,path='/old/work',libref='OLD')
         source=self.root/'fresh.sas';source.write_text('%put old;');value['nodes'][0]['rows']=[dict(id='live',file=ui_stream.describe(self.app,source))];source.write_text('%put fresh;')
-        folder,_,_=graph.prepare(self.app,value);code=(folder/'tasks/task_A/source.sas').read_text();self.assertIn("'/current/work'",code);self.assertIn('options user=VDI;',code);self.assertIn('%put fresh;',code);self.assertNotIn('%put old;',code)
+        folder,_,_=graph.prepare(self.app,value);code=(folder/'tasks/task_A/source.sas').read_text(encoding='utf-8');self.assertIn("'/current/work'",code);self.assertIn('options user=VDI;',code);self.assertIn('%put fresh;',code);self.assertNotIn('%put old;',code)
 
     def test_launch_registration_and_worker_handoff_use_one_id_and_graph_events(self):
         processes=[]
@@ -144,13 +144,13 @@ class TaskGraphExecutionTests(unittest.TestCase):
         self.app.commands[key]=dict(id=key,action='task-graph',graph_id='execution',status='SUCCESS',started=1,name='Daily',args=[],tasks={},launch_request=self.app.relative(spec));self.app.save(self.app.commands[key])
         archive,_=self.app.backup()
         with archive:raw=archive.read()
-        self.app.backup(io.BytesIO(raw),len(raw));restored=next(c for c in self.app.commands.values() if c['id']!=key and c.get('launch_request'));request=json.loads(self.app.resolve(restored['launch_request']).read_text())
+        self.app.backup(io.BytesIO(raw),len(raw));restored=next(c for c in self.app.commands.values() if c['id']!=key and c.get('launch_request'));request=json.loads(self.app.resolve(restored['launch_request']).read_text(encoding='utf-8'))
         self.assertNotEqual(restored['graph_id'],'execution');self.assertEqual(request['graph']['id'],restored['graph_id'])
 
     def test_inactive_source_drafts_do_not_block_execution_but_remain_in_the_editor(self):
         source=self.root/'gone.sas';source.write_text('%put previous draft;');value=copy.deepcopy(self.value);value['nodes'][0]['rows'][0]['file']=ui_stream.describe(self.app,source);source.unlink()
         refreshed=graph.refresh(self.app,value);self.assertIsNotNone(refreshed['nodes'][0]['rows'][0]['file'])
-        folder,frozen,_=graph.prepare(self.app,value);self.assertIsNone(frozen['nodes'][0]['rows'][0]['file']);self.assertIn('%put task_A;',(folder/'tasks/task_A/source.sas').read_text())
+        folder,frozen,_=graph.prepare(self.app,value);self.assertIsNone(frozen['nodes'][0]['rows'][0]['file']);self.assertIn('%put task_A;',(folder/'tasks/task_A/source.sas').read_text(encoding='utf-8'))
 
     def test_pending_full_graph_and_manual_tasks_have_correct_duplicate_guards(self):
         entered,release=threading.Event(),threading.Event()
@@ -177,7 +177,7 @@ class TaskGraphExecutionTests(unittest.TestCase):
         with patch('ui_launch.os',platform),patch('pysas_ui.os',platform),patch.object(ui.subprocess,'CREATE_NEW_PROCESS_GROUP',512,create=True),patch.object(ui.subprocess,'CREATE_NO_WINDOW',134217728,create=True),patch('pysas_ui.subprocess.Popen',return_value=Process()):
             result=self.app.launches.start(dict(action='task-graph',graph=self.value));deadline=time.monotonic()+8
             while (self.app.launches.working() or self.app.processes) and time.monotonic()<deadline:time.sleep(.01)
-        item=self.app.commands[result['id']];self.assertEqual(item['status'],'FAILED');self.assertFalse(item['preparing']);self.assertIn('ended without a final result',item['message']);folder=self.app.resolve(item['path']);self.assertIn('status=FAILED',(folder/'status.txt').read_text());self.assertIn('ERROR:',(folder/'run.log').read_text())
+        item=self.app.commands[result['id']];self.assertEqual(item['status'],'FAILED');self.assertFalse(item['preparing']);self.assertIn('ended without a final result',item['message']);folder=self.app.resolve(item['path']);self.assertIn('status=FAILED',(folder/'status.txt').read_text(encoding='utf-8'));self.assertIn('ERROR:',(folder/'run.log').read_text(encoding='utf-8'))
 
     def test_all_tasks_reuse_one_frozen_source_even_if_original_changes_during_preparation(self):
         source=self.root/'shared.sas';source.write_text('%put captured;');value=copy.deepcopy(self.value)
@@ -189,7 +189,7 @@ class TaskGraphExecutionTests(unittest.TestCase):
             return result
         with patch('ui_stream.prepare',side_effect=prepare):folder,_,_=graph.prepare(self.app,value)
         for node in value['nodes']:
-            text=(folder/'tasks'/('task_'+node['id'])/'source.sas').read_text();self.assertIn('%put captured;',text);self.assertNotIn('%put later edit;',text)
+            text=(folder/'tasks'/('task_'+node['id'])/'source.sas').read_text(encoding='utf-8');self.assertIn('%put captured;',text);self.assertNotIn('%put later edit;',text)
 
     def test_source_budget_is_checked_before_reading_all_excess_assets(self):
         files=[dict(path=key+'.sas',name=key+'.sas',sha256=key*64) for key in 'abc'];value=ui_stream.validate(dict(format=ui_stream.FORMAT,rows=[dict(id=key,file=ref) for key,ref in zip('abc',files)]))
@@ -209,7 +209,7 @@ class TaskGraphExecutionTests(unittest.TestCase):
             stdin=None
             def poll(self):return 1
             def wait(self):return 1
-        def popen(command,**options):captured.append((Path(command[3])/'tasks/task_A/source.sas').read_text());return Process()
+        def popen(command,**options):captured.append((Path(command[3])/'tasks/task_A/source.sas').read_text(encoding='utf-8'));return Process()
         platform=SimpleNamespace(name='nt',environ=os.environ,path=os.path)
         with patch('ui_launch.os',platform),patch('pysas_ui.os',platform),patch.object(ui.subprocess,'CREATE_NEW_PROCESS_GROUP',512,create=True),patch.object(ui.subprocess,'CREATE_NO_WINDOW',134217728,create=True),patch('pysas_ui.subprocess.Popen',side_effect=popen),patch('ui_task_graph.refresh',side_effect=outside_lock):
             result=self.app.launch(dict(action='task-graph',graph=value));deadline=time.monotonic()+5
@@ -221,7 +221,7 @@ class TaskGraphExecutionTests(unittest.TestCase):
         with zipfile.ZipFile(self.project,'w') as archive:
             archive.writestr('project.xml','<ProjectCollection><Elements><Element Type="SAS.EG.ProjectElements.CodeTask"><Element><ID>Connect</ID><Label>Connection</Label></Element></Element></Elements></ProjectCollection>');archive.writestr('Connect/code.sas',code.encode('utf-16'))
         value=copy.deepcopy(self.value);value['egp']=ui_stream.describe(self.app,self.project);value['nodes']=[dict(id='A',name='Section task',rows=[dict(id='project',source_kind='egp',project=value['egp'],programs=[dict(id='code',program_id='Connect',name='Connection',mode='section',sections=['Extract'])])])];value['edges']=[]
-        folder,frozen,_=graph.prepare(self.app,value);text=(folder/'tasks/task_A/source.sas').read_text();self.assertIn('%put selected;',text);self.assertNotIn('outside_before',text);self.assertNotIn('outside_after',text)
+        folder,frozen,_=graph.prepare(self.app,value);text=(folder/'tasks/task_A/source.sas').read_text(encoding='utf-8');self.assertIn('%put selected;',text);self.assertNotIn('outside_before',text);self.assertNotIn('outside_after',text)
         self.assertEqual(graph.hydrate(self.app,frozen)['nodes'][0]['rows'][0]['programs'][0]['file']['sections'],['Extract'])
 
 

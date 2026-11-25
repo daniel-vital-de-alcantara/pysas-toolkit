@@ -1,6 +1,6 @@
 # Task graph · canvas and execution
 
-The Graph tab keeps the canvas introduced in preview.37. In **0.4.0-preview.39**, Run graph connects its tasks to the same independent `engine.py` submission used by Run stream. Each task composes its ordered sources once, with shared setup first, and waits for its prerequisites. Manual single-task execution is available too.
+The Graph tab keeps the canvas introduced in preview.37. In **0.4.0-preview.40**, Run graph connects its tasks to the same independent `engine.py` submission used by Run stream. Each task composes its ordered sources once, with shared setup first, and waits for its prerequisites. Manual single-task execution is available too.
 
 ## Canvas and task cards
 

@@ -39,13 +39,13 @@ is required. Inaccessible members remain listed with unknown metadata; readable 
 with warnings and incomplete storage totals. Saved snapshots remain available offline and travel with saved-data
 backups; missing metadata is shown as unknown.
 
-The released command-line toolkit is version 0.3.18; the released UI preview is 0.4.0-preview.39.
+The released command-line toolkit is version 0.3.18; the released UI preview is 0.4.0-preview.40.
 
-Preview.39 connects the **Graph** canvas to the Run stream engine: full dependency runs, manual task runs, shared setup, bounded parallelism, stop controls and task inspectors. Arrange reserves space for spanning links, links route around cards, and multi-selection supports PowerPoint-style alignment/distribution. Source cards refresh section metadata. A downloadable [JSON manual](docs/graph-json-manual.md) supports AI-authored plans with local paths. See the [graph guide](docs/graph-runner.md).
+Preview.40 connects the **Graph** canvas to the Run stream engine: full dependency runs, manual task runs, shared setup, bounded parallelism, stop controls and task inspectors. Arrange reserves space for spanning links, links route around cards, and multi-selection supports PowerPoint-style alignment/distribution. Source cards refresh section metadata. A downloadable [JSON manual](docs/graph-json-manual.md) supports AI-authored plans with local paths. See the [graph guide](docs/graph-runner.md).
 
 Preview.38 moves launches immediately to Overview with a Preparing run entry, organizes Projects by named code folders and dated bundle versions, refreshes linked Run stream sources and current shared WORK, and adds inspector Run again/Continue controls. Exact same names share an Overview history row with a version picker; active files remain individually visible. See the [workbench guide](docs/ui-workbench.md) and [release notes](docs/next-version/release-notes.md).
 
-Preview.37 rebuilds **Graph** as a canvas that fills the window beside the navigation, with draggable task nodes, Run stream-style source editors, dependency ports, ordered shared setup, undo/redo and portable JSON. Preview.37 introduced the editor; preview.39 connects its tasks to the Run stream engine. See the [task graph guide](docs/graph-runner.md).
+Preview.37 rebuilds **Graph** as a canvas that fills the window beside the navigation, with draggable task nodes, Run stream-style source editors, dependency ports, ordered shared setup, undo/redo and portable JSON. Preview.37 introduced the editor; preview.40 connects its tasks to the Run stream engine. See the [task graph guide](docs/graph-runner.md).
 
 Preview.36 refines **Run stream** with staged setup, automatic EGP selection, compact draggable cards, inline SAS, multiple section checkboxes, ordered EGP program selection and local background-loading indicators. Portable templates retain these choices; earlier Run stream JSON remains importable. The reusable reader is also available as `python egp_extract.py project.egp --json`. See [Run stream](docs/run-stream.md).
 

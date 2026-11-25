@@ -1,8 +1,8 @@
-# PySAS Workbench 0.4.0-preview.39
+# PySAS Workbench 0.4.0-preview.40
 
 Graph keeps its canvas design and now runs tasks through the Run stream engine. This preview also adds AI JSON instructions, alignment/distribution and better dependency layout/section refresh.
 
-Download **PySAS-Workbench-Python-0.4.0-preview.39.zip**, extract the entire ZIP and open **START_PYSAS.bat**. Python 3.10+ and your configured Windows Enterprise Guide/SAS environment are required for execution. The independent `engine.py` and standalone `pysas.py 0.3.18` remain available.
+Download **PySAS-Workbench-Python-0.4.0-preview.40.zip**, extract the entire ZIP and open **START_PYSAS.bat**. Python 3.10+ and your configured Windows Enterprise Guide/SAS environment are required for execution. The independent `engine.py` and standalone `pysas.py 0.3.18` remain available.
 
 ## Graph execution
 
@@ -25,4 +25,4 @@ Automated checks cover actual canvas/source-editor events, multi-selection/align
 
 Extract into a new folder. Close the old app before pointing Settings → Storage and cleanup at your existing Tasks and Settings folders, then restart. Keep the previous installation and a saved-data backup while testing.
 
-Read the [Graph guide](https://github.com/daniel-vital-de-alcantara/pysas-toolkit/blob/v0.4.0-preview.39/docs/graph-runner.md) and [Graph JSON manual](https://github.com/daniel-vital-de-alcantara/pysas-toolkit/blob/v0.4.0-preview.39/docs/graph-json-manual.md), both included in the ZIP.
+Read the [Graph guide](https://github.com/daniel-vital-de-alcantara/pysas-toolkit/blob/v0.4.0-preview.40/docs/graph-runner.md) and [Graph JSON manual](https://github.com/daniel-vital-de-alcantara/pysas-toolkit/blob/v0.4.0-preview.40/docs/graph-json-manual.md), both included in the ZIP.

@@ -1,4 +1,4 @@
-PySAS Workbench 0.4.0-preview.39
+PySAS Workbench 0.4.0-preview.40
 ==============================
 
 1. Extract the ENTIRE ZIP to a writable folder on your Windows computer.
@@ -401,7 +401,7 @@ New in preview.38
   in Inspect; every active file still appears separately in Running now.
 - Folder names and saved launch settings travel with saved-data backups.
 
-New in preview.39
+New in preview.40
 - Graph keeps its canvas design and now runs full dependencies through engine.py.
   Each task submits its combined source once, after all prerequisites succeed.
 - Shared setup is prepended to each task; default parallelism is 10. Failed or
