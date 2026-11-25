@@ -20,10 +20,10 @@
     return items.map((_,i)=>answer.get(i));
   }
   let entries=[], typed="", layer=null, altOnly=false, level="root", section=null;
-  const api={active:false,codes,assignHints,navigation,show,hide,showPage:()=>show("page"),enterList,refreshLists};
+  const api={active:false,codes,assignHints,navigation,show,hide,showPage:()=>show("page"),showMenu,enterList,refreshLists};
   globalThis.PySASKeys=api;
   function hide(){api.active=false;typed="";entries=[];layer?.remove();layer=null;}
-  function visible(el){return !!el&&!el.closest('[hidden],[inert]')&&!!el.getClientRects().length;}
+  function visible(el){return !!el&&!el.closest('[hidden],[inert]')&&!!el.getClientRects().length&&(typeof getComputedStyle!=='function'||getComputedStyle(el).visibility!=='hidden');}
   function viewport(el){const b=el.getBoundingClientRect();return b.bottom>0&&b.top<innerHeight&&b.right>0&&b.left<innerWidth;}
   function currentDialog(){return Array.from(document.querySelectorAll("dialog[open]")).at(-1)||document.querySelector("#details-dialog:not([hidden])");}
   function label(el){return el.getAttribute('aria-label')||el.labels?.[0]?.textContent||el.textContent||el.title||el.name||"Action";}
@@ -80,12 +80,18 @@
     heading?.focus({preventScroll:true});heading?.scrollIntoView({block:'start',inline:'nearest'});
     requestAnimationFrame(()=>show('section',group));
   }
+  function menuOwner(el){return el.matches('summary')&&el.parentElement?.hasAttribute('data-keytip-menu')?el.parentElement.parentElement?.closest('[data-keytip-menu]'):el.closest('[data-keytip-menu]');}
+  function showMenu(group){
+    if(!group?.isConnected)return;
+    group.open=true;globalThis.PySASGraph?.openMenu(group);
+    group.querySelector('summary')?.focus({preventScroll:true});show('menu',group);
+  }
   function show(requested="root",group=null){
-    hide();level=requested;section=requested==='section'?group:null;
+    hide();level=requested;section=['section','menu'].includes(requested)?group:null;
     const dialog=currentDialog();if(dialog)level="page";
     const page=dialog||document.querySelector('.page:not([hidden])')||document;
-    if(level==='section'&&(!section?.isConnected||!section.open))level='page';
-    const scope=level==='section'?section:page;
+    if(['section','menu'].includes(level)&&(!section?.isConnected||!section.open))level='page';
+    const scope=['section','menu'].includes(level)?section:page;
     const settingsMenu=!dialog&&level==='page'&&page.id==='page-files';
     let candidates;
     if(level==="root"){
@@ -93,20 +99,24 @@
       for(const [id,code] of [['refresh','U'],['quit-app','Q'],['page-title','X']]){
         const el=(id==='page-title'?document.getElementById('keyboard-help'):null)||document.getElementById(id);if(el)candidates.push({el,code,action:id==='page-title'?()=>show('page'):null});
       }
+      if(!dialog&&page.id==='page-graph')for(const [id,code] of [['graph-home-menu','H'],['graph-view-menu','W']]){
+        const menu=document.getElementById(id),el=menu?.querySelector('summary');if(el)candidates.push({el,code,action:()=>showMenu(menu)});
+      }
     }else if(settingsMenu){
       candidates=Array.from(page.querySelectorAll('[data-keytip-group]')).map(el=>({el,code:el.dataset.keytipGroup,offscreen:true,action:()=>showSection(el.closest('details'))}));
     }else{
       const controls=Array.from(scope.querySelectorAll('button,a[href],input:not([type="hidden"]),select,textarea,summary,[tabindex="0"],[data-key-list]')).filter(el=>{
         if(level==='section'&&el===section.querySelector('summary'))return false;
+        const owner=menuOwner(el);if(level==='menu'?owner!==section:!!owner)return false;
         if(el.closest('[data-graph-canvas]')&&!el.hasAttribute('data-graph-canvas'))return false;const list=el.closest('[data-key-list]');return !list||list===el;
       });
       const labels=assignHints(controls.map(el=>({preferred:el.dataset.keytip,label:label(el),identity:el.id||`${el.form?.id||""}/${el.name||""}/${label(el)}`})));
-      candidates=controls.map((el,i)=>({el,code:labels[i]}));
+      candidates=controls.map((el,i)=>({el,code:labels[i],action:el.matches('summary')&&el.parentElement?.hasAttribute('data-keytip-menu')?()=>showMenu(el.parentElement):null}));
     }
     candidates=candidates.filter(({el,code,offscreen})=>code&&!el.disabled&&visible(el)&&(offscreen||viewport(el)));
     api.active=true;layer=document.createElement('div');layer.className='keytips';layer.setAttribute('aria-hidden','true');
     const help=document.createElement('div');help.className='keytips-help';
-    help.textContent=settingsMenu?'Settings · F Folders · D Defaults · W Shared WORK · I Inbox watcher · S Storage · U Uploads · B Backups · P Power · Esc back':level==='section'?`Settings › ${label(section.querySelector('summary'))} · Choose an action · Esc sections`:level==='root'?'Choose a page · X page commands · Esc cancel':'Choose a command or list · Lists: ↑ ↓ then Enter · Esc back';layer.append(help);
+    help.textContent=settingsMenu?'Settings · F Folders · D Defaults · W Shared WORK · I Inbox watcher · S Storage · U Uploads · B Backups · P Power · Esc back':level==='section'?`Settings › ${label(section.querySelector('summary'))} · Choose an action · Esc sections`:level==='menu'?`${label(section.querySelector('summary'))} · Choose a command · Esc back`:level==='root'?(page.id==='page-graph'?'Graph · H Home · W View · X page commands · Esc cancel':'Choose a page · X page commands · Esc cancel'):'Choose a command or list · Lists: ↑ ↓ then Enter · Esc back';layer.append(help);
     entries=candidates.map(entry=>{
       const {el,code}=entry,badge=document.createElement('span');badge.className='keytip';badge.textContent=code;
       const anchor=el.type==='file'&&el.closest('label')?el.closest('label'):el,rect=anchor.getBoundingClientRect();
@@ -120,7 +130,9 @@
     if(event.altKey||event.ctrlKey||event.metaKey){altOnly=false;return;}
     if(event.key==='F10'&&!event.shiftKey){event.preventDefault();api.active?hide():show();return;}
     if(!api.active){listKey(event);return;}
-    if(event.key==='Escape'){event.preventDefault();event.stopPropagation();if(level==='section')show('page');else if(level==='page'&&!currentDialog())show();else hide();return;}
+    if(event.key==='Escape'){event.preventDefault();event.stopPropagation();if(level==='menu'){
+      const parent=section.parentElement?.closest('[data-keytip-menu]');section.open=false;if(parent)showMenu(parent);else show();
+    }else if(level==='section')show('page');else if(level==='page'&&!currentDialog())show();else hide();return;}
     if(event.key==='Tab'){hide();return;}
     if(event.key==='Backspace'){event.preventDefault();typed=typed.slice(0,-1);}
     else if(/^[a-z]$/i.test(event.key)&&!event.repeat){event.preventDefault();event.stopPropagation();typed+=event.key.toUpperCase();}

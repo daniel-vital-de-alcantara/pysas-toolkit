@@ -40,7 +40,7 @@ import ui_storage
 import windows_clipboard
 from ui_support import KeepAwake, receive_upload, UPLOAD_LIMIT, launch_app_window
 
-VERSION = "0.4.0-preview.40"
+VERSION = "0.4.0-preview.41"
 APP_DIR = Path(__file__).resolve().parent
 ACTIVE = {"RUNNING", "STOPPING"}
 TEXT_SUFFIXES = {".sas", ".log", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".xml"}
@@ -516,7 +516,7 @@ class Workbench:
             if self.launches.cancelled(reserved_id):raise InterruptedError('Cancelled before submission.')
             # EGP program extraction owns its short upload reservation. Do not
             # hold that non-reentrant lock while calling the source refresher.
-            graph_inputs=ui_task_graph.execution_document(self,data.get('graph'),data.get('task_id'))
+            graph_inputs=ui_task_graph.execution_document(self,data.get('graph'),data.get('task_id'),task_ids=data.get('task_ids'))
             with self.upload_lock:
                 with self.lock:
                     if self.storage_busy:raise ValueError('Wait for the saved-data operation to finish.')
@@ -525,7 +525,7 @@ class Workbench:
                     graph_started=self.commands.get(reserved_id,{}).get('started',time.time())
                 prepared=None
                 try:
-                    prepared=ui_task_graph.prepare(self,data.get('graph'),data.get('task_id'),
+                    prepared=ui_task_graph.prepare(self,data.get('graph'),data.get('task_id'),task_ids=data.get('task_ids'),
                         cancelled=(lambda:self.launches.cancelled(reserved_id)) if reserved_id else lambda:False,
                         progress=(lambda text:self.launches.progress(reserved_id,text)) if reserved_id else lambda text:None,started=graph_started,prepared_graph=graph_inputs)
                     return self.launch(data,graph_prepared=prepared,reserved_id=reserved_id)
@@ -590,7 +590,7 @@ class Workbench:
                 raise ValueError("The watcher is already running in this workbench.")
             if data.get("graph_id") and any(c["id"] != reserved_id and c.get("graph_id") == data["graph_id"] and c["status"] in ACTIVE for c in self.commands.values()):
                 raise ValueError("This graph is already running. Stop it or wait for it to finish.")
-            if task_graph and any(c['id']!=reserved_id and c.get('action')=='task-graph' and c.get('graph_id')==graph_prepared[1]['id'] and c.get('status') in ACTIVE and (not data.get('task_id') or not c.get('graph_task_id') or c['graph_task_id']==data['task_id']) for c in self.commands.values()):raise ValueError('This graph or task is already running.')
+            if task_graph and ui_task_graph.conflicts(self.commands.values(),graph_prepared[1]['id'],ui_task_graph.selection_ids(data.get('task_id'),data.get('task_ids')),reserved_id):raise ValueError('This graph or one of the selected tasks is already running.')
             if action.startswith('bundle-'):
                 bundle_root = str(self.code_root(data.get('code_root')))
                 if any(c['id'] != reserved_id and c.get('action','').startswith('bundle-') and c.get('status') in ACTIVE and os.path.normcase(c.get('code_root') or str(self.root)) == os.path.normcase(bundle_root) for c in self.commands.values()):
@@ -614,7 +614,7 @@ class Workbench:
             if reserved:
                 item.update(started=reserved['started'], launch_request=reserved.get('launch_request'), preparing=False)
             item["graph_id"] = data.get("graph_id")
-            if task_graph:item.update(graph_id=graph_document['id'],graph_task_id=data.get('task_id'),workers=graph_manifest['workers'])
+            if task_graph:item.update(graph_id=graph_document['id'],graph_task_id=data.get('task_id'),graph_task_ids=ui_task_graph.selection_ids(data.get('task_id'),data.get('task_ids')),workers=graph_manifest['workers'])
             item["default_name"] = item["name"]
             if task_graph:item['default_name']=graph_document['name']
             item["display_name"] = display_name

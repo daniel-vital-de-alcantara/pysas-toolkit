@@ -29,6 +29,11 @@
   }
   function link(model,from,to){const next=clone(model);next.edges.push({from,to});validate(next);return next;}
   function remove(model,id){const next=clone(model);next.nodes=next.nodes.filter(n=>n.id!==id);next.setup=next.setup.filter(n=>n.id!==id);next.edges=next.edges.filter(e=>e.from!==id&&e.to!==id);return next;}
+  function related(model,ids,direction='upstream',recursive=true){
+    const valid=new Set(model.nodes.map(n=>n.id)),found=new Set(ids.filter(id=>valid.has(id))),queue=[...found];
+    for(let i=0;i<queue.length;i++)for(const e of model.edges){const from=direction==='downstream'?e.from:e.to,to=direction==='downstream'?e.to:e.from;if(from===queue[i]&&!found.has(to)){found.add(to);if(recursive)queue.push(to);}}
+    return model.nodes.filter(n=>found.has(n.id)).map(n=>n.id);
+  }
   const arrange=model=>geometry.arrange(model),align=(model,ids,kind)=>geometry.align(model,ids,kind);
   function nearest(nodes,id,key){const current=nodes.find(n=>n.id===id);if(!current)return nodes[0]?.id;const horizontal=['ArrowLeft','ArrowRight'].includes(key),sign=['ArrowLeft','ArrowUp'].includes(key)?-1:1;return nodes.filter(n=>n!==current&&((horizontal?n.x-current.x:n.y-current.y)*sign)>0).sort((a,b)=>{const score=n=>Math.abs(horizontal?n.x-current.x:n.y-current.y)+2*Math.abs(horizontal?n.y-current.y:n.x-current.x);return score(a)-score(b);})[0]?.id||id;}
   function duplicate(model,key){const next=clone(model),original=[...next.nodes,...next.setup].find(n=>n.id===key);if(!original)return next;const copy=clone(original);copy.id=identifier('task_');copy.name=(copy.name+' copy').slice(0,120);copy.x+=45;copy.y+=45;for(const r of copy.rows){r.id=identifier('s_');for(const p of r.programs)p.id=identifier('p_');}(next.setup.includes(original)?next.setup:next.nodes).push(copy);return next;}
@@ -36,7 +41,7 @@
   function edgePath(a,b,nodes=[],lane=0){return geometry.route(a,b,nodes,lane).path;}
   function fitView(nodes,width,height){if(!nodes.length)return {x:50,y:210,zoom:1};const left=Math.min(...nodes.map(n=>n.x)),top=Math.min(...nodes.map(n=>n.y)),right=Math.max(...nodes.map(n=>n.x+WIDTH)),bottom=Math.max(...nodes.map(n=>n.y+HEIGHT)),zoom=Math.max(.25,Math.min(1.2,(width-80)/(right-left),(height-90)/(bottom-top)));return {x:(width-(right-left)*zoom)/2-left*zoom,y:200+(height-(bottom-top)*zoom)/2-top*zoom,zoom};}
   class History{constructor(){this.before=[];this.after=[];}push(model){this.before.push(clone(model));while(this.before.length>30||this.before.length>1&&JSON.stringify(this.before).length>24*1024*1024)this.before.shift();this.after=[];}undo(model){if(!this.before.length)return model;this.after.push(clone(model));return this.before.pop();}redo(model){if(!this.after.length)return model;this.before.push(clone(model));return this.after.pop();}}
-  const helpers={FORMAT,WIDTH,HEIGHT,source,task,empty,validate,order,link,remove,arrange,align,nearest,duplicate,clean,edgePath,fitView,History};
+  const helpers={FORMAT,WIDTH,HEIGHT,source,task,empty,validate,order,link,remove,related,arrange,align,nearest,duplicate,clean,edgePath,fitView,History};
   globalThis.PySASGraph={helpers};if(typeof module!=='undefined')module.exports=helpers;
   if(typeof document==='undefined'||!document.getElementById('graph-canvas'))return;
   const $=id=>document.getElementById(id),host=()=>globalThis.PySASGraphHost,cards=()=>globalThis.PySASSourceCards;
@@ -53,18 +58,21 @@
   function pending(){return loading||[...editors.values()].some(editor=>editor.busy());}
   const activeRun=command=>['RUNNING','STOPPING'].includes(command.status);
   function runs(){return (snapshot?.commands||[]).filter(c=>c.action==='task-graph'&&c.graph_id===model.id).sort((a,b)=>b.started-a.started);}
-  function runIssues(taskId){
+  const scopeIds=target=>target==null?null:Array.isArray(target)?target:[target];
+  const recordScope=c=>c.graph_task_ids?.length?c.graph_task_ids:c.graph_task_id?[c.graph_task_id]:null;
+  function runIssues(target=null){
     const issues=[];if(!snapshot?.windows)issues.push('SAS execution requires Windows with Enterprise Guide.');
     if(!model.egp||connectionState==='loading')issues.push('Choose a ready connection EGP in Graph settings.');
-    const selectedTasks=taskId?model.nodes.filter(n=>n.id===taskId):model.nodes;
-    if(!selectedTasks.length)issues.push('Add a task to run.');
+    const ids=scopeIds(target),selectedTasks=ids?model.nodes.filter(n=>ids.includes(n.id)):model.nodes;
+    if(!selectedTasks.length)issues.push(ids?'Select tasks to run.':'Add a task to run.');
     for(const n of [...model.setup,...selectedTasks])for(const error of taskIssues(n))issues.push(n.name+': '+error);
-    if(runs().some(c=>activeRun(c)&&(!taskId||!c.graph_task_id||c.graph_task_id===taskId)))issues.push('This graph or task is already running.');
+    if(runs().some(c=>activeRun(c)&&(ids===null||recordScope(c)===null||ids.some(id=>recordScope(c).includes(id)))))issues.push('This graph or one of the selected tasks is already running.');
     return issues;
   }
-  async function runGraph(taskId=null){
-    if(submitting||loading)return;try{validate(model);const issues=runIssues(taskId);if(issues.length)throw Error(issues[0]);submitting=true;updateStatus();
-      const result=await host().startRun({action:'task-graph',graph:clean(model),...(taskId?{task_id:taskId}:{})},{name:taskId?model.name+' · '+getTask(taskId).name:model.name,action:'task-graph'});lastRun=result.id;
+  async function runGraph(target=null){
+    if(submitting||pending())return;try{validate(model);const issues=runIssues(target);if(issues.length)throw Error(issues[0]);submitting=true;closeMenus();updateStatus();
+      const subset=Array.isArray(target),name=target==null?model.name:subset?`${model.name} · ${target.length} selected task${target.length===1?'':'s'}`:model.name+' · '+getTask(target).name;
+      const result=await host().startRun({action:'task-graph',graph:clean(model),...(target==null?{}:subset?{task_ids:target}:{task_id:target})},{name,action:'task-graph'});lastRun=result.id;
     }catch(e){message(e.message,true);}finally{submitting=false;updateStatus();}
   }
   async function refreshSources(){
@@ -78,12 +86,18 @@
     $('graph-counts').textContent=`${model.nodes.length} task${model.nodes.length===1?'':'s'} · ${model.edges.length} link${model.edges.length===1?'':'s'}`;
     $('graph-save').disabled=pending();$('graph-export').disabled=pending();$('graph-undo').disabled=!history.before.length;$('graph-redo').disabled=!history.after.length;$('graph-connect').disabled=!model.nodes.some(n=>n.id===selected);$('graph-connect').classList.toggle('is-active',!!linkFrom);
     const errors=runIssues(),taskErrors=runIssues(selected);$('graph-run').hidden=drawer==='task';$('graph-run').disabled=submitting||pending()||!!errors.length;$('graph-run').title=errors[0]||'Run tasks after all their prerequisites succeed';
-    $('graph-run-task').disabled=submitting||loading||isSetup(selected)||!selected||!!taskErrors.length;$('graph-run-task').title=taskErrors[0]||'Run only this task, including shared setup';
+    $('graph-run-task').disabled=submitting||pending()||isSetup(selected)||!selected||!!taskErrors.length;$('graph-run-task').title=taskErrors[0]||'Run only this task, including shared setup';
+    const selectionErrors=runIssues([...selection]);$('graph-run-selected').disabled=submitting||pending()||!!selectionErrors.length;$('graph-run-selected').title=selectionErrors[0]||'Run exactly the selected tasks, respecting dependencies inside the selection';
+    $('graph-context-count').textContent=selection.size+' selected task'+(selection.size===1?'':'s');
+    const outside=new Set(model.edges.filter(e=>selection.has(e.to)&&!selection.has(e.from)).map(e=>e.from));
+    const note=$('graph-context-menu').querySelector('.taskgraph-context-note');note.textContent=outside.size?`${outside.size} unselected prerequisite${outside.size===1?' is':'s are'} assumed available. Add dependencies to include them.`:'Shared setup included. Only selected tasks run.';
+    for(const button of $('graph-context-menu').querySelectorAll('[data-graph-related],[data-graph-context="delete"]'))button.disabled=!selection.size;
+    $('graph-context-menu').querySelector('[data-graph-context="edit"]').disabled=selection.size!==1;
     $('graph-selection-count').textContent=selection.size?selection.size+' selected task'+(selection.size===1?'':'s'):'Select tasks with Shift + click';
     for(const button of document.querySelectorAll('[data-graph-align]'))button.disabled=selection.size<(button.dataset.graphAlign==='horizontal'||button.dataset.graphAlign==='vertical'?3:2);
-    const activity=runs(),current=activity.find(activeRun);$('graph-stop').hidden=!current;$('graph-stop').disabled=current?.status==='STOPPING';$('graph-stop').textContent=current?.status==='STOPPING'?'Stopping…':current?.graph_task_id?'Stop task':'Stop graph';
+    const activity=runs(),current=activity.find(activeRun);$('graph-stop').hidden=!current;$('graph-stop').disabled=current?.status==='STOPPING';$('graph-stop').textContent=current?.status==='STOPPING'?'Stopping…':current?.graph_task_id?'Stop task':current?.graph_task_ids?.length?'Stop selection':'Stop graph';
     $('graph-inspect-run').hidden=!activity.length;lastRun=activity[0]?.id||lastRun;
-    $('graph-canvas-hint').textContent=linkFrom?`Choose the task that must wait for ${getTask(linkFrom)?.name}. Escape cancels.`:'Drag background to pan · Ctrl + wheel to zoom · A → B means B waits for A';
+    $('graph-canvas-hint').textContent=linkFrom?`Choose the task that must wait for ${getTask(linkFrom)?.name}. Escape cancels.`:'Right-click for selection actions · Shift + click adds tasks · A → B means B waits for A';
     for(const n of model.nodes){const e=$('graph-nodes').querySelector(`[data-graph-node="${n.id}"]`);if(!e)continue;const errors=taskIssues(n),busy=editors.get(n.id)?.busy(),submitted=activity.find(c=>c.tasks?.[n.id])?.tasks[n.id];e.classList.toggle('needs-definition',!!errors.length);e.classList.toggle('task-running',submitted?.status==='RUNNING');e.classList.toggle('task-failed',!!submitted&&/FAIL|ERROR|BLOCK|CANCEL/.test(submitted.status));const state=e.querySelector('.taskgraph-node-status');
       if(submitted){state.innerHTML=host().badge(submitted.status)+' '+host().timer(submitted);state.title='Last submitted version. Draft edits apply to the next run.';}else{state.textContent=busy?'◌ Reading source…':errors.length?'○ Needs definition':'✓ Defined';state.title=errors[0]||'';}state.classList.toggle('ready',!submitted&&!errors.length&&!busy);}
     for(const n of model.setup){const element=$('graph-setup-list').querySelector(`[data-graph-setup="${n.id}"]`);if(element)element.querySelector('.taskgraph-setup-state').textContent=editors.get(n.id)?.busy()?'◌':taskIssues(n).length?'○':'✓';}
@@ -105,7 +119,7 @@
     const current=$('graph-prerequisite').value;$('graph-prerequisite').innerHTML='<option value="">Choose a prerequisite…</option>'+model.nodes.filter(other=>other!==n&&!incoming.some(e=>e.from===other.id)).map(other=>`<option value="${E(other.id)}">${E(other.name)}</option>`).join('');$('graph-prerequisite').value=current;
   }
   function editorFor(n){if(editors.has(n.id))return editors.get(n.id);const root=document.createElement('div'),editor=cards().create(root,{rows:()=>getTask(n.id)?.rows||[],request:(...args)=>host().request(...args),token:()=>snapshot?.token,connection:()=>model.egp,before:key=>before(n.id+'-'+key),change:()=>{changed();renderCanvas();renderSetup();},status:()=>updateStatus()});editors.set(n.id,editor);return editor;}
-  function openDrawer(kind,key){drawer=kind;$('graph-drawer').hidden=false;$('page-graph').classList.add('drawer-open');$('graph-settings-panel').hidden=kind!=='settings';$('graph-task-panel').hidden=kind!=='task';$('graph-edge-panel').hidden=kind!=='edge';
+  function openDrawer(kind,key){closeMenus();drawer=kind;$('graph-drawer').hidden=false;$('page-graph').classList.add('drawer-open');$('graph-settings-panel').hidden=kind!=='settings';$('graph-task-panel').hidden=kind!=='task';$('graph-edge-panel').hidden=kind!=='edge';
     if(kind==='settings'){$('graph-drawer-eyebrow').textContent='GRAPH';$('graph-drawer-title').textContent='Graph settings';$('graph-name').value=model.name;$('graph-workers').value=model.workers;$('graph-server-program').value=model.server_program;$('graph-shared-work').checked=model.shared_work.enabled;$('graph-shared-info').textContent=model.shared_work.path?`${model.shared_work.libref} · ${model.shared_work.path}`:'Configure the server path in shared WORK settings.';$('graph-connection-options').open=!model.egp;$('graph-name').focus();}
     if(kind==='task'){select(key);if(!getTask())return;fillTask(getTask());$('graph-task-name').focus();}
     if(kind==='edge'){$('graph-drawer-eyebrow').textContent='DEPENDENCY';$('graph-drawer-title').textContent='Prerequisite → dependent';$('graph-edge-label').textContent=getTask(selectedEdge.from).name+' → '+getTask(selectedEdge.to).name;$('graph-remove-edge').focus();}
@@ -124,7 +138,7 @@
   function addTask(setup=false,parent=null){if((setup?model.setup.length:model.nodes.length)>=(setup?100:200)){message('This graph has reached its card limit.',true);return;}const v=model.viewport,rect=$('graph-canvas').getBoundingClientRect(),visibleWidth=(rect.width||1100)-(drawer?460:0),index=model.nodes.length;let x=Math.max(-19500,Math.min(19500,(Math.max(180,visibleWidth/2)-v.x)/v.zoom-WIDTH/2)),y=Math.max(-19500,Math.min(19500,(Math.max(270,(rect.height||800)/2)-v.y)/v.zoom-HEIGHT/2));if(parent){x=parent.x+WIDTH+110;y=parent.y;}else if(model.nodes.some(n=>Math.abs(n.x-x)<45&&Math.abs(n.y-y)<45)){x+=35*(index%4+1);y+=35*(index%4+1);}const n=task(setup?'Shared setup '+(model.setup.length+1):'Task '+(model.nodes.length+1),x,y);change(()=>{model[setup?'setup':'nodes'].push(n);if(parent)model.edges.push({from:parent.id,to:n.id});});openDrawer('task',n.id);}
   function connect(from,to){try{link(model,from,to);change(()=>model.edges.push({from,to}));linkFrom=null;select(to);renderCanvas();message(`${getTask(to).name} now waits for ${getTask(from).name}.`);}catch(e){message(e.message,true);}}
   function deleteTask(all=false){if(!selected&&!selection.size)return;const keys=all&&selection.size?[...selection]:[selected];change(()=>{model.nodes=model.nodes.filter(n=>!keys.includes(n.id));model.setup=model.setup.filter(n=>!keys.includes(n.id));model.edges=model.edges.filter(e=>!keys.includes(e.from)&&!keys.includes(e.to));});for(const key of keys){editors.get(key)?.destroy();editors.delete(key);}selection.clear();selected=null;selectedEdge=null;linkFrom=null;closeDrawer();renderCanvas();renderSetup();}
-  function reset(next,savedRevision=null){generation++;connectionToken++;for(const editor of editors.values())editor.destroy();editors.clear();model=validate(next);loading=false;selected=null;selection.clear();selectedEdge=null;linkFrom=null;gesture=null;dirty=false;revision=savedRevision;editRevision++;lastGroup='';pendingImport=null;$('graph-use-import').hidden=true;drawer=null;$('graph-drawer').hidden=true;$('page-graph').classList.remove('drawer-open');history.before=[];history.after=[];$('graph-saved-actions').innerHTML='';connectionState=model.egp?'ready':'idle';renderCanvas();renderSetup();if(!model.egp&&activePage)loadConnection();}
+  function reset(next,savedRevision=null){closeMenus();generation++;connectionToken++;for(const editor of editors.values())editor.destroy();editors.clear();model=validate(next);loading=false;selected=null;selection.clear();selectedEdge=null;linkFrom=null;gesture=null;dirty=false;revision=savedRevision;editRevision++;lastGroup='';pendingImport=null;$('graph-use-import').hidden=true;drawer=null;$('graph-drawer').hidden=true;$('page-graph').classList.remove('drawer-open');history.before=[];history.after=[];$('graph-saved-actions').innerHTML='';connectionState=model.egp?'ready':'idle';renderCanvas();renderSetup();if(!model.egp&&activePage)loadConnection();}
   function restoreHistory(next){const beforeStack=history.before,afterStack=history.after;reset(next,revision);history.before=beforeStack;history.after=afterStack;dirty=true;updateStatus();}
   async function refreshSaved(){try{const result=await host().request('/api/task-graphs');const select=$('graph-saved'),current=select.value;select.innerHTML='<option value="">Choose a saved graph…</option>'+result.graphs.map(g=>`<option value="${E(g.id)}">${E(g.name)} · ${g.nodes} tasks${g.legacy?' · earlier graph':''}</option>`).join('');select.value=result.graphs.some(g=>g.id===model.id)?model.id:current;}catch(e){message(e.message,true,'graph-file-status');}}
   async function saveGraph(){
@@ -142,8 +156,31 @@
   async function loadConnection(path='',automatic=true){const token=++connectionToken,current=generation;connectionState='loading';connectionError='';updateStatus();$('graph-connection-status').textContent='Reading available EGP metadata…';try{const result=await cards().background((...args)=>host().request(...args),{kind:'connection',path});if(current!==generation||token!==connectionToken)return;const edited=!!(model.nodes.length||model.setup.length||revision||!automatic);if(edited)before('connection');model.egp=result.egp;model.connection_mode=automatic?'auto':'chosen';connectionState=result.egp?'ready':'missing';if(edited)changed();else updateStatus();$('graph-connection-options').open=!result.egp;$('graph-connection-status').textContent=result.egp?'Project available. No SAS session was started.':'No usable EGP found. You can keep designing and choose one later.';}catch(e){if(current===generation&&token===connectionToken){connectionState='error';connectionError=e.message;$('graph-connection-status').textContent=e.message;$('graph-connection-options').open=true;}}updateStatus();}
   function fit(){const rect=$('graph-canvas').getBoundingClientRect();model.viewport=fitView(model.nodes,Math.max(300,(rect.width||1100)-(drawer?480:0)),Math.max(150,(rect.height||800)-260));changed();camera();}
   function zoomTo(value,x,y){const canvas=$('graph-canvas').getBoundingClientRect(),v=model.viewport,next=Math.max(.25,Math.min(2,value)),centerX=x??Math.max(100,((canvas.width||1100)-(drawer?480:0))/2),centerY=y??(canvas.height||800)/2;v.x=centerX-(centerX-v.x)*next/v.zoom;v.y=centerY-(centerY-v.y)*next/v.zoom;v.zoom=next;changed();camera();}
-  function update(state,page){if(!state)return;snapshot=state;activePage=page==='graph';if(!activePage)return;$('stream-local-files').innerHTML=(state.files||[]).filter(path=>/\.sas$/i.test(path)).map(path=>`<option value="${E(path)}"></option>`).join('');if(refreshShared){refreshShared=false;before('shared-work');model.shared_work={...state.shared_work,enabled:model.shared_work.enabled};changed();}if(!savedLoaded){savedLoaded=true;refreshSaved();if(!model.egp)loadConnection();}if(!globalThis.PySASKeys?.active)updateStatus();}
-  globalThis.PySASGraph={helpers,update,focusCanvas};renderCanvas();renderSetup();
+  function closeMenus(except=null){
+    for(const menu of $('page-graph').querySelectorAll('[data-keytip-menu]'))if(menu!==except&&!menu.contains(except))menu.open=false;
+    if(!$('graph-file-menu').contains(except))$('graph-file-menu').open=false;
+    if(except!==$('graph-context-menu'))$('graph-context-menu').hidden=true;
+    if(!except)globalThis.PySASKeys?.hide();
+  }
+  function positionPanel(panel,anchor=null,x=0,y=0){
+    const width=panel.getBoundingClientRect().width||240,height=panel.getBoundingClientRect().height||panel.scrollHeight||300,left=$('page-graph').getBoundingClientRect().left+8;
+    if(anchor){const rect=anchor.querySelector('summary').getBoundingClientRect(),nested=anchor.parentElement.closest('[data-keytip-menu]');x=nested?rect.right+5:rect.left;y=nested?rect.top:rect.bottom+5;if(x+width>innerWidth-8&&nested)x=rect.left-width-5;}
+    panel.style.left=Math.max(left,Math.min(innerWidth-width-8,x))+'px';panel.style.top=Math.max(8,Math.min(innerHeight-height-8,y))+'px';
+  }
+  function positionMenus(){for(const menu of $('page-graph').querySelectorAll('[data-keytip-menu][open]'))positionPanel(menu.querySelector(':scope > .taskgraph-menu-panel'),menu);}
+  function openMenu(menu){
+    closeMenus(menu);menu.open=true;for(let parent=menu.parentElement.closest('[data-keytip-menu]');parent;parent=parent.parentElement.closest('[data-keytip-menu]'))parent.open=true;positionMenus();
+  }
+  function clearSelection(){
+    selection.clear();selected=null;selectedEdge=null;linkFrom=null;drawer=null;$('graph-drawer').hidden=true;$('page-graph').classList.remove('drawer-open');closeMenus();renderCanvas();renderSetup();$('graph-canvas').focus({preventScroll:true});
+  }
+  function openContext(event){
+    event.preventDefault();const card=event.target.closest('[data-graph-node]');if(card&&!selection.has(card.dataset.graphNode))select(card.dataset.graphNode);
+    closeMenus();linkFrom=null;selectedEdge=null;renderEdges();updateStatus();const menu=$('graph-context-menu');menu.hidden=false;
+    const rect=card?.getBoundingClientRect()||$('graph-canvas').getBoundingClientRect();positionPanel(menu,null,event.clientX||rect.left+30,event.clientY||rect.top+30);menu.querySelector('button:not(:disabled)')?.focus({preventScroll:true});
+  }
+  function update(state,page){if(!state)return;snapshot=state;const previous=activePage;activePage=page==='graph';if(!activePage){if(previous)closeMenus();return;}$('stream-local-files').innerHTML=(state.files||[]).filter(path=>/\.sas$/i.test(path)).map(path=>`<option value="${E(path)}"></option>`).join('');if(refreshShared){refreshShared=false;before('shared-work');model.shared_work={...state.shared_work,enabled:model.shared_work.enabled};changed();}if(!savedLoaded){savedLoaded=true;refreshSaved();if(!model.egp)loadConnection();}if(!globalThis.PySASKeys?.active)updateStatus();}
+  globalThis.PySASGraph={helpers,update,focusCanvas,openMenu};renderCanvas();renderSetup();
   $('graph-add-task').addEventListener('click',()=>addTask());$('graph-start-adding').addEventListener('click',()=>addTask());$('graph-add-setup').addEventListener('click',()=>addTask(true));
   $('graph-show-settings').addEventListener('click',()=>openDrawer('settings'));$('graph-close-drawer').addEventListener('click',closeDrawer);
   $('graph-toggle-setup').addEventListener('click',()=>{setupCollapsed=!setupCollapsed;renderSetup();});
@@ -183,7 +220,31 @@
   $('graph-use-import').addEventListener('click',()=>{if(pendingImport){const result=pendingImport;reset(result.graph,result.revision);}});
   $('graph-check').addEventListener('click',async()=>{try{validate(model);const current=generation,sent=editRevision;const result=await host().request('/api/task-graph-check',{graph:clean(model)});if(current!==generation||sent!==editRevision)return;const incomplete=[...model.setup,...model.nodes].filter(n=>taskIssues(n).length).length;message(`${result.nodes} tasks · ${result.edges} dependencies · no cycles. ${incomplete?incomplete+' card(s) still need definition.':'All source cards are defined.'}`);}catch(e){message(e.message,true);}});
   const canvas=$('graph-canvas');
-  canvas.addEventListener('click',event=>{if(ignoreClick){ignoreClick=false;return;}const edge=event.target.closest('[data-graph-edge]');if(edge){selectedEdge=model.edges[Number(edge.dataset.graphEdge)];selected=null;selection.clear();linkFrom=null;renderCanvas();openDrawer('edge');return;}const card=event.target.closest('[data-graph-node]');if(!card)return;const key=card.dataset.graphNode;if(event.shiftKey||event.ctrlKey||event.metaKey){select(key,true,true);return;}if(event.target.closest('[data-edit-task]')){openDrawer('task',key);return;}const port=event.target.closest('[data-port]');if(port){if(port.dataset.port==='out'){select(key);linkFrom=linkFrom===key?null:key;renderCanvas();}else if(linkFrom)connect(linkFrom,key);else{select(key);message('Choose a prerequisite task, click its right-hand port, then this input.');}return;}if(linkFrom&&linkFrom!==key){connect(linkFrom,key);return;}select(key,true);});
+  for(const menu of $('page-graph').querySelectorAll('[data-keytip-menu]'))menu.querySelector('summary').addEventListener('click',event=>{event.preventDefault();const opened=menu.open;if(opened){menu.open=false;for(const child of menu.querySelectorAll('[data-keytip-menu]'))child.open=false;}else openMenu(menu);});
+  $('page-graph').addEventListener('click',event=>{const button=event.target.closest('button');if(button?.closest('[data-keytip-menu]')){closeMenus();if(selected)focusCanvas();else canvas.focus({preventScroll:true});}});
+  $('graph-context-menu').addEventListener('click',event=>{
+    const button=event.target.closest('button');if(!button||button.disabled)return;
+    const relation=button.dataset.graphRelated,action=button.dataset.graphContext;closeMenus();
+    if(button.id==='graph-run-selected'){runGraph([...selection]);return;}
+    if(relation){selection=new Set(related(model,[...selection],relation==='downstream'?'downstream':'upstream',relation!=='direct'));renderCanvas();focusCanvas();}
+    else if(action==='all'){$('graph-select-all').click();focusCanvas();}
+    else if(action==='edit')openDrawer('task',[...selection][0]);
+    else if(action==='delete')deleteTask(true);
+  });
+  document.addEventListener('pointerdown',event=>{if(!activePage)return;const keep=event.target.closest('[data-keytip-menu],#graph-context-menu,#graph-file-menu');closeMenus(keep);},true);
+  function menuOwner(el){return el.matches('summary')&&el.parentElement?.hasAttribute('data-keytip-menu')?el.parentElement.parentElement.closest('[data-keytip-menu]'):el.closest('[data-keytip-menu]');}
+  $('page-graph').addEventListener('keydown',event=>{
+    if(globalThis.PySASKeys?.active)return;
+    const context=event.target.closest('#graph-context-menu'),menu=context||menuOwner(event.target)||(event.target.matches('summary')&&event.target.parentElement.hasAttribute('data-keytip-menu')?event.target.parentElement:null);if(!menu||(!context&&!menu.open))return;
+    const items=Array.from(menu.querySelectorAll('button,summary')).filter(el=>!el.disabled&&(context||menuOwner(el)===menu)),index=items.indexOf(event.target);let next=null;
+    if(event.key==='ArrowDown')next=(index+1)%items.length;else if(event.key==='ArrowUp')next=(index-1+items.length)%items.length;else if(event.key==='Home')next=0;else if(event.key==='End')next=items.length-1;
+    else if(event.key==='ArrowRight'&&event.target.matches('summary')){event.preventDefault();const child=event.target.parentElement;openMenu(child);Array.from(child.querySelectorAll('button,summary')).find(el=>!el.disabled&&menuOwner(el)===child)?.focus();return;}
+    else if(event.key==='Escape'||event.key==='ArrowLeft'){event.preventDefault();event.stopPropagation();if(context){closeMenus();canvas.focus({preventScroll:true});}else{menu.open=false;for(const child of menu.querySelectorAll('[data-keytip-menu]'))child.open=false;menu.querySelector('summary').focus();}return;}
+    if(next!==null&&items.length){event.preventDefault();event.stopPropagation();items[next].focus();}
+  });
+  canvas.addEventListener('contextmenu',openContext);
+  canvas.addEventListener('keydown',event=>{if(event.key==='ContextMenu'||event.key==='F10'&&event.shiftKey){event.stopPropagation();openContext(event);}});
+  canvas.addEventListener('click',event=>{if(ignoreClick){ignoreClick=false;return;}const edge=event.target.closest('[data-graph-edge]');if(edge){selectedEdge=model.edges[Number(edge.dataset.graphEdge)];selected=null;selection.clear();linkFrom=null;renderCanvas();openDrawer('edge');return;}const card=event.target.closest('[data-graph-node]');if(!card){if(!event.target.closest('button'))clearSelection();return;}const key=card.dataset.graphNode;if(event.shiftKey||event.ctrlKey||event.metaKey){select(key,true,true);return;}if(event.target.closest('[data-edit-task]')){openDrawer('task',key);return;}const port=event.target.closest('[data-port]');if(port){if(port.dataset.port==='out'){select(key);linkFrom=linkFrom===key?null:key;renderCanvas();}else if(linkFrom)connect(linkFrom,key);else{select(key);message('Choose a prerequisite task, click its right-hand port, then this input.');}return;}if(linkFrom&&linkFrom!==key){connect(linkFrom,key);return;}select(key,true);});
   canvas.addEventListener('dblclick',event=>{const card=event.target.closest('[data-graph-node]');if(card)openDrawer('task',card.dataset.graphNode);});
   function worldPoint(event){const rect=canvas.getBoundingClientRect(),v=model.viewport;return {x:(event.clientX-rect.left-v.x)/v.zoom,y:(event.clientY-rect.top-v.y)/v.zoom};}
   canvas.addEventListener('pointerdown',event=>{if(event.button!==0)return;const card=event.target.closest('[data-graph-node]'),port=event.target.closest('[data-port]');if(port?.dataset.port==='out'){const point=worldPoint(event);gesture={kind:'link',pointer:event.pointerId,from:card.dataset.graphNode,worldX:point.x,worldY:point.y,startX:event.clientX,startY:event.clientY,moved:false};}else{if(port||event.target.closest('[data-edit-task],[data-graph-edge]'))return;if(linkFrom)return;if(!card&&event.target.closest('button'))return;if(card&&(event.shiftKey||event.ctrlKey||event.metaKey))return;if(card&&!selection.has(card.dataset.graphNode))select(card.dataset.graphNode);gesture={kind:card?'node':'pan',pointer:event.pointerId,id:card?.dataset.graphNode,startX:event.clientX,startY:event.clientY,x:card?getTask(card.dataset.graphNode).x:model.viewport.x,y:card?getTask(card.dataset.graphNode).y:model.viewport.y,moved:false,positions:card?model.nodes.filter(n=>selection.has(n.id)).map(n=>({id:n.id,x:n.x,y:n.y})):[]};}canvas.setPointerCapture?.(event.pointerId);event.preventDefault();});
@@ -194,4 +255,6 @@
   canvas.addEventListener('keydown',event=>{if(event.target.matches('input,textarea,select'))return;if(event.key==='Enter'&&event.target.closest('button')&&!event.target.hasAttribute('data-graph-focus'))return;if(event.key==='Enter'&&event.target.closest('[data-graph-edge]')){event.preventDefault();selectedEdge=model.edges[Number(event.target.dataset.graphEdge)];openDrawer('edge');return;}if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a'){event.preventDefault();selection=new Set(model.nodes.map(n=>n.id));selectedEdge=null;if(!model.nodes.some(n=>n.id===selected))selected=model.nodes[0]?.id||null;renderCanvas();return;}if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Enter','Delete','Escape'].includes(event.key))return;event.preventDefault();if(event.key==='Escape'){linkFrom=null;if(drawer)closeDrawer();renderCanvas();return;}if(event.key==='Enter'){if(linkFrom&&selected&&linkFrom!==selected)connect(linkFrom,selected);else if(selected)openDrawer('task',selected);else focusCanvas();return;}if(event.key==='Delete'){if(selectedEdge)$('graph-remove-edge').click();else deleteTask(true);return;}if(event.ctrlKey||event.metaKey){const targets=model.nodes.filter(n=>selection.has(n.id));if(!targets.length)return;const distance=event.shiftKey?50:10;change(()=>{for(const n of targets){n.x=Math.max(-100000,Math.min(100000,n.x+(event.key==='ArrowLeft'?-distance:event.key==='ArrowRight'?distance:0)));n.y=Math.max(-100000,Math.min(100000,n.y+(event.key==='ArrowUp'?-distance:event.key==='ArrowDown'?distance:0)));}},'move-'+targets.map(n=>n.id).join('-'));}else select(nearest(model.nodes,selected,event.key),true);});
   document.addEventListener('keydown',event=>{if(!activePage||globalThis.PySASKeys?.active||$('details-dialog')?.open)return;const editing=event.target.matches('input,textarea,select');if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='s'){event.preventDefault();saveGraph();return;}if(!editing&&(event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='z'){event.preventDefault();$(event.shiftKey?'graph-redo':'graph-undo').click();}if(event.key==='Escape'&&!editing){if(linkFrom){linkFrom=null;renderCanvas();}else if(drawer)closeDrawer();}});
   window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue='';}});
+  window.addEventListener('resize',()=>{closeMenus();});
+  if(typeof ResizeObserver!=='undefined')new ResizeObserver(entries=>{$('graph-setup-strip').style.top=(entries[0].contentRect.height+36)+'px';positionMenus();}).observe($('page-graph').querySelector('.taskgraph-topbar'));
 })();

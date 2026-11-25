@@ -242,28 +242,66 @@ def task_document(graph, node):
                 **{key: node[key] for key in ('export_html','export_tables','consolidate_tables')})
 
 
-def execution_document(app, value, task_id=None):
+def selection_ids(task_id=None, task_ids=None):
+    """None is a full graph. An empty/invalid selection must never mean run all."""
+    if task_id is not None and task_ids is not None: raise ValueError('Choose a task or a selection, not both.')
+    if task_id is not None: return [identifier(task_id)]
+    if task_ids is None: return None
+    if not isinstance(task_ids, list) or not 1 <= len(task_ids) <= 200:
+        raise ValueError('Select 1 to 200 task cards to run.')
+    ids = [identifier(key) for key in task_ids]
+    if len(set(ids)) != len(ids): raise ValueError('Selected task IDs must be unique.')
+    return ids
+
+
+def record_scope(record):
+    """Read old single-task history and current selected-task records."""
+    return record.get('graph_task_ids') or ([record['graph_task_id']] if record.get('graph_task_id') else None)
+
+
+def conflicts(commands, graph_id, ids, exclude=None):
+    return any(c.get('id') != exclude and c.get('action') == 'task-graph' and c.get('graph_id') == graph_id
+               and c.get('status') in {'RUNNING', 'STOPPING'}
+               and (ids is None or record_scope(c) is None or set(ids).intersection(record_scope(c))) for c in commands)
+
+
+def run_name(value, task_id=None, task_ids=None):
+    name = value.get('name') or 'Graph'
+    ids = selection_ids(task_id, task_ids)
+    if task_id is not None:
+        node = next((n for n in value.get('nodes', []) if n.get('id') == task_id), {})
+        name += ' · ' + node.get('name', task_id)
+    elif ids is not None: name += f' · {len(ids)} selected task' + ('s' if len(ids) != 1 else '')
+    return name[:120]
+
+
+def execution_document(app, value, task_id=None, *, task_ids=None):
     graph = validate(value)
     if not graph['nodes']: raise ValueError('Add at least one task to run.')
-    if task_id is not None:
-        node = next((n for n in graph['nodes'] if n['id']==task_id), None)
-        if not node: raise ValueError('Choose a task card to run. Shared setup is prepended to tasks.')
-        graph['nodes'], graph['edges'] = [node], []
-        graph['name'] = (graph['name']+' · '+node['name'])[:120]
+    ids = selection_ids(task_id, task_ids)
+    if ids is not None:
+        if set(ids) - {n['id'] for n in graph['nodes']}:
+            raise ValueError('Choose task cards to run. Shared setup is prepended to tasks.')
+        graph['name'] = run_name(graph, task_id, task_ids)
+        graph['nodes'] = [n for n in graph['nodes'] if n['id'] in ids]
+        graph['edges'] = [e for e in graph['edges'] if e['from'] in ids and e['to'] in ids]
     return refresh(app, graph,execution=True)
 
 
-def prepare(app, value, task_id=None, cancelled=lambda:False, progress=lambda text:None, *, started=None, prepared_graph=None):
+def prepare(app, value, task_id=None, cancelled=lambda:False, progress=lambda text:None, *, task_ids=None, started=None, prepared_graph=None):
     started=time.time() if started is None else started
     if cancelled():raise InterruptedError('Cancelled before submission.')
-    graph=validate(prepared_graph) if prepared_graph is not None else execution_document(app,value,task_id)
+    ids=selection_ids(task_id,task_ids)
+    graph=validate(prepared_graph) if prepared_graph is not None else execution_document(app,value,task_id,task_ids=task_ids)
+    if ids is not None and set(ids)!={n['id'] for n in graph['nodes']}:raise ValueError('Prepared tasks do not match the selected tasks.')
     if not graph['egp']: raise ValueError('Choose a connection EGP in Graph settings before running.')
     raw_assets=ui_stream.assets(app,stream_document(graph))
     timing_cache=dict(records=ui_stream.stream_history(app),samples=app.timing_samples())
     folder = app.tasks/'schedules'/(datetime.now().strftime('%Y%m%d_%H%M%S')+'__graph_'+uuid.uuid4().hex[:8])
     folder.mkdir(parents=True)
     try:
-        manifest = dict(name=graph['name'], graph_id=graph['id'], started=started, workers=graph['workers'], mode='task' if task_id else 'graph', tasks=[])
+        manifest = dict(name=graph['name'], graph_id=graph['id'], started=started, workers=graph['workers'], mode='task' if task_id is not None else 'selection' if ids is not None else 'graph',
+                        selected_task_ids=ids, external_prerequisites=[dict(e) for e in value.get('edges',[]) if ids is not None and e['to'] in ids and e['from'] not in ids], tasks=[])
         for index, node in enumerate(graph['nodes'],1):
             if cancelled(): raise InterruptedError('Cancelled before submission.')
             if not node['rows']: raise ValueError(node['name']+': add at least one source card.')

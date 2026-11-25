@@ -73,6 +73,11 @@ def execute(folder, runner=run_sas, event_sink=None):
         output.write(f'PySAS graph: {plan["name"]}\nStatus: {status}\nElapsed: {elapsed:.1f}s\n')
         output.write('Each task is one engine.py submission. Shared setup is prepended to each task.\nFailed prerequisites block descendants; independent branches can finish.\n')
         if plan['mode']=='task':output.write('Manual task run: dependency execution was intentionally omitted.\n')
+        if plan['mode']=='selection':
+            output.write('Selected-task run: '+', '.join(plan['selected_task_ids'])+'. Only dependencies inside this selection are scheduled.\n')
+        if plan.get('external_prerequisites'):
+            output.write('Unselected prerequisites were assumed available, not submitted:\n')
+            for edge in plan['external_prerequisites']:output.write('  '+edge['from']+' -> '+edge['to']+'\n')
         for task in tasks.values():
             output.write('\n\n=== '+task['task_id']+' · '+task['program']+' · '+task['status']+' ===\n')
             log=folder/task['path']/'run.log'

@@ -126,15 +126,35 @@ test('untrusted names are escaped and polling never takes the inline editor focu
   const {w,$,start,add,inline,nodes,rows,input,snapshot}=harness(t);await start();add('<img src=x onerror=alert(1)>');await inline();assert.equal(nodes()[0].querySelector('img'),null);assert.match(nodes()[0].textContent,/<img/);const editor=rows()[0].querySelector('textarea');editor.focus();editor.setSelectionRange(3,5);w.PySASGraph.update(snapshot,'graph');assert.equal(w.document.activeElement,editor);assert.equal(editor.selectionStart,3);input(editor,'%let ids=13;');await settle(()=>!$('graph-save').disabled);assert.equal(w.document.activeElement.tagName,'TEXTAREA');assert.equal(w.document.activeElement.value,'%let ids=13;');
 });
 
-test('Arrange reserves a lane for A→C around B, and routing avoids manually aligned cards',()=>{
+test('Auto Arrange moves intermediate cards away from curves; manual placement never reroutes a link',()=>{
   const triangle=graph(['A','B','C'].map(key=>node(key)),[{from:'A',to:'C'},{from:'A',to:'B'},{from:'B',to:'C'}]);
   const arranged=h.arrange(triangle),byId=Object.fromEntries(arranged.nodes.map(n=>[n.id,n])),geometry=require('../ui/graph-layout.js');
   assert.ok(byId.A.x<byId.B.x&&byId.B.x<byId.C.x);const link=geometry.route(byId.A,byId.C,arranged.nodes);
   const b={left:byId.B.x-12,right:byId.B.x+h.WIDTH+12,top:byId.B.y-12,bottom:byId.B.y+h.HEIGHT+12};
   assert.ok(link.points.slice(1).every((p,i)=>!geometry.intersects(link.points[i],p,b)));
   const straight=[node('A',0,0),node('B',374,0),node('C',748,0)],routed=geometry.route(straight[0],straight[2],straight);
-  assert.equal(routed.routed,true);assert.match(routed.path,/Q/);const obstacle={left:362,right:650,top:-12,bottom:170};assert.ok(routed.points.slice(1).every((p,i)=>!geometry.intersects(routed.points[i],p,obstacle)));
+  assert.equal(routed.routed,false);assert.match(routed.path,/ C/);assert.doesNotMatch(routed.path,/Q/);const obstacle={left:362,right:650,top:-12,bottom:170};assert.ok(routed.points.slice(1).some((p,i)=>geometry.intersects(routed.points[i],p,obstacle)));
+  straight[1].y=700;assert.equal(geometry.route(straight[0],straight[2],straight).path,routed.path);
   const large=h.arrange(graph(Array.from({length:200},(_,i)=>node('N'+i)),Array.from({length:199},(_,i)=>({from:'N'+i,to:'N'+(i+1)}))));assert.equal(h.validate(large).nodes.length,200);
+});
+
+test('Auto Arrange clears cards from multiple spanning curves without changing code or dependencies',()=>{
+  const pairs=[['A','B'],['A','C'],['B','D'],['C','E'],['D','F'],['E','F'],['A','F'],['B','F'],['C','F']];
+  const original=graph('ABCDEF'.split('').map(key=>node(key)),pairs.map(([from,to])=>({from,to}))),arranged=h.arrange(original),geometry=require('../ui/graph-layout.js');
+  for(const edge of arranged.edges){const curve=geometry.route(arranged.nodes.find(n=>n.id===edge.from),arranged.nodes.find(n=>n.id===edge.to));assert.equal(curve.routed,false);
+    for(const n of arranged.nodes.filter(n=>![edge.from,edge.to].includes(n.id))){const box={left:n.x-12,right:n.x+h.WIDTH+12,top:n.y-12,bottom:n.y+h.HEIGHT+12};assert.ok(curve.points.slice(1).every((p,i)=>!geometry.intersects(curve.points[i],p,box)),`${edge.from}→${edge.to} crosses ${n.id}`);}
+  }
+  for(const a of arranged.nodes)for(const b of arranged.nodes)if(a!==b)assert.ok(Math.abs(a.x-b.x)>=h.WIDTH||Math.abs(a.y-b.y)>=h.HEIGHT);
+  assert.deepEqual(arranged.edges,original.edges);assert.deepEqual(arranged.nodes.map(n=>n.rows),original.nodes.map(n=>n.rows));assert.deepEqual(h.arrange(original),arranged);
+});
+
+test('prerequisite and dependent selection traverses every level, includes the seeds and handles joins',()=>{
+  const g=graph('ABCDEF'.split('').map(key=>node(key)),[['A','B'],['B','C'],['A','D'],['C','E'],['D','E']].map(([from,to])=>({from,to})));
+  assert.deepEqual(h.related(g,['E']),'ABCDE'.split(''));
+  assert.deepEqual(h.related(g,['E'],'upstream',false),['C','D','E']);
+  assert.deepEqual(h.related(g,['B','F'],'downstream'),['B','C','E','F']);
+  assert.deepEqual(h.related(g,['Missing']),[]);assert.deepEqual(h.related(g,[]),[]);
+  g.edges.push({from:'E',to:'A'});assert.deepEqual(h.related(g,['E']),'ABCDE'.split(''));
 });
 
 test('alignment and distribution change selected positions without touching sources or edges',()=>{
@@ -193,4 +213,76 @@ test('restored EGP program sections are selectable without a source_kind field o
   const {w,$,start,upload,setImported,ref,rows,change,save}=harness(t);await start();const g=graph([node('A')]);g.egp=ref('connection.egp');g.nodes[0].rows=[{...h.source(),id:'project',source_kind:'egp',project:ref('connection.egp'),programs:[{id:'program',program_id:'A',name:'Libraries',flow:'Setup',file:ref('embedded.sas'),mode:'whole',row_start:null,row_end:null,sections:[]}]}];setImported(g);
   await upload($('graph-import'),'graph.json');await settle(()=>$('graph-nodes').children.length===1);$('graph-nodes').querySelector('[data-edit-task]').click();await settle(()=>!$('graph-save').disabled);
   const program=rows()[0].querySelector('[data-source-unit="program"]');change(program.querySelector('[data-unit-field="mode"]'),'section');const box=rows()[0].querySelector('[data-source-unit="program"] [data-unit-section="Extract"]');assert.ok(box);box.checked=true;box.dispatchEvent(new w.Event('change',{bubbles:true}));assert.deepEqual((await save()).nodes[0].rows[0].programs[0].sections,['Extract']);
+});
+
+async function selectionFixture(t){
+  const f=harness(t);await f.start();
+  const value=graph('ABCDE'.split('').map((key,i)=>node(key,i*374,0)),[['A','B'],['B','C'],['A','D'],['C','E'],['D','E']].map(([from,to])=>({from,to})));
+  for(const n of value.nodes)Object.assign(n.rows[0],{source_kind:'inline',code:'%put '+n.id+';',analysis:{has_code:true,lines:1,sections:[]}});
+  value.egp=f.ref('connection.egp');f.setImported(value);await f.upload(f.$('graph-import'),'branch.graph.json');f.snapshot.windows=true;f.w.PySASGraph.update(f.snapshot,'graph');
+  const card=id=>f.$('graph-nodes').querySelector(`[data-graph-node="${id}"]`),click=(id,extras={})=>card(id).querySelector('[data-graph-focus]').dispatchEvent(new f.w.MouseEvent('click',{bubbles:true,...extras}));
+  const context=id=>(id?card(id):f.$('graph-canvas')).dispatchEvent(new f.w.MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:400,clientY:300}));
+  const selected=()=>[...f.$('graph-nodes').querySelectorAll('.selected')].map(el=>el.dataset.graphNode);
+  return {...f,card,click,context,selected};
+}
+
+test('right-click preserves a multi-selection and distinguishes immediate prerequisites from all dependencies',async t=>{
+  const {$,click,context,selected}=await selectionFixture(t);
+  click('E');context('E');assert.equal($('graph-context-menu').hidden,false);assert.match($('graph-context-count').textContent,/1 selected/);
+  $('graph-context-menu').querySelector('[data-graph-related="direct"]').click();assert.deepEqual(selected(),['C','D','E']);assert.equal($('graph-context-menu').hidden,true);
+  context('C');assert.deepEqual(selected(),['C','D','E']);$('graph-context-menu').querySelector('[data-graph-related="all"]').click();assert.deepEqual(selected(),'ABCDE'.split(''));
+  context('A');$('graph-context-menu').querySelector('[data-graph-related="downstream"]').click();assert.equal(selected().length,5);
+  click('B');context('D');assert.deepEqual(selected(),['D']);$('graph-context-menu').querySelector('[data-graph-related="downstream"]').click();assert.deepEqual(selected(),['D','E']);
+});
+
+test('Run selected submits exactly the chosen IDs and warns about omitted prerequisites',async t=>{
+  const {w,$,click,context,selected,requests}=await selectionFixture(t);click('C');click('E',{shiftKey:true});context('E');
+  assert.deepEqual(selected(),['C','E']);assert.match($('graph-context-menu').querySelector('.taskgraph-context-note').textContent,/2 unselected prerequisites/);assert.equal($('graph-run-selected').disabled,false);
+  $('graph-run-selected').click();await settle(()=>requests.some(r=>r.url==='/api/submit'));const submitted=requests.find(r=>r.url==='/api/submit');
+  assert.deepEqual(submitted.data.task_ids,['C','E']);assert.equal(submitted.data.task_id,undefined);assert.equal(submitted.data.graph.nodes.length,5);assert.equal($('page-overview').hidden,false);assert.equal($('graph-context-menu').hidden,true);
+  assert.equal(requests.some(r=>r.url==='/inspect'),false);
+});
+
+test('selected runs allow an unrelated incomplete draft and reject overlapping active scopes',async t=>{
+  const {w,$,click,context,rows,input,requests,snapshot}=await selectionFixture(t);
+  click('A');$('graph-nodes').querySelector('[data-graph-node="A"] [data-edit-task]').click();input(rows()[0].querySelector('textarea'),'');await settle(()=>!$('graph-save').disabled);
+  $('graph-close-drawer').click();click('C');context('C');assert.equal($('graph-run').disabled,true);assert.equal($('graph-run-selected').disabled,false);
+  snapshot.commands=[{id:'active',action:'task-graph',graph_id:'example',graph_task_ids:['A','D'],status:'RUNNING',started:1,tasks:{}}];w.PySASGraph.update(snapshot,'graph');assert.equal($('graph-run-selected').disabled,false);
+  snapshot.commands[0].graph_task_ids=['C','D'];w.PySASGraph.update(snapshot,'graph');assert.equal($('graph-run-selected').disabled,true);assert.match($('graph-run-selected').title,/already running/);
+  snapshot.commands=[];w.PySASGraph.update(snapshot,'graph');$('graph-run-selected').click();await settle(()=>requests.some(r=>r.url==='/api/submit'));assert.deepEqual(requests.find(r=>r.url==='/api/submit').data.task_ids,['C']);
+});
+
+test('blank canvas click clears nodes, links, drawer and menus; panning retains the selection',async t=>{
+  const {w,$,click,context,selected,pointer}=await selectionFixture(t);click('B');click('D',{shiftKey:true});context('D');
+  pointer('pointerdown',$('graph-canvas'),700,500);pointer('pointermove',$('graph-canvas'),730,530);pointer('pointerup',$('graph-canvas'),730,530);$('graph-canvas').click();assert.deepEqual(selected(),['B','D']);assert.equal($('graph-context-menu').hidden,true);
+  $('graph-home-menu').querySelector('summary').click();$('graph-arrange-menu').querySelector('summary').click();assert.equal($('graph-arrange-menu').open,true);
+  $('graph-canvas').click();assert.deepEqual(selected(),[]);for(const id of ['graph-home-menu','graph-arrange-menu','graph-align-menu'])assert.equal($(id).open,false);assert.equal(w.document.activeElement,$('graph-canvas'));
+  $('graph-edges').querySelector('[data-graph-edge]').dispatchEvent(new w.MouseEvent('click',{bubbles:true}));assert.equal($('graph-drawer').hidden,false);assert.ok($('graph-edges').querySelector('.selected'));
+  $('graph-canvas').click();assert.equal($('graph-drawer').hidden,true);assert.equal($('graph-edges').querySelector('.selected'),null);assert.deepEqual(selected(),[]);
+  click('C');$('graph-connect').click();assert.ok($('graph-nodes').querySelector('.link-source'));$('graph-canvas').click();assert.equal($('graph-nodes').querySelector('.link-source'),null);assert.deepEqual(selected(),[]);
+});
+
+test('context actions support Shift+F10, arrow navigation, Escape and editing the chosen card',async t=>{
+  const {w,$,click,card,key}=await selectionFixture(t);click('B');key(card('B').querySelector('[data-graph-focus]'),'F10',{shiftKey:true});
+  assert.equal($('graph-context-menu').hidden,false);assert.equal(w.document.activeElement,$('graph-run-selected'));
+  key(w.document.activeElement,'ArrowDown');assert.equal(w.document.activeElement.dataset.graphRelated,'all');key(w.document.activeElement,'End');assert.equal(w.document.activeElement.dataset.graphContext,'delete');
+  key(w.document.activeElement,'Escape');assert.equal($('graph-context-menu').hidden,true);assert.equal(w.document.activeElement,$('graph-canvas'));
+  key(card('B').querySelector('[data-graph-focus]'),'ContextMenu');$('graph-context-menu').querySelector('[data-graph-context="edit"]').click();assert.equal($('graph-task-name').value,'B');assert.equal($('graph-drawer').hidden,false);
+});
+
+test('Alt H G A opens Align, A arranges, and View owns zoom; Escape walks back through menus',async t=>{
+  const {w,$,key,save,click,selected}=await selectionFixture(t);
+  w.HTMLElement.prototype.getClientRects=function(){if(this.closest('[hidden],[inert]'))return [];for(let p=this.parentElement;p;p=p.parentElement)if(p.tagName==='DETAILS'&&!p.open&&!p.querySelector('summary').contains(this))return [];return [this.getBoundingClientRect()];};
+  w.HTMLElement.prototype.getBoundingClientRect=()=>({left:300,top:80,right:540,bottom:110,width:240,height:30});w.HTMLElement.prototype.scrollIntoView=()=>{};
+  w.eval(fs.readFileSync(path.join(root,'ui/keyboard.js'),'utf8'));
+  const type=letter=>key(w.document.activeElement||w.document.body,letter),badges=()=>[...w.document.querySelectorAll('.keytip:not([hidden])')].map(el=>el.textContent);
+  key(w.document.body,'Alt');w.document.body.dispatchEvent(new w.KeyboardEvent('keyup',{bubbles:true,cancelable:true,key:'Alt'}));assert.ok(badges().includes('H'));assert.ok(badges().includes('W'));
+  type('h');assert.equal($('graph-home-menu').open,true);assert.ok(badges().includes('G'));assert.equal(badges().includes('L'),false);
+  type('g');assert.equal($('graph-arrange-menu').open,true);assert.deepEqual(badges(),['A','F']);type('a');assert.equal($('graph-align-menu').open,true);assert.ok(badges().includes('A'));
+  type('Escape');assert.equal($('graph-align-menu').open,false);assert.deepEqual(badges(),['A','F']);type('a');type('a');assert.equal(w.PySASKeys.active,false);assert.equal($('graph-home-menu').open,false);
+  const arranged=await save();assert.ok(arranged.nodes[0].x<arranged.nodes[1].x);assert.equal($('graph-arrange').closest('[data-keytip-menu]').id,'graph-align-menu');assert.equal($('graph-fit').closest('[data-keytip-menu]').id,'graph-arrange-menu');
+  w.PySASKeys.show();type('w');assert.deepEqual(badges(),['I','O','R']);const zoom=arranged.viewport.zoom;type('i');assert.ok((await save()).viewport.zoom>zoom);assert.equal($('graph-view-menu').open,false);
+  w.PySASKeys.show();type('h');assert.ok(badges().includes('U'));type('Escape');assert.equal($('graph-home-menu').open,false);assert.ok(badges().includes('H'));type('Escape');assert.equal(w.PySASKeys.active,false);
+  click('B');$('graph-home-menu').querySelector('summary').click();key($('graph-home-menu').querySelector('summary'),'ArrowDown');assert.equal(w.document.activeElement,$('graph-undo'));key(w.document.activeElement,'End');assert.equal(w.document.activeElement,$('graph-arrange-menu').querySelector('summary'));key(w.document.activeElement,'ArrowRight');assert.equal(w.document.activeElement,$('graph-align-menu').querySelector('summary'));
+  $('graph-canvas').click();assert.deepEqual(selected(),[]);assert.equal($('graph-home-menu').open,false);
 });

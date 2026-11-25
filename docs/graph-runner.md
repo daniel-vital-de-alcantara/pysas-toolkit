@@ -1,6 +1,6 @@
 # Task graph · canvas and execution
 
-The Graph tab keeps the canvas introduced in preview.37. In **0.4.0-preview.40**, Run graph connects its tasks to the same independent `engine.py` submission used by Run stream. Each task composes its ordered sources once, with shared setup first, and waits for its prerequisites. Manual single-task execution is available too.
+The Graph tab keeps its canvas design. In **0.4.0-preview.41**, tasks can run as a whole graph, individually, or as a selected branch through the same independent `engine.py` used by Run stream. Shared setup is prepended before each task. Selection menus, Home/View controls and card placement are refined in this preview.
 
 ## Canvas and task cards
 
@@ -29,10 +29,14 @@ Circular dependencies, duplicate links, self-links and links to shared setup are
 
 ## View and keyboard
 
-- Drag empty canvas to pan; normal wheel movement also pans. Ctrl + wheel zooms around the pointer. Use the bottom − / percentage / ＋ controls to zoom, **Fit** to bring tasks into view, or **Arrange** to place prerequisites in earlier columns. Spanning edges reserve bypass lanes; card-aware routing takes long links around intermediate nodes, including A→C when A→B→C also exists.
-- Arrow keys browse nearby tasks. Enter edits the selected task. Shift/Ctrl-click selects multiple nodes; Ctrl + A on the canvas selects all. Drag a selection together. Ctrl + arrows moves the selection; Shift makes the step larger. Delete removes the selected cards or dependency. The drawer Delete button removes its own card. Escape cancels linking or closes details.
+- Drag empty canvas to pan; normal wheel movement also pans. Ctrl + wheel zooms around the pointer. **View** contains Zoom in, Zoom out and reset to 100%. **Home → Arrange → Fit all tasks** brings the graph into view.
+- **Home → Arrange → Align → Auto** places prerequisites in earlier columns. Auto reserves room for spanning links and moves intermediate cards away from their curves, including A→B→C plus A→C. It makes a bounded best effort on dense graphs. Links keep the original Bézier curves; manually placing a card over a link is allowed and does not reroute it.
+- Arrow keys browse nearby tasks. Enter edits the selected task. Shift/Ctrl-click selects multiple nodes; Ctrl + A on the canvas selects all. Drag a selection together. Ctrl + arrows moves the selection; Shift makes the step larger. Delete removes the selected cards or dependency. The drawer Delete button removes its own card.
+- A click on empty canvas clears task/link selection, cancels linking, closes the drawer and closes menus. Dragging the background pans without clearing the selection.
+- Right-click a task or press Shift + F10 / the Context Menu key for selection actions. Right-clicking an already selected card retains the whole selection; right-clicking another selects that card alone. Arrow keys navigate menu items; Escape closes a menu.
 - To link with the keyboard: select the prerequisite, activate Link, return to the canvas, use arrows to choose the dependent task, then Enter.
-- Ctrl + S saves; Ctrl + Z / Ctrl + Shift + Z undo/redo graph edits outside text fields. Native text editing keeps its own undo. Alt page-command hints include C Canvas, T Task, B shared setup, L Link, F Fit, A Align, D Arrange and R Run. R runs the selected task while its drawer is open; close it to use Run graph.
+- Press/release **Alt**, then **H → G → A** for Home → Arrange → Align. Follow with **A** for Auto, L/C/R for left/center/right, T/M/B for top/middle/bottom, H/V for horizontal/vertical distribution or S to select all. **Alt → H → G → F** fits; **Alt → W** opens View (I zooms in, O out, R resets). Escape goes back one menu level.
+- **Home** also contains Undo/Redo: Alt → H → U/R. Ctrl + S saves; Ctrl + Z / Ctrl + Shift + Z undo/redo graph edits outside text fields. Native text editing keeps its own undo. Alt page commands remain available through X: C Canvas, T Task, B shared setup, L Link and R Run. R runs the selected task while its drawer is open; close it to use Run graph.
 
 ## Connection and execution
 
@@ -42,7 +46,14 @@ Click the graph name for settings. Automatic EGP selection uses the existing bac
 
 Tasks run up to the worker limit after all prerequisites succeed. Failure or cancellation blocks all dependent descendants; independent branches can finish. **Stop graph** prevents new launches and requests cancellation of active owned automation. **Stop file** affects that task; its descendants are blocked. As with Run stream, remote SAS work may outlive local automation cancellation, and returned SAS logs become available when Enterprise Guide returns them.
 
-In a task's drawer, **Run this task only** submits it with setup and omits dependency execution. This mode allows manual testing or repair when prerequisites already exist. It does not claim that other dependencies ran. The other graph cards may remain incomplete for a manual task run.
+**Run selected** in the right-click menu submits exactly the selected task cards and their shared setup. Dependencies between those tasks are retained. Prerequisites outside the selection are assumed available; their IDs/arrows are listed in the consolidated log, not marked as executed. The menu warns when prerequisites are omitted. Other unselected cards may remain incomplete.
+
+- **Select prerequisites** adds the immediate upstream prerequisites of the current selection.
+- **Select all dependencies** adds every upstream prerequisite, through all levels. Use it before Run selected when you want to build the selected task's inputs too.
+- **Select all dependents** adds every downstream task, through all levels. This is useful when rebuilding from a changed task.
+- These actions add to the selection and retain its starting cards. Use Shift/Ctrl-click to adjust it before running.
+
+In a task's drawer, **Run this task only** still submits that task with setup and omits dependency execution. Independent, disjoint selections may run concurrently; overlapping selections or a full graph run block another launch for the same graph. Stop selection stops its own run. **Run again** remembers whether the original run was full, manual or selected, including the exact selected IDs.
 
 Each task has a separate SAS session. Arrows order execution; they do not transfer WORK tables or macro variables automatically. Use shared WORK or permanent libraries for tables, and shared setup for macros needed by every task. Rows within one task share one submission/session.
 
@@ -52,7 +63,7 @@ The parent folder is `Tasks/schedules/<timestamp>__graph_<id>/`, with a frozen g
 
 ## Align and distribute
 
-Select two or more task cards with Shift/Ctrl-click, or Ctrl + A to select all. Open **Align** beside Fit/Arrange. Align left/right/top/bottom, center horizontally/vertically, or distribute three or more tasks horizontally/vertically. Only selected positions change; source definitions and dependencies stay intact. Each operation and group drag can be undone once. Dependency links are rerouted after positions change.
+Select two or more task cards with Shift/Ctrl-click, or Ctrl + A to select all. Open **Home → Arrange → Align**. Align left/right/top/bottom, center horizontally/vertically, or distribute three or more tasks horizontally/vertically. Only selected positions change; source definitions and dependencies stay intact. Each operation and group drag can be undone once. Dependency curves follow their endpoints; they are not routed around other cards.
 
 ## Save and portable JSON
 
@@ -83,4 +94,4 @@ Their source snapshots, shared setup, dependency scheduling, stop and continuati
 
 ## Verification
 
-Automated tests cover actual task-editor DOM events, mouse/keyboard linking, dragging/panning/zoom, cycle rejection, setup ordering, source editing, asynchronous result isolation, undo/redo, source encodings, portable/legacy import, revision protection, HTTP routes, backups and packaged assets. Tests reject execution side effects from editor operations, and separately verify explicit dependency/manual runs, shared setup, freezing, parallel limits, failure propagation, cancellation, consolidated logs, history, source refresh and matching task timing estimates. Windows/macOS/Linux release checks also retain the existing execution regressions. Desktop visual acceptance remains pending in the target environment; the development Mac was locked during this work.
+Automated tests cover actual task-editor DOM events, nested Alt menus, context selection, canvas deselection, mouse/keyboard linking, dragging/panning/zoom, cycle rejection, setup ordering, source editing, asynchronous result isolation, undo/redo, source encodings, portable/legacy import, revision protection, HTTP routes, backups and packaged assets. Tests reject execution side effects from editor operations, and separately verify explicit full/manual/selected runs, shared setup, freezing, parallel limits, failure propagation, cancellation, consolidated logs, history, source refresh and matching task timing estimates. Windows/macOS/Linux release checks also retain the existing execution regressions. Desktop visual acceptance remains pending in the target environment; the development Mac was locked during this work.

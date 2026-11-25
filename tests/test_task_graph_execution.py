@@ -117,35 +117,87 @@ class TaskGraphExecutionTests(unittest.TestCase):
         self.run_graph(folder,lambda p,s,d,**o:self.output(d))
         estimate=ui_stream.estimate(self.app,graph.task_document(document,document['nodes'][0]));self.assertEqual(estimate['samples'],1);self.assertIsNotNone(estimate['seconds']);self.assertEqual(estimate['unknown'],0)
 
+    def test_selected_branch_keeps_internal_dependencies_and_logs_omitted_prerequisites(self):
+        value=copy.deepcopy(self.value);value['nodes'][1]['rows']=[]  # An unselected draft cannot block this run.
+        folder,frozen,plan=graph.prepare(self.app,value,task_ids=['D','C']);self.assertEqual(plan['mode'],'selection')
+        self.assertEqual(plan['selected_task_ids'],['D','C']);self.assertEqual([n['id'] for n in frozen['nodes']],['C','D'])
+        self.assertEqual(frozen['edges'],[{'from':'C','to':'D'}])
+        self.assertEqual(plan['tasks'][0]['depends_on'],[]);self.assertEqual(plan['tasks'][1]['depends_on'],['C'])
+        self.assertEqual(plan['external_prerequisites'],[e for e in value['edges'] if e['from'] in {'A','B'}])
+        called=[]
+        def runner(project,source,destination,**options):
+            key=source.parent.name.removeprefix('task_');called.append(key)
+            if key=='D':self.assertEqual(called,['C','D'])
+            code=source.read_text(encoding='utf-8');self.assertIn('%let lib_token',code);self.assertIn('%let case_ids',code)
+            return self.output(destination)
+        rc,_=self.run_graph(folder,runner);self.assertEqual(rc,0);self.assertEqual(called,['C','D'])
+        log=(folder/'run.log').read_text(encoding='utf-8');self.assertIn('Selected-task run: D, C',log)
+        self.assertIn('A -> C',log);self.assertIn('B -> C',log);self.assertIn('A -> D',log)
+        self.assertEqual({t['task_id'] for t in self.app.details(self.app.relative(folder))['tasks']},{'C','D'})
+        self.assertEqual(len(value['nodes']),4);self.assertEqual(len(value['edges']),4)
+
+    def test_invalid_selections_never_fall_back_to_the_full_graph(self):
+        for ids in ([], 'A', ['Missing'], ['Setup'], ['A','A'], [None], [1], ['../A']):
+            with self.subTest(ids=ids),self.assertRaises(ValueError):graph.prepare(self.app,self.value,task_ids=ids)
+        with self.assertRaises(ValueError):graph.prepare(self.app,self.value,'A',task_ids=['B'])
+        self.assertEqual(list((self.app.tasks/'schedules').iterdir()),[])
+
+    def test_selection_launch_scope_conflicts_and_replay_preserve_the_exact_selection(self):
+        entered,release=threading.Event(),threading.Event();requests=[]
+        def launch(data,**options):
+            requests.append(copy.deepcopy(data));entered.set();release.wait(5)
+            self.app.commands[options['reserved_id']].update(status='SUCCESS',preparing=False);return {'id':options['reserved_id']}
+        with patch('ui_launch.os',SimpleNamespace(name='nt')),patch.object(self.app,'launch',side_effect=launch):
+            first=self.app.launches.start(dict(action='task-graph',graph=self.value,task_ids=['A','C']))
+            try:
+                self.assertTrue(entered.wait(1));self.assertEqual(first['command']['graph_task_ids'],['A','C'])
+                for scope in ({'task_ids':['C','D']},{'task_id':'A'},{}):
+                    with self.assertRaisesRegex(ValueError,'already running'):self.app.launches.start(dict(action='task-graph',graph=self.value,**scope))
+                second=self.app.launches.start(dict(action='task-graph',graph=self.value,task_ids=['B','D']));self.assertNotEqual(first['id'],second['id'])
+            finally:release.set()
+            deadline=time.monotonic()+5
+            while self.app.launches.working() and time.monotonic()<deadline:time.sleep(.01)
+            self.app.commands[first['id']]['display_name']='Renamed branch'
+            replay=self.app.launches.replay(dict(command=first['id'],mode='again'))
+            deadline=time.monotonic()+5
+            while self.app.launches.working() and time.monotonic()<deadline:time.sleep(.01)
+        self.assertEqual(requests[-1]['task_ids'],['A','C']);self.assertEqual(requests[-1]['graph']['name'],'Daily')
+        self.assertEqual(requests[-1]['display_name'],'Renamed branch');self.assertEqual(self.app.commands[replay['id']]['graph_task_ids'],['A','C'])
+        legacy=dict(id='old',action='task-graph',graph_id='execution',graph_task_id='B',status='RUNNING')
+        self.assertTrue(graph.conflicts([legacy],'execution',['B','D']));self.assertFalse(graph.conflicts([legacy],'execution',['A','C']))
+
     def test_run_uses_current_shared_work_and_linked_file_but_each_snapshot_stays_frozen(self):
         ui.atomic_json(self.app.config('shared-work.json'),dict(enabled=True,path='/current/work',libref='VDI'));value=copy.deepcopy(self.value);value['shared_work']=dict(enabled=True,path='/old/work',libref='OLD')
         source=self.root/'fresh.sas';source.write_text('%put old;');value['nodes'][0]['rows']=[dict(id='live',file=ui_stream.describe(self.app,source))];source.write_text('%put fresh;')
         folder,_,_=graph.prepare(self.app,value);code=(folder/'tasks/task_A/source.sas').read_text(encoding='utf-8');self.assertIn("'/current/work'",code);self.assertIn('options user=VDI;',code);self.assertIn('%put fresh;',code);self.assertNotIn('%put old;',code)
 
     def test_launch_registration_and_worker_handoff_use_one_id_and_graph_events(self):
-        processes=[]
         class Process:
             stdin=None
             def poll(self):return 0
             def wait(self):return 0
-        def popen(command,**options):
-            self.assertEqual(Path(command[2]).name,'graph_worker.py');folder=Path(command[3]);self.assertTrue((folder/'task-graph-plan.json').is_file());processes.append(command)
-            with patch.dict(os.environ,options['env']),patch('sys.stdout',new=io.StringIO()):self.assertEqual(graph_worker.execute(folder,lambda p,s,d,**o:self.output(d)),0)
-            return Process()
         platform=SimpleNamespace(name='nt',environ=os.environ,path=os.path)
-        with patch('ui_launch.os',platform),patch('pysas_ui.os',platform),patch.object(ui.subprocess,'CREATE_NEW_PROCESS_GROUP',512,create=True),patch.object(ui.subprocess,'CREATE_NO_WINDOW',134217728,create=True),patch('pysas_ui.subprocess.Popen',side_effect=popen):
-            result=self.app.launches.start(dict(action='task-graph',graph=self.value));deadline=time.monotonic()+10
-            while (self.app.launches.working() or self.app.processes) and time.monotonic()<deadline:time.sleep(.01)
-        item=self.app.commands[result['id']];self.assertEqual(item['status'],'SUCCESS',item.get('message'));self.assertEqual(set(item['tasks']),set('ABCD'));self.assertEqual(len(processes),1);self.assertFalse(item['preparing']);self.assertEqual(item['id'],result['command']['id'])
-        detail=self.app.command_details(item['id']);self.assertEqual(detail['status'],'SUCCESS');self.assertEqual(len(detail['tasks']),4);self.assertTrue(any(f['name']=='run.log' for f in detail['files']))
+        for scope,keys in (({},set('ABCD')),({'task_ids':['C','D']},set('CD'))):
+            with self.subTest(scope=scope):
+                processes=[]
+                def popen(command,**options):
+                    self.assertEqual(Path(command[2]).name,'graph_worker.py');folder=Path(command[3]);self.assertTrue((folder/'task-graph-plan.json').is_file());processes.append(command)
+                    with patch.dict(os.environ,options['env']),patch('sys.stdout',new=io.StringIO()):self.assertEqual(graph_worker.execute(folder,lambda p,s,d,**o:self.output(d)),0)
+                    return Process()
+                with patch('ui_launch.os',platform),patch('pysas_ui.os',platform),patch.object(ui.subprocess,'CREATE_NEW_PROCESS_GROUP',512,create=True),patch.object(ui.subprocess,'CREATE_NO_WINDOW',134217728,create=True),patch('pysas_ui.subprocess.Popen',side_effect=popen):
+                    result=self.app.launches.start(dict(action='task-graph',graph=self.value,**scope));deadline=time.monotonic()+10
+                    while (self.app.launches.working() or self.app.processes) and time.monotonic()<deadline:time.sleep(.01)
+                item=self.app.commands[result['id']];self.assertEqual(item['status'],'SUCCESS',item.get('message'));self.assertEqual(set(item['tasks']),keys);self.assertEqual(len(processes),1);self.assertFalse(item['preparing']);self.assertEqual(item['id'],result['command']['id'])
+                self.assertEqual(item['graph_task_ids'],scope.get('task_ids'))
+                detail=self.app.command_details(item['id']);self.assertEqual(detail['status'],'SUCCESS');self.assertEqual(len(detail['tasks']),len(keys));self.assertTrue(any(f['name']=='run.log' for f in detail['files']))
 
     def test_full_backup_remaps_colliding_graph_identity_inside_saved_replay_choices(self):
-        graph.save(self.app,{'graph':self.value});key='saved';spec=self.app.storage/'artifacts'/key/'launch/request.json';spec.parent.mkdir(parents=True);ui.atomic_json(spec,dict(action='task-graph',graph=self.value))
+        graph.save(self.app,{'graph':self.value});key='saved';spec=self.app.storage/'artifacts'/key/'launch/request.json';spec.parent.mkdir(parents=True);ui.atomic_json(spec,dict(action='task-graph',graph=self.value,task_ids=['A','C']))
         self.app.commands[key]=dict(id=key,action='task-graph',graph_id='execution',status='SUCCESS',started=1,name='Daily',args=[],tasks={},launch_request=self.app.relative(spec));self.app.save(self.app.commands[key])
         archive,_=self.app.backup()
         with archive:raw=archive.read()
         self.app.backup(io.BytesIO(raw),len(raw));restored=next(c for c in self.app.commands.values() if c['id']!=key and c.get('launch_request'));request=json.loads(self.app.resolve(restored['launch_request']).read_text(encoding='utf-8'))
-        self.assertNotEqual(restored['graph_id'],'execution');self.assertEqual(request['graph']['id'],restored['graph_id'])
+        self.assertNotEqual(restored['graph_id'],'execution');self.assertEqual(request['graph']['id'],restored['graph_id']);self.assertEqual(request['task_ids'],['A','C'])
 
     def test_inactive_source_drafts_do_not_block_execution_but_remain_in_the_editor(self):
         source=self.root/'gone.sas';source.write_text('%put previous draft;');value=copy.deepcopy(self.value);value['nodes'][0]['rows'][0]['file']=ui_stream.describe(self.app,source);source.unlink()

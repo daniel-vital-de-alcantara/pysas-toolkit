@@ -1,28 +1,27 @@
-# PySAS Workbench 0.4.0-preview.40
+# PySAS Workbench 0.4.0-preview.41
 
-Graph keeps its canvas design and now runs tasks through the Run stream engine. This preview also adds AI JSON instructions, alignment/distribution and better dependency layout/section refresh.
+Graph keeps its canvas design and original curved links, with partial graph runs and a Home/View menu hierarchy.
 
-Download **PySAS-Workbench-Python-0.4.0-preview.40.zip**, extract the entire ZIP and open **START_PYSAS.bat**. Python 3.10+ and your configured Windows Enterprise Guide/SAS environment are required for execution. The independent `engine.py` and standalone `pysas.py 0.3.18` remain available.
+Download **PySAS-Workbench-Python-0.4.0-preview.41.zip**, extract the entire ZIP and open **START_PYSAS.bat**. Python 3.10+ and your configured Windows Enterprise Guide/SAS environment are required for execution.
 
-## Graph execution
+## Graph selection and partial runs
 
-- **Run graph** starts a dependency run through `engine.py`, one combined submission per task. All shared setup source is prepended before every task; it is never a separate job. Parallelism defaults to 10 and can be set from 1–32.
-- Dependencies wait for success. Failed/cancelled prerequisites block all descendants; independent branches can finish. Global Stop graph prevents new tasks and cancels active local automation. Per-file stop remains available in Overview/Inspect.
-- **Run this task only** in the task drawer includes setup and deliberately omits prerequisite execution. Other cards may remain incomplete for a manual test. Close the drawer for the full Run graph control.
-- Launch immediately opens Overview with Preparing run. Sources/current shared WORK are refreshed, and every submission is validated/frozen before SAS starts. The graph and its task folders retain source, logs, HTML/tables, elapsed time, Copy/Download and ZIP. The parent `run.log` consolidates task logs. Node badges show the last submitted task states when returning to the canvas.
-- **Run again** creates a fresh graph from saved choices. Graph continuation is not part of this preview; the existing Excel scheduler/legacy CLI continuation is separate. Tasks have separate SAS sessions: use shared WORK/permanent libraries for tables and shared setup for macros needed by every task.
+- Right-click a task for **Run selected**, **Select prerequisites** (immediate upstream), **Select all dependencies** (every upstream level) and **Select all dependents** (every downstream level). Selection actions retain the starting cards. Right-clicking an already selected card preserves the group; another card becomes the sole selection.
+- **Run selected** submits exactly those tasks plus shared setup, retaining dependencies within the selection. The menu warns about unselected prerequisites; the parent log lists them as assumed available, not executed. Unselected incomplete cards do not block preparation. Select all dependencies first to include upstream work.
+- Selected runs use the existing Run stream engine and appear immediately in Overview as Preparing run. Logs, outputs, elapsed times, stop controls, task inspectors, Copy/Download and ZIP remain available. **Run again** preserves the exact selection. Disjoint selections may run concurrently; overlapping scopes are blocked.
+- Shift+F10 / the Context Menu key opens selection actions. Arrow keys, Home/End and Escape navigate the menu. Shift/Ctrl-click and Ctrl+A still support multi-selection.
 
-## Canvas and JSON
+## Menus, layout and canvas
 
-- **Arrange** reserves bypass lanes for spanning edges. A→C is routed around B when A→B→C is also present. Links avoid intermediate task cards after manual movement too.
-- **Align** offers left/right/top/bottom, horizontal/vertical center and even distribution. Shift/Ctrl-click selects multiple tasks; Ctrl+A selects all. Drag/move the group, undo/redo positions, and keep source/dependency definitions intact.
-- **Sections** use fresh metadata from the same parser as Run stream. Saved references without analysis load before becoming Defined. Refresh source / sections rereads a file; File → Refresh sources updates all active sources. Link a local file path to follow edits. Inactive source drafts do not block execution.
-- **JSON guide for AI** is downloadable in Graph → File and Settings → Defaults. It documents the full schema, dependencies, setup, sections, sessions and limits, with an example and AI prompt. New `pysas-task-graph-authoring-1` import binds local paths and computes hashes automatically. Existing portable templates still embed snapshots and restore offline.
+- **Home → Arrange → Align** contains Auto, alignment and distribution. **Fit** is under Arrange. **Undo/Redo** are under Home. **View** contains Zoom in/out and reset.
+- Press/release **Alt**, then **H → G → A** to open Align. Follow with A for Auto or L/C/R/T/M/B for an alignment. **Alt → H → G → F** fits; **Alt → W** opens View. Escape goes back one level.
+- Original Bézier curves are restored. **Auto** changes card positions to keep intermediate cards away from spanning links, including A→B→C plus A→C. It makes a bounded best effort for dense graphs. Manual positioning is unrestricted: links may pass underneath cards and are never rerouted around them.
+- Clicking empty canvas clears selection/link mode, closes details and dismisses menus. Dragging the background pans while retaining the selection.
 
 ## Validation and upgrade
 
-Automated checks cover actual canvas/source-editor events, multi-selection/alignment/drag/undo, obstacle routing, JSON authoring and HTTP downloads, UTF-16 section parity, real threaded dependency scheduling, failures/cancellation, worker observation, immutable sources, task timing reuse, inspectors and backup identity remapping. Windows/macOS/Linux checks gate publication. Production SAS execution and desktop visual acceptance still need testing on the target Windows computer; local browser access was unavailable and the development Mac was locked.
+Automated checks cover shipped HTML/JavaScript events, nested Alt menus, context menus, transitive selection, partial-run preparation and worker handoff, internal dependency ordering, omitted prerequisites, conflict guards, replay/backup choices, card placement and fixed curve geometry. The existing Python and JavaScript regressions and Windows/macOS/Linux CI gate publication. Production SAS and visual desktop acceptance remain pending on the target Windows computer; the development Mac was locked and local browser access was unavailable.
 
-Extract into a new folder. Close the old app before pointing Settings → Storage and cleanup at your existing Tasks and Settings folders, then restart. Keep the previous installation and a saved-data backup while testing.
+Extract into a new folder. Close the old app before pointing Settings → Storage and cleanup at your existing Tasks and Settings folders, then restart. The independent `engine.py`, standalone CLI and existing scheduler/watcher workflows remain available.
 
-Read the [Graph guide](https://github.com/daniel-vital-de-alcantara/pysas-toolkit/blob/v0.4.0-preview.40/docs/graph-runner.md) and [Graph JSON manual](https://github.com/daniel-vital-de-alcantara/pysas-toolkit/blob/v0.4.0-preview.40/docs/graph-json-manual.md), both included in the ZIP.
+Read the [Graph guide](https://github.com/daniel-vital-de-alcantara/pysas-toolkit/blob/v0.4.0-preview.41/docs/graph-runner.md) and [Graph JSON manual](https://github.com/daniel-vital-de-alcantara/pysas-toolkit/blob/v0.4.0-preview.41/docs/graph-json-manual.md), both included in the ZIP.

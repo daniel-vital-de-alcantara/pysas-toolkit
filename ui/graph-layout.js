@@ -1,4 +1,4 @@
-/* Geometry for the task canvas: layered placement, alignment and card-aware links. */
+/* Layered card placement, alignment and the original curved dependency links. */
 (function(){
   'use strict';
   const W=264,H=158,GAP=110,ROW=223,clone=value=>JSON.parse(JSON.stringify(value));
@@ -25,6 +25,33 @@
     const lanes=layers.map((_,rank)=>result.edges.some(e=>level.get(e.from)<rank&&level.get(e.to)>rank)?1:0);
     const height=Math.max(0,...layers.map((layer,i)=>layer.length+lanes[i]));
     layers.forEach((layer,rank)=>layer.forEach((n,index)=>{n.x=rank*(W+GAP);n.y=Math.round(((height-layer.length-lanes[rank])/2+lanes[rank]+index)*ROW);}));
+    // Keep the curves unchanged. Move intermediate cards away from the vertical
+    // band occupied by a spanning curve at that column instead. Endpoints can
+    // move in later sweeps, so retain the best placement on dense graphs.
+    const byId=new Map(result.nodes.map(n=>[n.id,n])),ratios=new Map(),padding=24;
+    function fractions(from,to,rank){
+      const key=`${to-from}/${rank-from}`;if(ratios.has(key))return ratios.get(key);
+      const start=W,end=(to-from)*(W+GAP),bend=(end-start)*.45;
+      const xAt=t=>{const u=1-t;return u*u*u*start+3*u*u*t*(start+bend)+3*u*t*t*(end-bend)+t*t*t*end;};
+      const fraction=x=>{let low=0,high=1;for(let i=0;i<24;i++){const t=(low+high)/2;if(xAt(t)<x)low=t;else high=t;}const t=(low+high)/2;return t*t*(3-2*t);};
+      const left=(rank-from)*(W+GAP)-padding,value=[fraction(left),fraction(left+W+2*padding)];ratios.set(key,value);return value;
+    }
+    const spanning=layers.map((_,rank)=>result.edges.filter(e=>level.get(e.from)<rank&&level.get(e.to)>rank).map(e=>({a:byId.get(e.from),b:byId.get(e.to),fractions:fractions(level.get(e.from),level.get(e.to),rank)})));
+    const bands=rank=>spanning[rank].map(({a,b,fractions})=>{const ys=fractions.map(t=>a.y+H/2+(b.y-a.y)*t);return [Math.min(...ys)-H-padding,Math.max(...ys)+padding];});
+    const collisions=()=>layers.reduce((sum,layer,rank)=>{const intervals=bands(rank);return sum+layer.reduce((count,n)=>count+intervals.filter(([low,high])=>n.y>low&&n.y<high).length,0);},0);
+    let best=result.nodes.map(n=>n.y),score=collisions();
+    for(let pass=0;pass<8&&score;pass++){
+      const indices=layers.map((_,i)=>i);if(pass%2)indices.reverse();let moved=false;
+      for(const rank of indices){const blocked=bands(rank);for(const n of layers[rank]){
+        const intervals=[...blocked,...layers[rank].filter(other=>other!==n).map(other=>[other.y-H-40,other.y+H+40])].sort((a,b)=>a[0]-b[0]),merged=[];
+        for(const interval of intervals){const last=merged.at(-1);if(last&&interval[0]<=last[1])last[1]=Math.max(last[1],interval[1]);else merged.push([...interval]);}
+        const hit=merged.find(([low,high])=>n.y>low&&n.y<high);if(!hit)continue;
+        const candidates=[Math.floor(hit[0]),Math.ceil(hit[1])].filter(y=>Math.abs(y)<=100000);if(!candidates.length)continue;
+        candidates.sort((a,b)=>Math.abs(a-n.y)-Math.abs(b-n.y)||a-b);n.y=candidates[0];moved=true;
+      }}
+      const next=collisions();if(next<score){score=next;best=result.nodes.map(n=>n.y);}if(!moved)break;
+    }
+    const top=Math.min(0,...best),shift=Math.max(0,...best)-top<=100000?-top:0;result.nodes.forEach((n,i)=>n.y=best[i]+shift);
     return result;
   }
   function align(model,ids,kind){
@@ -46,26 +73,10 @@
       const first=(min-a[key])/distance,last=(max-a[key])/distance;low=Math.max(low,Math.min(first,last));high=Math.min(high,Math.max(first,last));if(low>=high)return false;
     }return high>0&&low<1;
   }
-  function clear(points,boxes){for(let i=1;i<points.length;i++)for(const box of boxes)if(intersects(points[i-1],points[i],box))return false;return true;}
-  const number=value=>Math.round(value*10)/10;
-  function rounded(points){
-    points=points.filter((p,i)=>!i||p.x!==points[i-1].x||p.y!==points[i-1].y);let path=`M${number(points[0].x)},${number(points[0].y)}`;
-    for(let i=1;i<points.length-1;i++){
-      const previous=points[i-1],p=points[i],next=points[i+1],before=Math.hypot(previous.x-p.x,previous.y-p.y),after=Math.hypot(next.x-p.x,next.y-p.y),r=Math.min(9,before/2,after/2);
-      path+=` L${number(p.x+(previous.x-p.x)*r/before)},${number(p.y+(previous.y-p.y)*r/before)} Q${number(p.x)},${number(p.y)} ${number(p.x+(next.x-p.x)*r/after)},${number(p.y+(next.y-p.y)*r/after)}`;
-    }const end=points.at(-1);return path+` L${number(end.x)},${number(end.y)}`;
-  }
-  function route(a,b,nodes=[],lane=0){
+  function route(a,b){
     const start={x:a.x+W,y:a.y+H/2},end={x:b.x,y:b.y+H/2},bend=Math.max(70,Math.abs(end.x-start.x)*.45);
-    const boxes=nodes.filter(n=>n.id!==a.id&&n.id!==b.id).map(n=>({left:n.x-16,right:n.x+W+16,top:n.y-16,bottom:n.y+H+16}));
-    const curve=Array.from({length:25},(_,i)=>{const t=i/24,u=1-t;return {x:u*u*u*start.x+3*u*u*t*(start.x+bend)+3*u*t*t*(end.x-bend)+t*t*t*end.x,y:u*u*u*start.y+3*u*u*t*start.y+3*u*t*t*end.y+t*t*t*end.y};});
-    if(clear(curve,boxes))return {path:`M${start.x},${start.y} C${start.x+bend},${start.y} ${end.x-bend},${end.y} ${end.x},${end.y}`,points:curve,routed:false};
-    const offset=24+(lane%5)*7,between=boxes.filter(box=>box.right>Math.min(start.x,end.x)&&box.left<Math.max(start.x,end.x));
-    const levels=[Math.min(start.y,end.y,...between.map(n=>n.top))-offset,Math.max(start.y,end.y,...between.map(n=>n.bottom))+offset,Math.min(a.y,b.y,...boxes.map(n=>n.top))-offset,Math.max(a.y+H,b.y+H,...boxes.map(n=>n.bottom))+offset];
-    const candidates=levels.map(y=>[start,{x:start.x+24,y:start.y},{x:start.x+24,y},{x:end.x-24,y},{x:end.x-24,y:end.y},end]);
-    const length=points=>points.slice(1).reduce((sum,p,i)=>sum+Math.abs(p.x-points[i].x)+Math.abs(p.y-points[i].y),0);
-    const points=candidates.filter(points=>clear(points,boxes)).sort((a,b)=>length(a)-length(b))[0]||candidates[2];
-    return {path:rounded(points),points,routed:true};
+    const points=Array.from({length:33},(_,i)=>{const t=i/32,u=1-t;return {x:u*u*u*start.x+3*u*u*t*(start.x+bend)+3*u*t*t*(end.x-bend)+t*t*t*end.x,y:start.y+(end.y-start.y)*t*t*(3-2*t)};});
+    return {path:`M${start.x},${start.y} C${start.x+bend},${start.y} ${end.x-bend},${end.y} ${end.x},${end.y}`,points,routed:false};
   }
   const api={arrange,align,route,intersects};globalThis.PySASGraphLayout=api;if(typeof module!=='undefined')module.exports=api;
 })();

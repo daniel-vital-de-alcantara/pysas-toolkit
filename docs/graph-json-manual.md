@@ -59,7 +59,7 @@ while designing; choose an automatic/browsed connection before execution.
 
 Each task/setup card needs a unique `id` (1–64 letters, digits, underscores or
 hyphens; unique ignoring case), a `name`, and ordered `rows`. Task `x` and `y`
-positions are optional in authoring JSON, within ±100,000. Use Arrange after import
+positions are optional in authoring JSON, within ±100,000. Use Home → Arrange → Align → Auto after import
 to lay out dependencies. Optional per-task output flags are `export_html` (default
 true), `export_tables` (false) and `consolidate_tables` (false).
 
@@ -114,6 +114,12 @@ macro definitions in shared setup when every task needs them.
 
 Run this task only is manual mode: it includes shared setup but does **not** run
 prerequisites. Choose it only when those inputs already exist or are unnecessary.
+The right-click menu can also run an exact selection. Only edges whose endpoints
+are both selected are scheduled; unselected prerequisites are assumed available
+and listed in the parent log. Select all dependencies adds all upstream tasks;
+Select prerequisites adds immediate upstream tasks; Select all dependents adds
+all downstream tasks. Setup always applies. Run again preserves the exact scope.
+
 Runs open Overview immediately during preparation. Inspect the whole run and
 individual tasks for elapsed time, source, logs, results, Copy/Download and ZIP.
 The parent `run.log` consolidates task logs. Run again creates a fresh run from
